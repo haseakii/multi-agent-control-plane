@@ -158,7 +158,9 @@ describe('FleetMcpBridge', () => {
   });
 
   it('fails closed if policy evaluation errors and audits a non-sensitive denial reason', async () => {
-    vi.mocked(services.policy.authorize).mockRejectedValue(new Error('secret policy backend detail'));
+    vi.mocked(services.policy.authorize).mockRejectedValue(
+      new Error('secret policy backend detail'),
+    );
     const bridge = new FleetMcpBridge(
       definition(['boss.orchestration'], true),
       principal(['boss.orchestration']),
@@ -203,7 +205,11 @@ describe('FleetMcpBridge', () => {
       'provider token leaked in error',
     );
     expect(services.audit.record).toHaveBeenCalledWith(
-      expect.objectContaining({ operation: 'control_get_task', phase: 'failed', reason: 'service_error' }),
+      expect.objectContaining({
+        operation: 'control_get_task',
+        phase: 'failed',
+        reason: 'service_error',
+      }),
     );
     expect(JSON.stringify(vi.mocked(services.audit.record).mock.calls)).not.toContain(
       'provider token leaked in error',
