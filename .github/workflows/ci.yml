@@ -7,7 +7,7 @@ on:
       - main
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   quality:
@@ -16,8 +16,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.head_ref || github.ref_name }}
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
@@ -30,21 +28,7 @@ jobs:
           node-version: 22
 
       - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile
-
-      - name: Format storage sources
-        run: pnpm exec prettier --write "packages/storage/src/*.ts"
-
-      - name: Persist generated lockfile and formatting
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add pnpm-lock.yaml packages/storage/src/*.ts
-          if ! git diff --cached --quiet; then
-            git commit -m "chore: sync storage lockfile and formatting"
-            git push origin HEAD:${{ github.head_ref }}
-          fi
+        run: pnpm install --frozen-lockfile
 
       - name: Lint
         run: pnpm lint
