@@ -91,9 +91,9 @@ class SqliteJsonRepository<T extends { id: string }> implements EntityRepository
   }
 
   get(id: string): T | undefined {
-    const row = this.sqlite
-      .prepare(`SELECT payload FROM ${this.table} WHERE id = ?`)
-      .get(id) as { payload: string } | undefined;
+    const row = this.sqlite.prepare(`SELECT payload FROM ${this.table} WHERE id = ?`).get(id) as
+      | { payload: string }
+      | undefined;
     return row ? this.schema.parse(JSON.parse(row.payload)) : undefined;
   }
 
@@ -171,11 +171,7 @@ export type StorageRepositories = {
 export function createRepositories(sqlite: Database.Database): StorageRepositories {
   return {
     projects: new SqliteJsonRepository(sqlite, 'projects', ProjectSchema),
-    agentDefinitions: new SqliteJsonRepository(
-      sqlite,
-      'agent_definitions',
-      AgentDefinitionSchema,
-    ),
+    agentDefinitions: new SqliteJsonRepository(sqlite, 'agent_definitions', AgentDefinitionSchema),
     bossAssignments: new SqliteJsonRepository(
       sqlite,
       'boss_assignments',
@@ -183,12 +179,9 @@ export function createRepositories(sqlite: Database.Database): StorageRepositori
       (value) => ({ project_id: value.projectId }),
     ),
     runners: new SqliteJsonRepository(sqlite, 'runners', RunnerSchema),
-    workspaces: new SqliteJsonRepository(
-      sqlite,
-      'workspaces',
-      WorkspaceSchema,
-      (value) => ({ project_id: value.projectId }),
-    ),
+    workspaces: new SqliteJsonRepository(sqlite, 'workspaces', WorkspaceSchema, (value) => ({
+      project_id: value.projectId,
+    })),
     tasks: new SqliteJsonRepository(
       sqlite,
       'tasks',
@@ -201,16 +194,11 @@ export function createRepositories(sqlite: Database.Database): StorageRepositori
       }),
       assertNoPotentialSecrets,
     ),
-    assignments: new SqliteJsonRepository(
-      sqlite,
-      'assignments',
-      AssignmentSchema,
-      (value) => ({
-        task_id: value.taskId,
-        agent_id: value.agentId,
-        state: value.state,
-      }),
-    ),
+    assignments: new SqliteJsonRepository(sqlite, 'assignments', AssignmentSchema, (value) => ({
+      task_id: value.taskId,
+      agent_id: value.agentId,
+      state: value.state,
+    })),
     conversations: new SqliteJsonRepository(
       sqlite,
       'conversations',
@@ -236,26 +224,16 @@ export function createRepositories(sqlite: Database.Database): StorageRepositori
       }),
       assertNoPotentialSecrets,
     ),
-    artifacts: new SqliteJsonRepository(
-      sqlite,
-      'artifacts',
-      ArtifactSchema,
-      (value) => ({
-        project_id: value.projectId,
-        task_id: value.taskId ?? null,
-        sha256: value.sha256,
-      }),
-    ),
-    approvals: new SqliteJsonRepository(
-      sqlite,
-      'approvals',
-      ApprovalSchema,
-      (value) => ({
-        project_id: value.projectId,
-        task_id: value.taskId ?? null,
-        state: value.state,
-      }),
-    ),
+    artifacts: new SqliteJsonRepository(sqlite, 'artifacts', ArtifactSchema, (value) => ({
+      project_id: value.projectId,
+      task_id: value.taskId ?? null,
+      sha256: value.sha256,
+    })),
+    approvals: new SqliteJsonRepository(sqlite, 'approvals', ApprovalSchema, (value) => ({
+      project_id: value.projectId,
+      task_id: value.taskId ?? null,
+      state: value.state,
+    })),
     events: new SqliteEventRepository(sqlite),
   };
 }

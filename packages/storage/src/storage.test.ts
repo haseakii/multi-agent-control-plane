@@ -122,9 +122,9 @@ describe('SQLite storage', () => {
       }),
     ).toThrow(PotentialSecretError);
 
-    const persisted = storage.sqlite
-      .prepare('SELECT COUNT(*) AS count FROM tasks')
-      .get() as { count: number };
+    const persisted = storage.sqlite.prepare('SELECT COUNT(*) AS count FROM tasks').get() as {
+      count: number;
+    };
     expect(persisted.count).toBe(0);
     storage.close();
   });

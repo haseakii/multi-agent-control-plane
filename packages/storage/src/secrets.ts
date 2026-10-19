@@ -34,11 +34,7 @@ export function assertNoPotentialSecrets(value: unknown, path = '$'): void {
 
   for (const [key, child] of Object.entries(value)) {
     const childPath = `${path}.${key}`;
-    if (
-      sensitiveKeyPattern.test(key) &&
-      typeof child === 'string' &&
-      child.trim().length > 0
-    ) {
+    if (sensitiveKeyPattern.test(key) && typeof child === 'string' && child.trim().length > 0) {
       throw new PotentialSecretError(childPath);
     }
     assertNoPotentialSecrets(child, childPath);
