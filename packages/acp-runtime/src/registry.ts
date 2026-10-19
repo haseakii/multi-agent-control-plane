@@ -1,4 +1,5 @@
-import type { AgentDefinition, AgentId } from './types.js';
+import { AgentDefinitionSchema } from '@control-plane/core';
+import type { AgentDefinition, AgentId } from '@control-plane/core';
 
 export class AgentAlreadyExistsError extends Error {
   constructor(id: AgentId) {
@@ -18,31 +19,16 @@ function cloneDefinition(definition: AgentDefinition): AgentDefinition {
   return structuredClone(definition);
 }
 
-function assertDefinition(definition: AgentDefinition): void {
-  if (definition.id.trim().length === 0) {
-    throw new TypeError('Agent id must not be empty.');
-  }
-  if (definition.name.trim().length === 0) {
-    throw new TypeError('Agent name must not be empty.');
-  }
-  if (definition.runtime.command.trim().length === 0) {
-    throw new TypeError('ACP stdio command must not be empty.');
-  }
-  if (definition.auth.mode === 'secret-ref' && !definition.auth.secretRef) {
-    throw new TypeError('secret-ref auth requires secretRef.');
-  }
-}
-
 export class InMemoryAgentRegistry {
   private readonly definitions = new Map<AgentId, AgentDefinition>();
 
   create(definition: AgentDefinition): AgentDefinition {
-    assertDefinition(definition);
-    if (this.definitions.has(definition.id)) {
-      throw new AgentAlreadyExistsError(definition.id);
+    const parsed = AgentDefinitionSchema.parse(definition);
+    if (this.definitions.has(parsed.id)) {
+      throw new AgentAlreadyExistsError(parsed.id);
     }
 
-    const stored = cloneDefinition(definition);
+    const stored = cloneDefinition(parsed);
     this.definitions.set(stored.id, stored);
     return cloneDefinition(stored);
   }
@@ -63,12 +49,11 @@ export class InMemoryAgentRegistry {
 
   update(id: AgentId, update: Partial<Omit<AgentDefinition, 'id'>>): AgentDefinition {
     const current = this.get(id);
-    const next: AgentDefinition = {
+    const next = AgentDefinitionSchema.parse({
       ...current,
       ...structuredClone(update),
       id,
-    };
-    assertDefinition(next);
+    });
     this.definitions.set(id, cloneDefinition(next));
     return cloneDefinition(next);
   }
