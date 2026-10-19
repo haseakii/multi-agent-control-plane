@@ -30,14 +30,7 @@ const allowedTransitions: Record<TaskState, ReadonlySet<TaskState>> = {
   draft: new Set(['planning', 'ready', 'cancelled']),
   planning: new Set(['ready', 'blocked', 'failed', 'cancelled']),
   ready: new Set(['running', 'blocked', 'cancelled']),
-  running: new Set([
-    'waiting',
-    'waiting_approval',
-    'blocked',
-    'completed',
-    'failed',
-    'cancelled',
-  ]),
+  running: new Set(['waiting', 'waiting_approval', 'blocked', 'completed', 'failed', 'cancelled']),
   waiting: new Set(['ready', 'running', 'blocked', 'failed', 'cancelled', 'completed']),
   waiting_approval: new Set(['ready', 'running', 'blocked', 'failed', 'cancelled']),
   blocked: new Set(['ready', 'failed', 'cancelled']),
@@ -501,10 +494,7 @@ export class TaskEngine {
     });
   }
 
-  private createAttemptWithin(
-    assignment: Assignment,
-    input: CreateAttemptInput,
-  ): ExecutionAttempt {
+  private createAttemptWithin(assignment: Assignment, input: CreateAttemptInput): ExecutionAttempt {
     const task = this.requireTask(assignment.taskId);
     if (terminalTaskStates.has(task.state)) {
       throw new TaskEngineError(
@@ -526,7 +516,8 @@ export class TaskEngine {
       );
     }
 
-    const nextNumber = Math.max(assignment.attempt, ...existingAttempts.map((item) => item.number), 0) + 1;
+    const nextNumber =
+      Math.max(assignment.attempt, ...existingAttempts.map((item) => item.number), 0) + 1;
     const now = this.now();
     const attempt = ExecutionAttemptSchema.parse({
       id: input.id ?? this.idFactory('attempt'),
@@ -610,7 +601,10 @@ export class TaskEngine {
         throw new TaskEngineError('TASK_DEPENDENCY_SELF', 'A task cannot depend on itself.');
       }
       if (unique.has(dependencyId)) {
-        throw new TaskEngineError('TASK_DEPENDENCY_DUPLICATE', `Duplicate dependency: ${dependencyId}`);
+        throw new TaskEngineError(
+          'TASK_DEPENDENCY_DUPLICATE',
+          `Duplicate dependency: ${dependencyId}`,
+        );
       }
       unique.add(dependencyId);
       const dependency = this.requireTask(dependencyId);
@@ -621,7 +615,10 @@ export class TaskEngine {
         );
       }
       if (this.pathReaches(dependency.id, taskId, new Set())) {
-        throw new TaskEngineError('TASK_DEPENDENCY_CYCLE', 'Task dependency graph must remain acyclic.');
+        throw new TaskEngineError(
+          'TASK_DEPENDENCY_CYCLE',
+          'Task dependency graph must remain acyclic.',
+        );
       }
     }
   }
@@ -661,7 +658,9 @@ export class TaskEngine {
     const result: Task[] = [];
     const visit = (task: Task) => {
       result.push(task);
-      for (const child of this.store.tasks.list().filter((candidate) => candidate.parentTaskId === task.id)) {
+      for (const child of this.store.tasks
+        .list()
+        .filter((candidate) => candidate.parentTaskId === task.id)) {
         visit(child);
       }
     };
