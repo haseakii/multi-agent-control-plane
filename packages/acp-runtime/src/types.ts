@@ -1,30 +1,9 @@
-export type AgentId = string;
-
-export type AgentCapability = {
-  name: string;
-  source: 'configured' | 'advertised' | 'verified';
-};
-
-export type AcpStdioRuntimeDefinition = {
-  type: 'acp-stdio';
-  command: string;
-  args: string[];
-  cwd?: string;
-  environmentAllowlist?: string[];
-};
-
-export type AgentDefinition = {
-  id: AgentId;
-  name: string;
-  description?: string;
-  enabled: boolean;
-  runtime: AcpStdioRuntimeDefinition;
-  capabilities: AgentCapability[];
-  auth: {
-    mode: 'agent-managed' | 'secret-ref';
-    secretRef?: string;
-  };
-};
+export type {
+  AgentDefinition,
+  AgentId,
+  Capability as AgentCapability,
+  AcpStdioRuntimeDefinition,
+} from '@control-plane/core';
 
 export type RuntimeHealth = 'unknown' | 'ready' | 'error';
 export type AuthReadiness = 'unknown' | 'needs_login' | 'ready' | 'not_reported';
