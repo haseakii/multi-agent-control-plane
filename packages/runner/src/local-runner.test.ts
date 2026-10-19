@@ -114,14 +114,33 @@ describe('LocalRunner', () => {
       signal: controller.signal,
     });
 
-    const eventsPromise = collectEvents(runner, handle);
-    await runner.writeStdin(handle, 'ping\n');
+    const events: RunnerEvent[] = [];
+    let resolvePing!: () => void;
+    const pingSeen = new Promise<void>((resolve) => {
+      resolvePing = resolve;
+    });
+    const eventsPromise = (async () => {
+      for await (const event of runner.events(handle)) {
+        events.push(event);
+        if (event.type === 'process.stdout' && event.chunk.includes('ping')) {
+          resolvePing();
+        }
+      }
+    })();
 
-    await new Promise((resolve) => setTimeout(resolve, 25));
+    await runner.writeStdin(handle, 'ping\n');
+    await Promise.race([
+      pingSeen,
+      new Promise<never>((_, reject) => {
+        const timeout = setTimeout(() => reject(new Error('Timed out waiting for stdin echo.')), 2_000);
+        timeout.unref();
+      }),
+    ]);
+
     controller.abort();
 
     const status = await runner.wait(handle);
-    const events = await eventsPromise;
+    await eventsPromise;
     expect(status.state).toBe('cancelled');
     expect(
       events.some((event) => event.type === 'process.stdout' && event.chunk.includes('ping')),
