@@ -1,15 +1,13 @@
 import { AgentDefinitionSchema } from '@control-plane/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  FleetMcpBridge,
-  type FleetMcpPrincipal,
-  type FleetMcpServices,
-} from './fleet-mcp.js';
+import { FleetMcpBridge, type FleetMcpPrincipal, type FleetMcpServices } from './fleet-mcp.js';
 
 const timestamp = '2026-10-19T09:00:00Z';
 
 function definition(
-  scopes: Array<'boss.orchestration' | 'agent.messaging' | 'artifact.read' | 'artifact.publish' | 'task.status'>,
+  scopes: Array<
+    'boss.orchestration' | 'agent.messaging' | 'artifact.read' | 'artifact.publish' | 'task.status'
+  >,
   canBeBoss = false,
 ) {
   return AgentDefinitionSchema.parse({
@@ -24,9 +22,7 @@ function definition(
   });
 }
 
-function principal(
-  scopes: FleetMcpPrincipal['scopes'],
-): FleetMcpPrincipal {
+function principal(scopes: FleetMcpPrincipal['scopes']): FleetMcpPrincipal {
   return {
     agentId: 'agent-a',
     projectId: 'project-a',
@@ -153,7 +149,11 @@ describe('FleetMcpBridge', () => {
       bridge.principal,
     );
     const policyResource = vi.mocked(services.policy.authorize).mock.calls[0]?.[0].resource;
-    expect(policyResource).toMatchObject({ kind: 'report', mimeType: 'text/plain', contentBytes: 21 });
+    expect(policyResource).toMatchObject({
+      kind: 'report',
+      mimeType: 'text/plain',
+      contentBytes: 21,
+    });
     expect(JSON.stringify(policyResource)).not.toContain('private artifact body');
     const auditEvents = vi.mocked(services.audit.record).mock.calls.map(([event]) => event);
     expect(JSON.stringify(auditEvents)).not.toContain('private artifact body');
