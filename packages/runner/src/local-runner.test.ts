@@ -57,6 +57,18 @@ describe('LocalRunner', () => {
     expect(runner.descriptor().capabilities).toContain('process.output');
   });
 
+  it('rejects process startup failures without leaking an unhandled child-process error', async () => {
+    const directory = tempDirectory();
+    const runner = new LocalRunner({ id: 'runner-spawn-error-test' });
+
+    await expect(
+      runner.spawn({
+        command: join(directory, 'definitely-missing-control-plane-executable'),
+        cwd: directory,
+      }),
+    ).rejects.toThrow();
+  });
+
   it('uses a bounded environment instead of inheriting arbitrary parent secrets', async () => {
     process.env.RUNNER_SHOULD_NOT_LEAK = 'parent-secret';
     const runner = new LocalRunner({ id: 'runner-env-test' });
