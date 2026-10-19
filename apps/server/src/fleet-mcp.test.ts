@@ -157,6 +157,59 @@ describe('FleetMcpBridge', () => {
     expect(JSON.stringify(auditEvents)).not.toContain('private artifact body');
   });
 
+  it('fails closed if policy evaluation errors and audits a non-sensitive denial reason', async () => {
+    vi.mocked(services.policy.authorize).mockRejectedValue(new Error('secret policy backend detail'));
+    const bridge = new FleetMcpBridge(
+      definition(['boss.orchestration'], true),
+      principal(['boss.orchestration']),
+      {
+        readiness: { runtime: 'ready', auth: 'ready' },
+        supportsSessionMcp: true,
+        bossAssignmentAllowed: true,
+      },
+      services,
+    );
+
+    await expect(
+      bridge.call('control_create_task', { title: 'T', objective: 'O' }),
+    ).rejects.toThrow('Policy evaluation failed');
+    expect(services.tasks.create).not.toHaveBeenCalled();
+    expect(services.audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: 'control_create_task',
+        phase: 'denied',
+        reason: 'policy_evaluation_failed',
+      }),
+    );
+    expect(JSON.stringify(vi.mocked(services.audit.record).mock.calls)).not.toContain(
+      'secret policy backend detail',
+    );
+  });
+
+  it('does not persist raw service error messages into audit records', async () => {
+    vi.mocked(services.tasks.get).mockRejectedValue(new Error('provider token leaked in error'));
+    const bridge = new FleetMcpBridge(
+      definition(['task.status']),
+      principal(['task.status']),
+      {
+        readiness: { runtime: 'ready', auth: 'ready' },
+        supportsSessionMcp: true,
+        bossAssignmentAllowed: false,
+      },
+      services,
+    );
+
+    await expect(bridge.call('control_get_task', { taskId: 'task-a' })).rejects.toThrow(
+      'provider token leaked in error',
+    );
+    expect(services.audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({ operation: 'control_get_task', phase: 'failed', reason: 'service_error' }),
+    );
+    expect(JSON.stringify(vi.mocked(services.audit.record).mock.calls)).not.toContain(
+      'provider token leaked in error',
+    );
+  });
+
   it('lets policy inspect approval resources without copying resource values into audit records', async () => {
     const bridge = new FleetMcpBridge(
       definition(['boss.orchestration'], true),
