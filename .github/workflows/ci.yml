@@ -30,13 +30,6 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Temporary formatter diagnostic
-        run: |
-          pnpm exec prettier --write "packages/acp-runtime/src/capability-selector*.ts"
-          git diff -- packages/acp-runtime/src/capability-selector*.ts
-          cat packages/acp-runtime/src/capability-selector.ts
-          cat packages/acp-runtime/src/capability-selector.test.ts
-
       - name: Lint
         run: pnpm lint
 
