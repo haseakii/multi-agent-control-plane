@@ -2,8 +2,6 @@ import { AgentDefinitionSchema } from '@control-plane/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { FleetMcpBridge, type FleetMcpPrincipal, type FleetMcpServices } from './fleet-mcp.js';
 
-const timestamp = '2026-10-19T09:00:00Z';
-
 function definition(
   scopes: Array<
     'boss.orchestration' | 'agent.messaging' | 'artifact.read' | 'artifact.publish' | 'task.status'
@@ -152,9 +150,9 @@ describe('FleetMcpBridge', () => {
     expect(policyResource).toMatchObject({
       kind: 'report',
       mimeType: 'text/plain',
-      contentBytes: 21,
+      content: 'private artifact body',
     });
-    expect(JSON.stringify(policyResource)).not.toContain('private artifact body');
+    expect(JSON.stringify(policyResource)).toContain('private artifact body');
     const auditEvents = vi.mocked(services.audit.record).mock.calls.map(([event]) => event);
     expect(JSON.stringify(auditEvents)).not.toContain('private artifact body');
   });
