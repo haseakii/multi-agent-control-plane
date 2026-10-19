@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "1.5.1",
-    "@control-plane/core": "workspace:*"
+    "@control-plane/core": "workspace:*",
+    "zod": "4.6.7"
   }
 }
