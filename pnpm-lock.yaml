@@ -76,6 +76,16 @@ importers:
         specifier: workspace:*
         version: link:../core
 
+  packages/task-engine:
+    dependencies:
+      '@control-plane/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@control-plane/storage':
+        specifier: workspace:*
+        version: link:../storage
+
   packages/storage:
     dependencies:
       '@control-plane/core':

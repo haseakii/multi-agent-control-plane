@@ -8,6 +8,7 @@ import {
   AuditEventSchema,
   BossAssignmentSchema,
   ConversationRefSchema,
+  ExecutionAttemptSchema,
   ProjectSchema,
   RunnerSchema,
   TaskSchema,
@@ -60,6 +61,7 @@ describe('core domain schemas', () => {
       id: 'conversation-01',
       taskId,
       assignmentId,
+      executionAttemptId: 'attempt-01',
       agentId,
       runnerId,
       protocol: 'acp-v1',
@@ -86,12 +88,29 @@ describe('core domain schemas', () => {
       },
       objective: 'Review the implementation',
       state: 'queued',
-      attempt: 1,
+      attempt: 0,
       createdAt: now,
       updatedAt: now,
     });
 
     expect(assignment.role?.name).toBe('Concurrency safety reviewer');
+  });
+
+  it('models execution attempts separately from assignments and conversations', () => {
+    const attempt = ExecutionAttemptSchema.parse({
+      id: 'attempt-01',
+      taskId,
+      assignmentId,
+      number: 1,
+      state: 'running',
+      runnerId,
+      createdAt: now,
+      updatedAt: now,
+      startedAt: now,
+    });
+
+    expect(attempt.number).toBe(1);
+    expect(attempt.state).toBe('running');
   });
 
   it('validates representative project, governance, runner, artifact, and audit records', () => {
