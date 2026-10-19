@@ -69,7 +69,7 @@ function normalizePermissionRequest(params: acp.RequestPermissionRequest): Permi
     options: params.options.map((option) => ({
       optionId: String(option.optionId),
       name: option.name,
-      kind: option.kind == null ? undefined : String(option.kind),
+      ...(option.kind == null ? {} : { kind: String(option.kind) }),
     })),
     subject: params.toolCall,
   };
@@ -150,7 +150,7 @@ export class AcpRuntimeConnection {
   }
 
   get capabilities(): acp.AgentCapabilities {
-    return structuredClone(this.initialized.agentCapabilities);
+    return structuredClone(this.initialized.agentCapabilities ?? {});
   }
 
   get authMethods(): acp.AuthMethod[] {
@@ -164,7 +164,7 @@ export class AcpRuntimeConnection {
     if (!method) {
       throw new RangeError(`Authentication method not advertised: ${methodId}`);
     }
-    if (method.type === 'terminal') {
+    if ('type' in method && method.type === 'terminal') {
       throw new TypeError(
         'Terminal authentication must be executed by a runner, not ACP authenticate.',
       );
@@ -280,7 +280,7 @@ export class AcpRuntimeConnection {
 export class AcpClientRuntime {
   private readonly clientName: string;
   private readonly permissionBroker: PermissionBroker;
-  private readonly eventSink?: AgentEventSink;
+  private readonly eventSink: AgentEventSink | undefined;
 
   constructor(options: AcpRuntimeOptions = {}) {
     this.clientName = options.clientName ?? 'multi-agent-control-plane';
