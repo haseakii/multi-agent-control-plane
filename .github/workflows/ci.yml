@@ -7,7 +7,7 @@ on:
       - main
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   quality:
@@ -16,8 +16,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
@@ -30,20 +28,10 @@ jobs:
           node-version: 22
 
       - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
-      - name: Commit refreshed lockfile once
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'codex/issue-2-core-domain-schemas'
-        shell: bash
-        run: |
-          if git diff --quiet -- pnpm-lock.yaml; then
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add pnpm-lock.yaml
-          git commit -m "chore: refresh pnpm lockfile [skip ci]"
-          git push origin HEAD:${{ github.event.pull_request.head.ref }}
+      - name: Inspect core test formatting
+        run: pnpm exec prettier packages/core/src/domain.test.ts
 
       - name: Lint
         run: pnpm lint
