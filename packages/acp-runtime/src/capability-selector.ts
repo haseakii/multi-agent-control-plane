@@ -61,10 +61,7 @@ export class CapabilitySelector<TContext = CapabilityQueryContext> {
     private readonly options: CapabilitySelectorOptions<TContext>,
   ) {}
 
-  registerCapability(
-    agentId: string,
-    capability: Capability,
-  ): AgentDefinition {
+  registerCapability(agentId: string, capability: Capability): AgentDefinition {
     const id = AgentIdSchema.parse(agentId);
     return this.registry.registerCapability(id, CapabilitySchema.parse(capability));
   }
