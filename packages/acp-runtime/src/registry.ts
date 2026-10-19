@@ -1,4 +1,4 @@
-import { AgentDefinitionSchema } from '@control-plane/core';
+import { AgentDefinitionSchema, CapabilitySchema } from '@control-plane/core';
 import type { AgentDefinition, AgentId } from '@control-plane/core';
 
 export class AgentAlreadyExistsError extends Error {
@@ -56,6 +56,26 @@ export class InMemoryAgentRegistry {
     });
     this.definitions.set(id, cloneDefinition(next));
     return cloneDefinition(next);
+  }
+
+  registerCapability(
+    id: AgentId,
+    capability: AgentDefinition['capabilities'][number],
+  ): AgentDefinition {
+    const current = this.get(id);
+    const parsed = CapabilitySchema.parse(capability);
+    const existing = current.capabilities.find((item) => item.name === parsed.name);
+    const capabilities = existing
+      ? current.capabilities.map((item) => (item.name === parsed.name ? parsed : item))
+      : [...current.capabilities, parsed];
+    return this.update(id, { capabilities });
+  }
+
+  unregisterCapability(id: AgentId, capabilityName: string): AgentDefinition {
+    const current = this.get(id);
+    return this.update(id, {
+      capabilities: current.capabilities.filter((item) => item.name !== capabilityName),
+    });
   }
 
   delete(id: AgentId): void {
