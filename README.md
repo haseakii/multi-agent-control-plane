@@ -39,7 +39,8 @@ User / API / UI
 - **Tasks outlive conversations.** Durable task state is the system of record; ACP sessions are execution resources.
 - **Artifacts are references, not chat payloads.** Large diffs, files, logs, images, reports, and test outputs live in a content-addressed artifact store.
 - **Local-first.** SQLite + local filesystem are the default; distributed backends are replaceable adapters.
-- **Policy is outside agents.** Agents can request actions; the control plane makes the final allow/ask/deny decision.
+- **Policy is outside agents, with an explicit boundary.** The control plane enforces calls that pass through its APIs, bridge, workspace/Git services, and ACP permission requests actually surfaced by an adapter. It cannot automatically intercept opaque tools or side effects executed inside an agent process.
+- **LocalRunner is a trusted-user convenience mode, not a security sandbox.** Git worktrees reduce write conflicts but do not restrict OS-level access. Use an isolated runner for untrusted agents or strict filesystem/network guarantees.
 - **OpenHands is optional integration, not a dependency.**
 
 ## Proposed stack
@@ -55,6 +56,10 @@ User / API / UI
 - WebSocket
 - ACP TypeScript SDK
 - Vitest + Playwright
+
+## Repository status
+
+This PR establishes the architecture and package boundaries; it is **not yet a runnable application**. Workspace package manifests, executable build/test/lint/typecheck scripts, CI, and the health endpoint are tracked by Issue #1 and will be added with the bootstrap implementation.
 
 ## V0 success criteria
 
