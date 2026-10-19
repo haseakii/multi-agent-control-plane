@@ -30,11 +30,16 @@ jobs:
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
 
-      - name: Upload generated lockfile
+      - name: Format storage sources for bootstrap artifact
+        run: pnpm exec prettier --write "packages/storage/src/*.ts"
+
+      - name: Upload generated bootstrap files
         uses: actions/upload-artifact@v4
         with:
-          name: generated-pnpm-lock
-          path: pnpm-lock.yaml
+          name: generated-storage-bootstrap
+          path: |
+            pnpm-lock.yaml
+            packages/storage/src/*.ts
 
       - name: Lint
         run: pnpm lint
