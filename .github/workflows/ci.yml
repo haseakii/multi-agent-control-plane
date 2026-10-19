@@ -30,9 +30,6 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Inspect core test formatting
-        run: pnpm exec prettier packages/core/src/domain.test.ts
-
       - name: Lint
         run: pnpm lint
 
