@@ -132,7 +132,10 @@ describe('LocalRunner', () => {
     await Promise.race([
       pingSeen,
       new Promise<never>((_, reject) => {
-        const timeout = setTimeout(() => reject(new Error('Timed out waiting for stdin echo.')), 2_000);
+        const timeout = setTimeout(
+          () => reject(new Error('Timed out waiting for stdin echo.')),
+          2_000,
+        );
         timeout.unref();
       }),
     ]);
