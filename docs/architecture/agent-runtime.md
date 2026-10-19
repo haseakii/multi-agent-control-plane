@@ -63,7 +63,7 @@ Optional `secret-ref` is for agents that explicitly require injected environment
 ## Fleet MCP injection
 For an ACP agent that supports session-level MCP configuration, the host supplies the Fleet MCP server through `mcpServers` when creating and resuming a session. The default V0 integration is a local stdio MCP server; only use another transport when the agent/runtime explicitly supports it.
 
-The application service derives the tools exposed to a session from the configured bridge scopes, active project/task, and policy. Bridge calls must be authenticated as the calling agent/session, checked against project/task scope, and policy-evaluated on every call. Use short-lived, narrowly scoped bridge credentials or an equivalent process-bound identity; never reuse provider credentials. Reattach the same authorized bridge configuration on session resume.
+The application service supplies the Fleet MCP server through the ACP `mcpServers` field on `session/new` and `session/resume` for supported agents. It derives the tools exposed to a session from configured bridge scopes, active project/task, and policy. Bridge calls must be authenticated as the calling agent/session, checked against project/task scope, and policy-evaluated on every call. Use short-lived, narrowly scoped bridge credentials or an equivalent process-bound identity; never reuse provider credentials. Reattach the authorized bridge configuration on session resume.
 
 If an agent does not support session MCP configuration, use its configured CLI or structured-command bridge only if that path is supported and validated. Otherwise set its bridge transport to `none`; it can still run as a worker, but cannot initiate control-plane bridge operations.
 
