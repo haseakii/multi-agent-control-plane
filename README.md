@@ -29,40 +29,58 @@ User / API / UI
   Agent A   Agent B   Agent C
 ```
 
-### Principles
+## Principles
 
-- **ACP-first, vendor-neutral.** ACP is the primary host-to-agent transport; specific vendors are adapters/configuration, not domain concepts.
-- **Agent != role.** Roles are dynamic assignments created by the Boss or user for a specific task.
-- **Boss is an agent with orchestration privileges.** The framework does not ship a permanently hard-coded supervisor model.
-- **Agent-managed auth by default.** Existing agent login/auth flows remain owned by each ACP agent.
-- **All agent-to-agent communication is observable.** Logical A→B communication is physically routed through the control plane.
-- **Tasks outlive conversations.** Durable task state is the system of record; ACP sessions are execution resources.
-- **Artifacts are references, not chat payloads.** Large diffs, files, logs, images, reports, and test outputs live in a content-addressed artifact store.
-- **Local-first.** SQLite + local filesystem are the default; distributed backends are replaceable adapters.
-- **Policy is outside agents, with an explicit boundary.** The control plane enforces calls that pass through its APIs, bridge, workspace/Git services, and ACP permission requests actually surfaced by an adapter. It cannot automatically intercept opaque tools or side effects executed inside an agent process.
-- **LocalRunner is a trusted-user convenience mode, not a security sandbox.** Git worktrees reduce write conflicts but do not restrict OS-level access. Use an isolated runner for untrusted agents or strict filesystem/network guarantees.
-- **OpenHands is optional integration, not a dependency.**
+- **ACP-first, vendor-neutral.** Specific vendors are adapters/configuration, not domain concepts.
+- **Agent != role.** Roles are dynamic and task-scoped.
+- **Boss is an agent with bounded orchestration privileges.** No fixed supervisor model is required.
+- **Agent-managed auth by default.** Authentication remains owned by each ACP agent.
+- **All agent-to-agent communication is observable.** Logical A→B communication is routed through the control plane.
+- **Tasks outlive conversations.** Durable task state is independent from ACP session state.
+- **Artifacts are references, not chat payloads.** Large outputs live in a content-addressed artifact store.
+- **Policy has an explicit boundary.** Opaque agent-owned tools are not assumed to be intercepted.
+- **LocalRunner is not a security sandbox.** Git worktrees do not restrict OS-level access.
+- **OpenHands is optional integration, not a core dependency.**
 
-## Proposed stack
+## Stack
 
-- Node.js 22+
-- TypeScript
-- pnpm workspace
-- Fastify
+- Node.js 22+ and pnpm 10
+- TypeScript strict mode
+- Fastify API
 - React + Vite
-- SQLite + Drizzle ORM
-- Zod
-- Pino
-- WebSocket
-- ACP TypeScript SDK
+- SQLite + Drizzle ORM (planned)
+- Zod (planned)
 - Vitest + Playwright
+- GitHub Actions
+
+## Quick start
+
+Prerequisites: Node.js 22+ and pnpm 10.
+
+```bash
+pnpm install
+pnpm lint
+pnpm typecheck
+pnpm test
+pnpm build
+pnpm test:e2e
+```
+
+Start the API and web UI in separate terminals:
+
+```bash
+pnpm dev:server
+pnpm dev:web
+```
+
+The API health endpoint is available at [http://127.0.0.1:3000/health](http://127.0.0.1:3000/health). The web control-center bootstrap runs at [http://127.0.0.1:5173](http://127.0.0.1:5173).
 
 ## Repository status
 
-This PR establishes the architecture and package boundaries; it is **not yet a runnable application**. Workspace package manifests, executable build/test/lint/typecheck scripts, CI, and the health endpoint are tracked by Issue #1 and will be added with the bootstrap implementation.
+The repository now has a runnable Phase 0 baseline: server health endpoint, web shell, strict TypeScript project configs, unit and browser smoke-test harnesses, and CI quality gates. Agent registry, ACP runtime, persistence, orchestration, and the remaining control-plane features are subsequent issues.
 
 ## V0 success criteria
 
 V0 is successful when a user can register arbitrary stdio ACP agents, authorize them independently, choose any eligible agent as Boss, and have the Boss discover and delegate tasks to another ACP worker through the control plane with durable tasks/messages and visible execution history.
 
-See [docs/architecture/overview.md](docs/architecture/overview.md) and [docs/architecture/v0-scope.md](docs/architecture/v0-scope.md).
+See [docs/architecture/overview.md](docs/architecture/overview.md), [docs/architecture/v0-scope.md](docs/architecture/v0-scope.md), and [docs/roadmap/v0.md](docs/roadmap/v0.md).
