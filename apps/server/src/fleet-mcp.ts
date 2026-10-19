@@ -373,7 +373,7 @@ export function createFleetMcpServer(bridge: FleetMcpBridge): McpServer {
       async (input) => {
         const result = await bridge.call(definition.name, input);
         return {
-          content: [{ type: 'text', text: JSON.stringify(result) }],
+          content: [{ type: 'text', text: JSON.stringify(result ?? null) }],
         };
       },
     );
