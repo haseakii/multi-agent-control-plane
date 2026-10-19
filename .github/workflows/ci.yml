@@ -30,9 +30,6 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Inspect ACP runtime formatting
-        run: pnpm exec prettier packages/acp-runtime/src/runtime.ts
-
       - name: Lint
         run: pnpm lint
 
