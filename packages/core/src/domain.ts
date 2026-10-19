@@ -170,6 +170,7 @@ export const TaskStateSchema = z.enum([
   'failed',
   'cancelled',
 ]);
+export type TaskState = z.infer<typeof TaskStateSchema>;
 
 export const TaskSchema = z
   .object({
