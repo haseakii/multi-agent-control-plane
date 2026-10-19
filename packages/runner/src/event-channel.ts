@@ -2,7 +2,7 @@ export class EventChannel<T> {
   private readonly history: T[] = [];
   private readonly subscribers = new Set<{
     queue: T[];
-    wake?: () => void;
+    wake: (() => void) | undefined;
   }>();
   private closed = false;
 
