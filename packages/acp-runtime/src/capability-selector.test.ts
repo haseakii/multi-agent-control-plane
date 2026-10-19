@@ -47,9 +47,7 @@ describe('CapabilitySelector', () => {
     registry.create(
       definition('agent-disabled', [{ name: 'code.read', source: 'configured' }], false),
     );
-    registry.create(
-      definition('agent-needs-login', [{ name: 'code.read', source: 'configured' }]),
-    );
+    registry.create(definition('agent-needs-login', [{ name: 'code.read', source: 'configured' }]));
     registry.create(
       definition('agent-policy-denied', [{ name: 'code.read', source: 'configured' }]),
     );
