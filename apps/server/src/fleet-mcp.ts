@@ -31,33 +31,89 @@ export type FleetMcpAuditEvent = {
 
 export type FleetMcpServices = {
   agents: {
-    discover(input: {
-      exact?: string[] | undefined;
-      prefixes?: string[] | undefined;
-      custom?: string | undefined;
-      limit?: number | undefined;
-    }, principal: FleetMcpPrincipal): Promise<unknown>;
+    discover(
+      input: {
+        exact?: string[] | undefined;
+        prefixes?: string[] | undefined;
+        custom?: string | undefined;
+        limit?: number | undefined;
+      },
+      principal: FleetMcpPrincipal,
+    ): Promise<unknown>;
     get(input: { agentId: string }, principal: FleetMcpPrincipal): Promise<unknown>;
   };
   tasks: {
-    create(input: { title: string; objective: string; parentTaskId?: string | undefined }, principal: FleetMcpPrincipal): Promise<unknown>;
-    delegate(input: { taskId: string; agentId: string; objective: string; role?: { name: string; description?: string | undefined } | undefined }, principal: FleetMcpPrincipal): Promise<unknown>;
+    create(
+      input: { title: string; objective: string; parentTaskId?: string | undefined },
+      principal: FleetMcpPrincipal,
+    ): Promise<unknown>;
+    delegate(
+      input: {
+        taskId: string;
+        agentId: string;
+        objective: string;
+        role?: { name: string; description?: string | undefined } | undefined;
+      },
+      principal: FleetMcpPrincipal,
+    ): Promise<unknown>;
     get(input: { taskId: string }, principal: FleetMcpPrincipal): Promise<unknown>;
-    wait(input: { taskId: string; timeoutMs?: number | undefined }, principal: FleetMcpPrincipal): Promise<unknown>;
-    cancel(input: { taskId: string; cascade?: boolean | undefined }, principal: FleetMcpPrincipal): Promise<unknown>;
+    wait(
+      input: { taskId: string; timeoutMs?: number | undefined },
+      principal: FleetMcpPrincipal,
+    ): Promise<unknown>;
+    cancel(
+      input: { taskId: string; cascade?: boolean | undefined },
+      principal: FleetMcpPrincipal,
+    ): Promise<unknown>;
   };
   messages: {
-    send(input: { taskId: string; toAgentId?: string | undefined; type: 'request' | 'response' | 'message' | 'handoff' | 'event' | 'status'; content?: string | undefined; artifactRefs?: string[] | undefined; correlationId?: string | undefined }, principal: FleetMcpPrincipal): Promise<unknown>;
+    send(
+      input: {
+        taskId: string;
+        toAgentId?: string | undefined;
+        type: 'request' | 'response' | 'message' | 'handoff' | 'event' | 'status';
+        content?: string | undefined;
+        artifactRefs?: string[] | undefined;
+        correlationId?: string | undefined;
+      },
+      principal: FleetMcpPrincipal,
+    ): Promise<unknown>;
   };
   artifacts: {
-    publish(input: { taskId?: string | undefined; kind: 'plan' | 'report' | 'patch' | 'diff' | 'log' | 'image' | 'test-report' | 'file' | 'directory-manifest' | 'json' | 'text'; mimeType: string; content: string }, principal: FleetMcpPrincipal): Promise<unknown>;
+    publish(
+      input: {
+        taskId?: string | undefined;
+        kind:
+          | 'plan'
+          | 'report'
+          | 'patch'
+          | 'diff'
+          | 'log'
+          | 'image'
+          | 'test-report'
+          | 'file'
+          | 'directory-manifest'
+          | 'json'
+          | 'text';
+        mimeType: string;
+        content: string;
+      },
+      principal: FleetMcpPrincipal,
+    ): Promise<unknown>;
     get(input: { artifactId: string }, principal: FleetMcpPrincipal): Promise<unknown>;
   };
   approvals: {
-    request(input: { taskId?: string | undefined; action: string; resource: JsonValue }, principal: FleetMcpPrincipal): Promise<unknown>;
+    request(
+      input: { taskId?: string | undefined; action: string; resource: JsonValue },
+      principal: FleetMcpPrincipal,
+    ): Promise<unknown>;
   };
   policy: {
-    authorize(input: { operation: string; principal: FleetMcpPrincipal; resource: Record<string, JsonValue> }): Promise<{ allowed: boolean; reason?: string }>;
+    authorize(input: {
+      operation: string;
+      principal: FleetMcpPrincipal;
+      resource: Record<string, JsonValue>;
+    }): Promise<{ allowed: boolean; reason?: string }>;
   };
   audit: {
     record(event: FleetMcpAuditEvent): Promise<void>;
@@ -71,7 +127,11 @@ type ToolDefinition = {
   scopes: BridgeScope[];
   scopeMode?: 'all' | 'any';
   resource: (input: Record<string, unknown>) => Record<string, JsonValue>;
-  invoke: (input: never, principal: FleetMcpPrincipal, services: FleetMcpServices) => Promise<unknown>;
+  invoke: (
+    input: never,
+    principal: FleetMcpPrincipal,
+    services: FleetMcpServices,
+  ) => Promise<unknown>;
 };
 
 const emptyObject = z.object({}).strict();
@@ -109,7 +169,11 @@ function hasRequiredScopes(principal: FleetMcpPrincipal, tool: ToolDefinition): 
 function defineTool<TSchema extends z.ZodObject<z.ZodRawShape>>(
   definition: Omit<ToolDefinition, 'schema' | 'invoke'> & {
     schema: TSchema;
-    invoke: (input: z.infer<TSchema>, principal: FleetMcpPrincipal, services: FleetMcpServices) => Promise<unknown>;
+    invoke: (
+      input: z.infer<TSchema>,
+      principal: FleetMcpPrincipal,
+      services: FleetMcpServices,
+    ) => Promise<unknown>;
   },
 ): ToolDefinition {
   return definition as ToolDefinition;
@@ -118,13 +182,16 @@ function defineTool<TSchema extends z.ZodObject<z.ZodRawShape>>(
 const tools: ToolDefinition[] = [
   defineTool({
     name: 'control_discover_agents',
-    description: 'Discover enabled, ready agents by exact capabilities, prefixes, or a registered custom query. Capabilities are routing hints, not permissions.',
-    schema: z.object({
-      exact: z.array(z.string().trim().min(1).max(128)).optional(),
-      prefixes: z.array(z.string().trim().min(1).max(128)).optional(),
-      custom: z.string().trim().min(1).max(256).optional(),
-      limit: z.number().int().positive().max(100).optional(),
-    }).strict(),
+    description:
+      'Discover enabled, ready agents by exact capabilities, prefixes, or a registered custom query. Capabilities are routing hints, not permissions.',
+    schema: z
+      .object({
+        exact: z.array(z.string().trim().min(1).max(128)).optional(),
+        prefixes: z.array(z.string().trim().min(1).max(128)).optional(),
+        custom: z.string().trim().min(1).max(256).optional(),
+        limit: z.number().int().positive().max(100).optional(),
+      })
+      .strict(),
     scopes: ['boss.orchestration'],
     resource: safeResource,
     invoke: (input, principal, services) => services.agents.discover(input, principal),
@@ -148,12 +215,14 @@ const tools: ToolDefinition[] = [
   defineTool({
     name: 'control_delegate_task',
     description: 'Delegate an existing task to an eligible agent with a task-scoped role.',
-    schema: z.object({
-      taskId,
-      agentId,
-      objective: text,
-      role: z.object({ name: text, description: text.optional() }).strict().optional(),
-    }).strict(),
+    schema: z
+      .object({
+        taskId,
+        agentId,
+        objective: text,
+        role: z.object({ name: text, description: text.optional() }).strict().optional(),
+      })
+      .strict(),
     scopes: ['boss.orchestration'],
     resource: safeResource,
     invoke: (input, principal, services) => services.tasks.delegate(input, principal),
@@ -170,7 +239,9 @@ const tools: ToolDefinition[] = [
   defineTool({
     name: 'control_wait_task',
     description: 'Wait for task state changes up to a bounded timeout.',
-    schema: z.object({ taskId, timeoutMs: z.number().int().min(0).max(120_000).optional() }).strict(),
+    schema: z
+      .object({ taskId, timeoutMs: z.number().int().min(0).max(120_000).optional() })
+      .strict(),
     scopes: ['boss.orchestration'],
     resource: safeResource,
     invoke: (input, principal, services) => services.tasks.wait(input, principal),
@@ -178,14 +249,16 @@ const tools: ToolDefinition[] = [
   defineTool({
     name: 'control_send_message',
     description: 'Send a durable message through the control-plane message router.',
-    schema: z.object({
-      taskId,
-      toAgentId: agentId.optional(),
-      type: z.enum(['request', 'response', 'message', 'handoff', 'event', 'status']),
-      content: z.string().max(20_000).optional(),
-      artifactRefs: z.array(z.string().trim().min(1).max(128)).max(100).optional(),
-      correlationId: z.string().trim().min(1).max(128).optional(),
-    }).strict(),
+    schema: z
+      .object({
+        taskId,
+        toAgentId: agentId.optional(),
+        type: z.enum(['request', 'response', 'message', 'handoff', 'event', 'status']),
+        content: z.string().max(20_000).optional(),
+        artifactRefs: z.array(z.string().trim().min(1).max(128)).max(100).optional(),
+        correlationId: z.string().trim().min(1).max(128).optional(),
+      })
+      .strict(),
     scopes: ['agent.messaging'],
     resource: safeResource,
     invoke: (input, principal, services) => services.messages.send(input, principal),
@@ -193,12 +266,26 @@ const tools: ToolDefinition[] = [
   defineTool({
     name: 'control_publish_artifact',
     description: 'Publish an immutable artifact through the shared artifact service.',
-    schema: z.object({
-      taskId: taskId.optional(),
-      kind: z.enum(['plan', 'report', 'patch', 'diff', 'log', 'image', 'test-report', 'file', 'directory-manifest', 'json', 'text']),
-      mimeType: z.string().trim().min(1).max(256),
-      content: z.string().max(1_000_000),
-    }).strict(),
+    schema: z
+      .object({
+        taskId: taskId.optional(),
+        kind: z.enum([
+          'plan',
+          'report',
+          'patch',
+          'diff',
+          'log',
+          'image',
+          'test-report',
+          'file',
+          'directory-manifest',
+          'json',
+          'text',
+        ]),
+        mimeType: z.string().trim().min(1).max(256),
+        content: z.string().max(1_000_000),
+      })
+      .strict(),
     scopes: ['artifact.publish'],
     resource: (input) => ({
       ...safeResource(input),
