@@ -6,5 +6,10 @@ export default defineConfig({
     environment: 'node',
     restoreMocks: true,
     clearMocks: true,
+    server: {
+      deps: {
+        inline: ['@control-plane/storage'],
+      },
+    },
   },
 });
