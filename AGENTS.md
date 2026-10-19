@@ -11,9 +11,10 @@ Build a local-first, vendor-neutral multi-agent control plane. Do not encode ven
 5. Task state is durable and independent from ACP conversation/session state.
 6. Authentication is agent-managed by default; never copy provider credentials into task payloads.
 7. Large outputs travel as artifacts, not inline messages.
-8. Policy/approval decisions are enforced outside the agent.
+8. Policy is authoritative for control-plane-mediated operations. Never claim that opaque agent-owned tools are intercepted unless the adapter or OS isolation actually guarantees mediation.
 9. Local SQLite/filesystem implementations must sit behind interfaces so distributed implementations can be added later.
 10. OpenHands integrations are optional adapters; the core must not depend on OpenHands.
+11. LocalRunner and Git worktrees are not OS security sandboxes.
 
 ## Development rules
 - TypeScript strict mode.
@@ -24,6 +25,7 @@ Build a local-first, vendor-neutral multi-agent control plane. Do not encode ven
 - New orchestration behavior requires deterministic unit tests.
 - Avoid introducing Kafka, Redis, vector databases, Kubernetes, or cloud-only services into V0.
 - Do not silently auto-approve dangerous ACP permission requests.
+- Record whether a policy decision is enforced, cooperative, or unavailable at the actual execution boundary.
 
 ## V0 priority
 Prove one end-to-end path:
