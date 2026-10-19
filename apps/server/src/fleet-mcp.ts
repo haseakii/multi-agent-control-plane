@@ -435,11 +435,23 @@ export class FleetMcpBridge {
     const policyResource = tool.policyResource
       ? tool.policyResource(args)
       : (args as unknown as Record<string, JsonValue>);
-    const decision = await this.services.policy.authorize({
-      operation: tool.name,
-      principal: this.principal,
-      resource: policyResource,
-    });
+    let decision: { allowed: boolean; reason?: string };
+    try {
+      decision = await this.services.policy.authorize({
+        operation: tool.name,
+        principal: this.principal,
+        resource: policyResource,
+      });
+    } catch {
+      await this.services.audit.record({
+        operation: tool.name,
+        principal: this.principal,
+        resource,
+        phase: 'denied',
+        reason: 'policy_evaluation_failed',
+      });
+      throw new Error('Policy evaluation failed; the operation was not executed.');
+    }
 
     if (!decision.allowed) {
       await this.services.audit.record({
@@ -447,7 +459,7 @@ export class FleetMcpBridge {
         principal: this.principal,
         resource,
         phase: 'denied',
-        ...(decision.reason ? { reason: decision.reason } : {}),
+        reason: 'policy_denied',
       });
       throw new Error(decision.reason ?? `Policy denied operation: ${tool.name}`);
     }
@@ -459,25 +471,31 @@ export class FleetMcpBridge {
       phase: 'attempted',
     });
 
+    let result: unknown;
     try {
-      const result = await tool.invoke(args as never, this.principal, this.services);
-      await this.services.audit.record({
-        operation: tool.name,
-        principal: this.principal,
-        resource,
-        phase: 'completed',
-      });
-      return result;
+      result = await tool.invoke(args as never, this.principal, this.services);
     } catch (error) {
-      await this.services.audit.record({
-        operation: tool.name,
-        principal: this.principal,
-        resource,
-        phase: 'failed',
-        reason: error instanceof Error ? error.message : 'Unknown service failure',
-      });
+      try {
+        await this.services.audit.record({
+          operation: tool.name,
+          principal: this.principal,
+          resource,
+          phase: 'failed',
+          reason: 'service_error',
+        });
+      } catch {
+        // Preserve the original service failure; the attempted audit record already exists.
+      }
       throw error;
     }
+
+    await this.services.audit.record({
+      operation: tool.name,
+      principal: this.principal,
+      resource,
+      phase: 'completed',
+    });
+    return result;
   }
 }
 
