@@ -30,13 +30,6 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Temporary formatter diagnostic
-        run: |
-          pnpm exec prettier --write "apps/server/src/fleet-mcp*.ts"
-          git diff -- apps/server/src/fleet-mcp*.ts
-          cat apps/server/src/fleet-mcp.ts
-          cat apps/server/src/fleet-mcp.test.ts
-
       - name: Lint
         run: pnpm lint
 
