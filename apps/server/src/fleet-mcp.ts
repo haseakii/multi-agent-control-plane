@@ -127,6 +127,7 @@ type ToolDefinition = {
   scopes: BridgeScope[];
   scopeMode?: 'all' | 'any';
   resource: (input: Record<string, unknown>) => Record<string, JsonValue>;
+  policyResource?: (input: Record<string, unknown>) => Record<string, JsonValue>;
   invoke: (
     input: never,
     principal: FleetMcpPrincipal,
@@ -134,7 +135,6 @@ type ToolDefinition = {
   ) => Promise<unknown>;
 };
 
-const emptyObject = z.object({}).strict();
 const taskId = z.string().trim().min(1).max(128);
 const agentId = z.string().trim().min(1).max(128);
 const text = z.string().trim().min(1).max(20_000);
@@ -142,9 +142,45 @@ const jsonResource = z.json();
 
 function safeResource(input: Record<string, unknown>): Record<string, JsonValue> {
   const result: Record<string, JsonValue> = {};
+  const allowedKeys = new Set([
+    'taskId',
+    'parentTaskId',
+    'agentId',
+    'toAgentId',
+    'artifactId',
+    'kind',
+    'mimeType',
+    'type',
+    'limit',
+    'timeoutMs',
+    'cascade',
+    'exact',
+    'prefixes',
+    'correlationId',
+    'artifactRefs',
+  ]);
+
   for (const [key, value] of Object.entries(input)) {
-    if (['content', 'resource', 'secret', 'token', 'password'].includes(key.toLowerCase())) {
+    if (key === 'content') {
+      result.contentBytes = new TextEncoder().encode(String(value ?? '')).length;
+      continue;
+    }
+    if (key === 'resource') {
+      result.resourceOmitted = true;
+      if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+        result.resourceKeys = Object.keys(value as Record<string, unknown>);
+      }
+      continue;
+    }
+    if (['secret', 'token', 'password'].some((sensitive) => key.toLowerCase().includes(sensitive))) {
       result[`${key}Omitted`] = true;
+      continue;
+    }
+    if (key === 'custom') {
+      result.customQueryProvided = typeof value === 'string' && value.length > 0;
+      continue;
+    }
+    if (!allowedKeys.has(key)) {
       continue;
     }
     if (
@@ -394,10 +430,13 @@ export class FleetMcpBridge {
 
     const args = tool.schema.parse(input) as Record<string, unknown>;
     const resource = tool.resource(args);
+    const policyResource = tool.policyResource
+      ? tool.policyResource(args)
+      : (args as unknown as Record<string, JsonValue>);
     const decision = await this.services.policy.authorize({
       operation: tool.name,
       principal: this.principal,
-      resource,
+      resource: policyResource,
     });
 
     if (!decision.allowed) {
