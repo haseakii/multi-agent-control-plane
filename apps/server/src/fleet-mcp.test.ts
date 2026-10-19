@@ -157,6 +157,35 @@ describe('FleetMcpBridge', () => {
     expect(JSON.stringify(auditEvents)).not.toContain('private artifact body');
   });
 
+  it('lets policy inspect approval resources without copying resource values into audit records', async () => {
+    const bridge = new FleetMcpBridge(
+      definition(['boss.orchestration'], true),
+      principal(['boss.orchestration']),
+      {
+        readiness: { runtime: 'ready', auth: 'ready' },
+        supportsSessionMcp: true,
+        bossAssignmentAllowed: true,
+      },
+      services,
+    );
+    const resource = { targetPath: '/private/project.env', operation: 'write' };
+
+    await bridge.call('control_request_approval', {
+      action: 'write-file',
+      resource,
+    });
+
+    expect(services.policy.authorize).toHaveBeenCalledWith(
+      expect.objectContaining({ resource: { action: 'write-file', resource } }),
+    );
+    const auditEvents = vi.mocked(services.audit.record).mock.calls.map(([event]) => event);
+    expect(JSON.stringify(auditEvents)).not.toContain('/private/project.env');
+    expect(auditEvents[0]?.resource).toMatchObject({
+      action: 'write-file',
+      resourceKeys: ['targetPath', 'operation'],
+    });
+  });
+
   it('rejects unsafe bridge attachments and scopes outside the configured ceiling', () => {
     expect(
       () =>
