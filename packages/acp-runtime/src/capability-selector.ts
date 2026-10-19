@@ -111,8 +111,9 @@ export class CapabilitySelector<TContext = CapabilityQueryContext> {
       }
 
       const customMatches = query.custom
-        ? agent.capabilities.filter((capability) =>
-            this.options.customCapabilityMatcher?.(capability, query.custom!) ?? false,
+        ? agent.capabilities.filter(
+            (capability) =>
+              this.options.customCapabilityMatcher?.(capability, query.custom!) ?? false,
           )
         : [];
       if (query.custom && customMatches.length === 0) {
@@ -142,8 +143,7 @@ export class CapabilitySelector<TContext = CapabilityQueryContext> {
     }
 
     results.sort(
-      (left, right) =>
-        right.score - left.score || left.agent.id.localeCompare(right.agent.id),
+      (left, right) => right.score - left.score || left.agent.id.localeCompare(right.agent.id),
     );
     return results.slice(0, query.limit);
   }
