@@ -121,6 +121,20 @@ export class LocalRunner implements Runner {
       detached: process.platform !== 'win32',
     });
 
+    await new Promise<void>((resolveSpawn, rejectSpawn) => {
+      const onSpawn = () => {
+        child.off('error', onError);
+        resolveSpawn();
+      };
+      const onError = (error: Error) => {
+        child.off('spawn', onSpawn);
+        rejectSpawn(error);
+      };
+
+      child.once('spawn', onSpawn);
+      child.once('error', onError);
+    });
+
     if (child.pid === undefined) {
       throw new Error('Spawned process did not expose a pid.');
     }
