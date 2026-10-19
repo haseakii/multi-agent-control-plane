@@ -1,9 +1,33 @@
 {
   "name": "multi-agent-control-plane",
   "private": true,
-  "version": "0.0.0",
-  "packageManager": "pnpm@10",
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.11.0",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.0.0",
+    "pnpm": ">=10.0.0"
+  },
+  "scripts": {
+    "dev:server": "pnpm --filter @control-plane/server dev",
+    "dev:web": "pnpm --filter @control-plane/web dev",
+    "build": "pnpm -r --if-present build",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "lint": "prettier --check \"apps/**/*.{ts,tsx,css,html,json}\" \"packages/**/*.{ts,json}\" \"*.json\" \"*.yaml\" \"*.yml\" \".github/workflows/*.yml\" \"playwright.config.ts\" \"vitest.config.ts\" \".prettierrc.json\""
+  },
+  "devDependencies": {
+    "@playwright/test": "1.52.0",
+    "@types/node": "22.15.3",
+    "prettier": "3.5.3",
+    "tsx": "4.19.4",
+    "typescript": "5.8.3",
+    "vitest": "3.2.4"
+  },
+  "prettier": {
+    "singleQuote": true,
+    "semi": true,
+    "trailingComma": "all",
+    "printWidth": 100
   }
 }
