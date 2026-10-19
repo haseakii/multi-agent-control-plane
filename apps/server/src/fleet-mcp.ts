@@ -32,29 +32,29 @@ export type FleetMcpAuditEvent = {
 export type FleetMcpServices = {
   agents: {
     discover(input: {
-      exact?: string[];
-      prefixes?: string[];
-      custom?: string;
-      limit?: number;
+      exact?: string[] | undefined;
+      prefixes?: string[] | undefined;
+      custom?: string | undefined;
+      limit?: number | undefined;
     }, principal: FleetMcpPrincipal): Promise<unknown>;
     get(input: { agentId: string }, principal: FleetMcpPrincipal): Promise<unknown>;
   };
   tasks: {
-    create(input: { title: string; objective: string; parentTaskId?: string }, principal: FleetMcpPrincipal): Promise<unknown>;
-    delegate(input: { taskId: string; agentId: string; objective: string; role?: { name: string; description?: string } }, principal: FleetMcpPrincipal): Promise<unknown>;
+    create(input: { title: string; objective: string; parentTaskId?: string | undefined }, principal: FleetMcpPrincipal): Promise<unknown>;
+    delegate(input: { taskId: string; agentId: string; objective: string; role?: { name: string; description?: string | undefined } | undefined }, principal: FleetMcpPrincipal): Promise<unknown>;
     get(input: { taskId: string }, principal: FleetMcpPrincipal): Promise<unknown>;
-    wait(input: { taskId: string; timeoutMs?: number }, principal: FleetMcpPrincipal): Promise<unknown>;
-    cancel(input: { taskId: string; cascade?: boolean }, principal: FleetMcpPrincipal): Promise<unknown>;
+    wait(input: { taskId: string; timeoutMs?: number | undefined }, principal: FleetMcpPrincipal): Promise<unknown>;
+    cancel(input: { taskId: string; cascade?: boolean | undefined }, principal: FleetMcpPrincipal): Promise<unknown>;
   };
   messages: {
-    send(input: { taskId: string; toAgentId?: string; type: 'request' | 'response' | 'message' | 'handoff' | 'event' | 'status'; content?: string; artifactRefs?: string[]; correlationId?: string }, principal: FleetMcpPrincipal): Promise<unknown>;
+    send(input: { taskId: string; toAgentId?: string | undefined; type: 'request' | 'response' | 'message' | 'handoff' | 'event' | 'status'; content?: string | undefined; artifactRefs?: string[] | undefined; correlationId?: string }, principal: FleetMcpPrincipal): Promise<unknown>;
   };
   artifacts: {
-    publish(input: { taskId?: string; kind: 'plan' | 'report' | 'patch' | 'diff' | 'log' | 'image' | 'test-report' | 'file' | 'directory-manifest' | 'json' | 'text'; mimeType: string; content: string }, principal: FleetMcpPrincipal): Promise<unknown>;
+    publish(input: { taskId?: string | undefined; kind: 'plan' | 'report' | 'patch' | 'diff' | 'log' | 'image' | 'test-report' | 'file' | 'directory-manifest' | 'json' | 'text'; mimeType: string; content: string }, principal: FleetMcpPrincipal): Promise<unknown>;
     get(input: { artifactId: string }, principal: FleetMcpPrincipal): Promise<unknown>;
   };
   approvals: {
-    request(input: { taskId?: string; action: string; resource: JsonValue }, principal: FleetMcpPrincipal): Promise<unknown>;
+    request(input: { taskId?: string | undefined; action: string; resource: JsonValue }, principal: FleetMcpPrincipal): Promise<unknown>;
   };
   policy: {
     authorize(input: { operation: string; principal: FleetMcpPrincipal; resource: Record<string, JsonValue> }): Promise<{ allowed: boolean; reason?: string }>;
