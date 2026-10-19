@@ -6,6 +6,7 @@ import { openSqliteStorage } from '@control-plane/storage';
 import { TaskEngine, TaskEngineError } from './index.js';
 
 const tempDirectories: string[] = [];
+let sequence = 0;
 const now = '2026-10-19T07:10:00Z';
 
 function createDatabasePath(): string {
@@ -16,7 +17,6 @@ function createDatabasePath(): string {
 
 function createEngine(filename: string) {
   const storage = openSqliteStorage({ filename });
-  let sequence = 0;
   const engine = new TaskEngine(storage.repositories, {
     now: () => now,
     idFactory: (kind) => `${kind}-test-${++sequence}`,
