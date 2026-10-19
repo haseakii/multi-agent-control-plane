@@ -1,5 +1,5 @@
-# runner
+# runner app
 
-Future runner process/daemon.
+Future runner process/daemon entry point.
 
-V0 starts with LocalRunner. The package boundary exists now so process supervision can later move to remote machines without changing the control-plane domain.
+Reusable runner contracts and the V0 `LocalRunner` implementation live in `@control-plane/runner`. This app boundary is reserved for a later remote runner daemon so process supervision can move to other machines without changing the control-plane domain or runner interface.
