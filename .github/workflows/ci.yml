@@ -27,6 +27,11 @@ jobs:
         with:
           node-version: 22
 
+      - name: Temporary MCP dependency lock diagnostic
+        run: |
+          pnpm install --lockfile-only --ignore-scripts
+          git diff -- pnpm-lock.yaml
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
