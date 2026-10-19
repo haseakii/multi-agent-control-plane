@@ -30,6 +30,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
 
+      - name: Inspect CSS formatting
+        run: pnpm exec prettier apps/web/src/style.css
+
       - name: Lint
         run: pnpm lint
 
