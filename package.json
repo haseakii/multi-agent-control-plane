@@ -1,0 +1,16 @@
+{
+  "name": "multi-agent-control-plane",
+  "private": true,
+  "version": "0.0.0",
+  "packageManager": "pnpm@10",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "dev": "pnpm --parallel -r dev",
+    "test": "pnpm -r test",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck"
+  }
+}
