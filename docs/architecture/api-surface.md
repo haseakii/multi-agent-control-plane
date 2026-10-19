@@ -43,19 +43,27 @@ WebSocket/SSE event stream for:
 - approvals
 - messages
 - runner state
+- policy enforcement mode and decision events
 
 ## Fleet MCP surface
-Preferred Boss tool names:
+
+Tools are exposed per session according to bridge scopes, active project/task, and policy. Configured scopes are an upper bound, not an authorization grant.
+
+Boss orchestration scope:
 - `control_discover_agents`
 - `control_get_agent`
 - `control_create_task`
 - `control_delegate_task`
 - `control_get_task`
 - `control_wait_task`
-- `control_send_message`
-- `control_publish_artifact`
-- `control_get_artifact`
 - `control_request_approval`
 - `control_cancel_task`
 
-All bridge operations call the same application services as HTTP/API clients.
+Messaging scope:
+- `control_send_message`
+
+Artifact scopes:
+- `control_publish_artifact`
+- `control_get_artifact`
+
+All bridge operations call the same application services as HTTP/API clients and enforce the same policy. The server must bind calls to the authenticated agent/session rather than trusting a caller-supplied agent ID.
