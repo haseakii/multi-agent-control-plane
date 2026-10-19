@@ -158,12 +158,16 @@ export class AcpRuntimeConnection {
   }
 
   async authenticate(methodId: string): Promise<void> {
-    const method = (this.initialized.authMethods ?? []).find((candidate) => candidate.id === methodId);
+    const method = (this.initialized.authMethods ?? []).find(
+      (candidate) => candidate.id === methodId,
+    );
     if (!method) {
       throw new RangeError(`Authentication method not advertised: ${methodId}`);
     }
     if (method.type === 'terminal') {
-      throw new TypeError('Terminal authentication must be executed by a runner, not ACP authenticate.');
+      throw new TypeError(
+        'Terminal authentication must be executed by a runner, not ACP authenticate.',
+      );
     }
 
     await this.connection.agent.request(acp.methods.agent.authenticate, { methodId });
