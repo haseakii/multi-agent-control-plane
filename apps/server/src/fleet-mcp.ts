@@ -172,7 +172,9 @@ function safeResource(input: Record<string, unknown>): Record<string, JsonValue>
       }
       continue;
     }
-    if (['secret', 'token', 'password'].some((sensitive) => key.toLowerCase().includes(sensitive))) {
+    if (
+      ['secret', 'token', 'password'].some((sensitive) => key.toLowerCase().includes(sensitive))
+    ) {
       result[`${key}Omitted`] = true;
       continue;
     }
