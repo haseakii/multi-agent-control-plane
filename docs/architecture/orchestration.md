@@ -65,6 +65,19 @@ Role is assignment-local text/metadata. The Boss may create a role at runtime, f
 
 Agent selection is capability-driven plus policy constraints. The framework never hard-codes "Gemini = architect" or equivalent mappings.
 
+### Capability discovery contract
+
+Capability queries support:
+- exact names, all of which must match;
+- prefixes, each of which must match at least one declared capability;
+- an optional caller-defined custom predicate, which must match at least one capability.
+
+Only enabled agents with a known-ready runtime and authentication state of `ready` or `not_reported` are eligible. Agents needing login, with unknown readiness, or with an unhealthy runtime are excluded. A routing-policy callback can further restrict candidates for the active project/task context.
+
+Selection results include the matched capability declarations, readiness snapshot, exact/prefix match metadata, custom-query match status, and a deterministic score. Higher match counts rank first; ties are broken by agent ID. Callers can apply a result limit.
+
+Capability source (`configured`, `advertised`, or `verified`) is provenance metadata, not a permission level. Neither a matching capability nor passing the routing filter authorizes an operation. The application service must perform its own policy check at execution time.
+
 ## Task graphs
 Tasks may form a DAG through parent/dependency relations. The framework provides graph execution primitives but does not prescribe phases such as research/design/implementation/review.
 
