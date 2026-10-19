@@ -70,9 +70,9 @@ describe('core domain schemas', () => {
     expect(TaskSchema.parse(task).id).toBe(taskId);
     expect(ConversationRefSchema.parse(conversation).sessionId).toBe('session-01');
     expect(TaskSchema.safeParse({ ...task, sessionId: 'session-01' }).success).toBe(false);
-    expect(ConversationRefSchema.safeParse({ ...conversation, objective: 'not allowed' }).success).toBe(
-      false,
-    );
+    expect(
+      ConversationRefSchema.safeParse({ ...conversation, objective: 'not allowed' }).success,
+    ).toBe(false);
   });
 
   it('allows role semantics only on assignments', () => {
