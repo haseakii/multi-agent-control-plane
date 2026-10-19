@@ -14,6 +14,8 @@ interface Runner {
 }
 ```
 
+Runner owns process creation/termination and exposes a process/transport handle to the ACP runtime. It does not own ACP session semantics.
+
 ## V0
 Implement `LocalRunner` only, but keep runner identity in process/conversation records.
 
@@ -36,11 +38,13 @@ runnerSelector:
 This allows a future Windows runner for GUI/Unity and Linux runners for normal coding agents.
 
 ## Workspace
-Workspace is the filesystem boundary visible to an assignment.
+Workspace is the filesystem view assigned to work, not automatically an OS security boundary.
 
 V0 providers:
 - LocalDirectoryWorkspace
 - GitWorktreeWorkspace
+
+A Git worktree helps isolate concurrent changes and makes review/merge safer, but does not prevent a local process from reading or modifying other files that its OS user can access. LocalRunner runs with its configured OS user's permissions. Do not use it for untrusted agents when strict filesystem/network isolation is required.
 
 ## Git worktree lifecycle
 Recommended write-task path:
@@ -53,6 +57,8 @@ Recommended write-task path:
 7. merge/cherry-pick is a separate policy-controlled operation
 8. cleanup when safe
 
+Control-plane Git operations such as merge/push can be policy-gated. A shell command executed directly inside an opaque agent tool may bypass those gates unless the runtime/sandbox mediates it.
+
 Multiple write agents should not share one worktree unless explicitly requested.
 
 ## Read-only review
@@ -61,4 +67,4 @@ A reviewer may receive:
 - diff/patch artifact only
 - repository snapshot
 
-The framework chooses based on assignment requirements and policy.
+The framework chooses based on assignment requirements and policy, but strict read-only guarantees require an enforced filesystem boundary rather than prompt instructions alone.
