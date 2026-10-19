@@ -47,7 +47,7 @@ export type FleetMcpServices = {
     cancel(input: { taskId: string; cascade?: boolean | undefined }, principal: FleetMcpPrincipal): Promise<unknown>;
   };
   messages: {
-    send(input: { taskId: string; toAgentId?: string | undefined; type: 'request' | 'response' | 'message' | 'handoff' | 'event' | 'status'; content?: string | undefined; artifactRefs?: string[] | undefined; correlationId?: string }, principal: FleetMcpPrincipal): Promise<unknown>;
+    send(input: { taskId: string; toAgentId?: string | undefined; type: 'request' | 'response' | 'message' | 'handoff' | 'event' | 'status'; content?: string | undefined; artifactRefs?: string[] | undefined; correlationId?: string | undefined }, principal: FleetMcpPrincipal): Promise<unknown>;
   };
   artifacts: {
     publish(input: { taskId?: string | undefined; kind: 'plan' | 'report' | 'patch' | 'diff' | 'log' | 'image' | 'test-report' | 'file' | 'directory-manifest' | 'json' | 'text'; mimeType: string; content: string }, principal: FleetMcpPrincipal): Promise<unknown>;
