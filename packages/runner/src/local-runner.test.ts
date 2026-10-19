@@ -64,7 +64,7 @@ describe('LocalRunner', () => {
       command: process.execPath,
       args: [
         '-e',
-        "console.log(JSON.stringify({visible:process.env.VISIBLE,leaked:process.env.RUNNER_SHOULD_NOT_LEAK}))",
+        'console.log(JSON.stringify({visible:process.env.VISIBLE,leaked:process.env.RUNNER_SHOULD_NOT_LEAK}))',
       ],
       cwd: tempDirectory(),
       env: { VISIBLE: 'explicit' },
@@ -74,7 +74,10 @@ describe('LocalRunner', () => {
     await runner.wait(handle);
     const events = await eventsPromise;
     const stdout = events
-      .filter((event): event is Extract<RunnerEvent, { type: 'process.stdout' }> => event.type === 'process.stdout')
+      .filter(
+        (event): event is Extract<RunnerEvent, { type: 'process.stdout' }> =>
+          event.type === 'process.stdout',
+      )
       .map((event) => event.chunk)
       .join('');
 

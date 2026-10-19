@@ -335,7 +335,11 @@ export class LocalRunner implements Runner {
   ): void {
     const decoder = new StringDecoder('utf8');
     stream.on('data', (chunk: Buffer | string) => {
-      this.publishOutput(record, type, decoder.write(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+      this.publishOutput(
+        record,
+        type,
+        decoder.write(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)),
+      );
     });
     stream.once('end', () => {
       this.publishOutput(record, type, decoder.end());
@@ -387,11 +391,11 @@ export class LocalRunner implements Runner {
 
     if (process.platform === 'win32') {
       if (force) {
-        const killer = spawn(
-          'taskkill',
-          ['/PID', String(record.handle.pid), '/T', '/F'],
-          { stdio: 'ignore', windowsHide: true, shell: false },
-        );
+        const killer = spawn('taskkill', ['/PID', String(record.handle.pid), '/T', '/F'], {
+          stdio: 'ignore',
+          windowsHide: true,
+          shell: false,
+        });
         killer.unref();
       } else {
         record.child.kill();
@@ -458,13 +462,34 @@ export class LocalRunner implements Runner {
   private publish(
     record: ProcessRecord,
     event:
-      | Omit<Extract<RunnerEvent, { type: 'process.started' }>, 'sequence' | 'occurredAt' | 'runnerId' | 'handleId'>
-      | Omit<Extract<RunnerEvent, { type: 'process.stdout' }>, 'sequence' | 'occurredAt' | 'runnerId' | 'handleId'>
-      | Omit<Extract<RunnerEvent, { type: 'process.stderr' }>, 'sequence' | 'occurredAt' | 'runnerId' | 'handleId'>
-      | Omit<Extract<RunnerEvent, { type: 'process.stop_requested' }>, 'sequence' | 'occurredAt' | 'runnerId' | 'handleId'>
-      | Omit<Extract<RunnerEvent, { type: 'process.timeout' }>, 'sequence' | 'occurredAt' | 'runnerId' | 'handleId'>
-      | Omit<Extract<RunnerEvent, { type: 'process.error' }>, 'sequence' | 'occurredAt' | 'runnerId' | 'handleId'>
-      | Omit<Extract<RunnerEvent, { type: 'process.exited' }>, 'sequence' | 'occurredAt' | 'runnerId' | 'handleId'>,
+      | Omit<
+          Extract<RunnerEvent, { type: 'process.started' }>,
+          'sequence' | 'occurredAt' | 'runnerId' | 'handleId'
+        >
+      | Omit<
+          Extract<RunnerEvent, { type: 'process.stdout' }>,
+          'sequence' | 'occurredAt' | 'runnerId' | 'handleId'
+        >
+      | Omit<
+          Extract<RunnerEvent, { type: 'process.stderr' }>,
+          'sequence' | 'occurredAt' | 'runnerId' | 'handleId'
+        >
+      | Omit<
+          Extract<RunnerEvent, { type: 'process.stop_requested' }>,
+          'sequence' | 'occurredAt' | 'runnerId' | 'handleId'
+        >
+      | Omit<
+          Extract<RunnerEvent, { type: 'process.timeout' }>,
+          'sequence' | 'occurredAt' | 'runnerId' | 'handleId'
+        >
+      | Omit<
+          Extract<RunnerEvent, { type: 'process.error' }>,
+          'sequence' | 'occurredAt' | 'runnerId' | 'handleId'
+        >
+      | Omit<
+          Extract<RunnerEvent, { type: 'process.exited' }>,
+          'sequence' | 'occurredAt' | 'runnerId' | 'handleId'
+        >,
   ): void {
     record.sequence += 1;
     record.channel.publish({
@@ -478,9 +503,7 @@ export class LocalRunner implements Runner {
 
   private getRecord(handle: ProcessHandle): ProcessRecord {
     if (handle.runnerId !== this.runnerId) {
-      throw new Error(
-        `Process handle belongs to runner ${handle.runnerId}, not ${this.runnerId}.`,
-      );
+      throw new Error(`Process handle belongs to runner ${handle.runnerId}, not ${this.runnerId}.`);
     }
     const record = this.records.get(handle.id);
     if (!record || record.handle.pid !== handle.pid) {

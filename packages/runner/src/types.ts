@@ -1,12 +1,6 @@
 import type { Runner as RunnerDescriptor, RunnerId } from '@control-plane/core';
 
-export type ProcessState =
-  | 'running'
-  | 'stopping'
-  | 'exited'
-  | 'failed'
-  | 'timed_out'
-  | 'cancelled';
+export type ProcessState = 'running' | 'stopping' | 'exited' | 'failed' | 'timed_out' | 'cancelled';
 
 export type ProcessSpec = {
   command: string;
