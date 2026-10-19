@@ -7,6 +7,7 @@ import type {
   AuditEvent,
   BossAssignment,
   ConversationRef,
+  ExecutionAttempt,
   Project,
   Runner,
   Task,
@@ -21,6 +22,7 @@ import {
   AuditEventSchema,
   BossAssignmentSchema,
   ConversationRefSchema,
+  ExecutionAttemptSchema,
   ProjectSchema,
   RunnerSchema,
   TaskSchema,
@@ -161,11 +163,13 @@ export type StorageRepositories = {
   workspaces: EntityRepository<Workspace>;
   tasks: EntityRepository<Task>;
   assignments: EntityRepository<Assignment>;
+  executionAttempts: EntityRepository<ExecutionAttempt>;
   conversations: EntityRepository<ConversationRef>;
   messages: EntityRepository<AgentMessage>;
   artifacts: EntityRepository<Artifact>;
   approvals: EntityRepository<Approval>;
   events: EventRepository;
+  transaction<T>(operation: () => T): T;
 };
 
 export function createRepositories(sqlite: Database.Database): StorageRepositories {
@@ -199,6 +203,17 @@ export function createRepositories(sqlite: Database.Database): StorageRepositori
       agent_id: value.agentId,
       state: value.state,
     })),
+    executionAttempts: new SqliteJsonRepository(
+      sqlite,
+      'execution_attempts',
+      ExecutionAttemptSchema,
+      (value) => ({
+        task_id: value.taskId,
+        assignment_id: value.assignmentId,
+        state: value.state,
+        number: value.number,
+      }),
+    ),
     conversations: new SqliteJsonRepository(
       sqlite,
       'conversations',
@@ -206,6 +221,7 @@ export function createRepositories(sqlite: Database.Database): StorageRepositori
       (value) => ({
         task_id: value.taskId,
         assignment_id: value.assignmentId,
+        execution_attempt_id: value.executionAttemptId,
         agent_id: value.agentId,
         runner_id: value.runnerId,
       }),
@@ -235,5 +251,8 @@ export function createRepositories(sqlite: Database.Database): StorageRepositori
       state: value.state,
     })),
     events: new SqliteEventRepository(sqlite),
+    transaction<T>(operation: () => T): T {
+      return sqlite.transaction(operation)();
+    },
   };
 }

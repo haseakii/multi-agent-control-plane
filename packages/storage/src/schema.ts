@@ -1,4 +1,4 @@
-import { index, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import { index, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 
 const payload = () => text('payload').notNull();
 
@@ -68,12 +68,30 @@ export const assignments = sqliteTable(
   ],
 );
 
+export const executionAttempts = sqliteTable(
+  'execution_attempts',
+  {
+    id: text('id').primaryKey(),
+    taskId: text('task_id').notNull(),
+    assignmentId: text('assignment_id').notNull(),
+    state: text('state').notNull(),
+    number: integer('number').notNull(),
+    payload: payload(),
+  },
+  (table) => [
+    index('execution_attempts_task_idx').on(table.taskId),
+    index('execution_attempts_assignment_number_idx').on(table.assignmentId, table.number),
+    index('execution_attempts_state_idx').on(table.state),
+  ],
+);
+
 export const conversations = sqliteTable(
   'conversations',
   {
     id: text('id').primaryKey(),
     taskId: text('task_id').notNull(),
     assignmentId: text('assignment_id').notNull(),
+    executionAttemptId: text('execution_attempt_id'),
     agentId: text('agent_id').notNull(),
     runnerId: text('runner_id').notNull(),
     payload: payload(),
@@ -81,6 +99,7 @@ export const conversations = sqliteTable(
   (table) => [
     index('conversations_task_idx').on(table.taskId),
     index('conversations_assignment_idx').on(table.assignmentId),
+    index('conversations_attempt_idx').on(table.executionAttemptId),
   ],
 );
 

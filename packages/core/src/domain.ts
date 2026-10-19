@@ -5,6 +5,7 @@ export const AgentIdSchema = z.string().min(1).max(128).brand<'AgentId'>();
 export const BossAssignmentIdSchema = z.string().min(1).max(128).brand<'BossAssignmentId'>();
 export const TaskIdSchema = z.string().min(1).max(128).brand<'TaskId'>();
 export const AssignmentIdSchema = z.string().min(1).max(128).brand<'AssignmentId'>();
+export const ExecutionAttemptIdSchema = z.string().min(1).max(128).brand<'ExecutionAttemptId'>();
 export const ConversationIdSchema = z.string().min(1).max(128).brand<'ConversationId'>();
 export const MessageIdSchema = z.string().min(1).max(128).brand<'MessageId'>();
 export const ArtifactIdSchema = z.string().min(1).max(128).brand<'ArtifactId'>();
@@ -18,6 +19,7 @@ export type AgentId = z.infer<typeof AgentIdSchema>;
 export type BossAssignmentId = z.infer<typeof BossAssignmentIdSchema>;
 export type TaskId = z.infer<typeof TaskIdSchema>;
 export type AssignmentId = z.infer<typeof AssignmentIdSchema>;
+export type ExecutionAttemptId = z.infer<typeof ExecutionAttemptIdSchema>;
 export type ConversationId = z.infer<typeof ConversationIdSchema>;
 export type MessageId = z.infer<typeof MessageIdSchema>;
 export type ArtifactId = z.infer<typeof ArtifactIdSchema>;
@@ -211,18 +213,54 @@ export const AssignmentSchema = z
     role: AssignmentRoleSchema.optional(),
     objective: z.string().min(1),
     state: AssignmentStateSchema,
-    attempt: z.number().int().positive(),
+    attempt: z.number().int().nonnegative(),
     createdAt: TimestampSchema,
     updatedAt: TimestampSchema,
   })
   .strict();
 export type Assignment = z.infer<typeof AssignmentSchema>;
 
+export const ExecutionAttemptStateSchema = z.enum([
+  'queued',
+  'running',
+  'waiting',
+  'completed',
+  'failed',
+  'cancelled',
+  'interrupted',
+]);
+
+export const ExecutionAttemptFailureSchema = z
+  .object({
+    code: z.string().min(1),
+    message: z.string().min(1),
+    retryable: z.boolean(),
+  })
+  .strict();
+
+export const ExecutionAttemptSchema = z
+  .object({
+    id: ExecutionAttemptIdSchema,
+    taskId: TaskIdSchema,
+    assignmentId: AssignmentIdSchema,
+    number: z.number().int().positive(),
+    state: ExecutionAttemptStateSchema,
+    runnerId: RunnerIdSchema.optional(),
+    createdAt: TimestampSchema,
+    updatedAt: TimestampSchema,
+    startedAt: TimestampSchema.optional(),
+    finishedAt: TimestampSchema.optional(),
+    failure: ExecutionAttemptFailureSchema.optional(),
+  })
+  .strict();
+export type ExecutionAttempt = z.infer<typeof ExecutionAttemptSchema>;
+
 export const ConversationRefSchema = z
   .object({
     id: ConversationIdSchema,
     taskId: TaskIdSchema,
     assignmentId: AssignmentIdSchema,
+    executionAttemptId: ExecutionAttemptIdSchema,
     agentId: AgentIdSchema,
     runnerId: RunnerIdSchema,
     protocol: z.string().min(1),
