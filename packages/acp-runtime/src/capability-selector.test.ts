@@ -29,7 +29,9 @@ function definition(
 }
 
 describe('CapabilitySelector', () => {
-  it('registers capabilities and selects ready, enabled, policy-eligible agents by exact and prefix match', () => {
+  it(
+    'registers capabilities and selects ready, enabled, policy-eligible agents by exact and prefix match',
+    () => {
     const registry = new InMemoryAgentRegistry();
     registry.create(
       definition('agent-a', [
@@ -44,7 +46,9 @@ describe('CapabilitySelector', () => {
         { name: 'unity.build', source: 'verified' },
       ]),
     );
-    registry.create(definition('agent-disabled', [{ name: 'code.read', source: 'configured' }], false));
+    registry.create(
+      definition('agent-disabled', [{ name: 'code.read', source: 'configured' }], false),
+    );
     registry.create(definition('agent-needs-login', [{ name: 'code.read', source: 'configured' }]));
     registry.create(definition('agent-policy-denied', [{ name: 'code.read', source: 'configured' }]));
 
@@ -76,12 +80,8 @@ describe('CapabilitySelector', () => {
 
   it('supports custom capability queries and limits while returning deterministic metadata', () => {
     const registry = new InMemoryAgentRegistry();
-    registry.create(
-      definition('agent-z', [{ name: 'code.review', source: 'verified' }]),
-    );
-    registry.create(
-      definition('agent-a', [{ name: 'security.audit', source: 'verified' }]),
-    );
+    registry.create(definition('agent-z', [{ name: 'code.review', source: 'verified' }]));
+    registry.create(definition('agent-a', [{ name: 'security.audit', source: 'verified' }]));
     const selector = new CapabilitySelector(registry, {
       getReadiness: () => ready,
       policyAllows: () => true,
@@ -128,9 +128,10 @@ describe('CapabilitySelector', () => {
       policyAllows: () => true,
     });
 
-    expect(() => selector.select({ custom: 'anything' })).toThrow(
-      'A customCapabilityMatcher is required',
-    );
-    expect(() => selector.select({})).toThrow();
-  });
+      expect(() => selector.select({ custom: 'anything' })).toThrow(
+        'A customCapabilityMatcher is required',
+      );
+      expect(() => selector.select({})).toThrow();
+    },
+  );
 });
