@@ -1,5 +1,6 @@
 import Fastify, { type FastifyServerOptions } from 'fastify';
 import type { ControlCenterSnapshot } from './control-center.js';
+import { registerAgentControlRoutes, type AgentControlService } from './agent-control.js';
 import { registerFleetBridgeGateway, type FleetBridgeGatewayOptions } from './fleet-gateway.js';
 
 export type ControlCenterProvider = () => Promise<ControlCenterSnapshot> | ControlCenterSnapshot;
@@ -8,6 +9,7 @@ export type BuildServerOptions = {
   fastify?: FastifyServerOptions;
   controlCenter?: ControlCenterProvider;
   fleetGateway?: FleetBridgeGatewayOptions;
+  agentControl?: AgentControlService;
 };
 
 export function buildServer(options: BuildServerOptions = {}) {
@@ -15,6 +17,9 @@ export function buildServer(options: BuildServerOptions = {}) {
 
   if (options.fleetGateway) {
     registerFleetBridgeGateway(app, options.fleetGateway);
+  }
+  if (options.agentControl) {
+    registerAgentControlRoutes(app, options.agentControl);
   }
 
   app.get('/health', async () => ({
