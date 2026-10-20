@@ -1,15 +1,21 @@
 import Fastify, { type FastifyServerOptions } from 'fastify';
 import type { ControlCenterSnapshot } from './control-center.js';
+import { registerFleetBridgeGateway, type FleetBridgeGatewayOptions } from './fleet-gateway.js';
 
 export type ControlCenterProvider = () => Promise<ControlCenterSnapshot> | ControlCenterSnapshot;
 
 export type BuildServerOptions = {
   fastify?: FastifyServerOptions;
   controlCenter?: ControlCenterProvider;
+  fleetGateway?: FleetBridgeGatewayOptions;
 };
 
 export function buildServer(options: BuildServerOptions = {}) {
   const app = Fastify(options.fastify ?? {});
+
+  if (options.fleetGateway) {
+    registerFleetBridgeGateway(app, options.fleetGateway);
+  }
 
   app.get('/health', async () => ({
     status: 'ok' as const,
