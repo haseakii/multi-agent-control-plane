@@ -199,7 +199,8 @@ export function createFleetMcpServer(options: FleetMcpServerOptions): McpServer 
     server.registerTool(
       'control_delegate_task',
       {
-        description: 'Delegate a durable task to a selected agent with an optional task-scoped role.',
+        description:
+          'Delegate a durable task to a selected agent with an optional task-scoped role.',
         inputSchema: z.object({
           taskId: z.string().min(1),
           agentId: z.string().min(1),
@@ -271,7 +272,8 @@ export function createFleetMcpServer(options: FleetMcpServerOptions): McpServer 
     server.registerTool(
       'control_publish_artifact',
       {
-        description: 'Publish an immutable artifact through the shared artifact application service.',
+        description:
+          'Publish an immutable artifact through the shared artifact application service.',
         inputSchema: z.object({
           taskId: z.string().min(1).optional(),
           kind: z.enum([
