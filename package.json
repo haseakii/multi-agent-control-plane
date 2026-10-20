@@ -11,7 +11,7 @@
     "dev:server": "pnpm --filter @control-plane/server dev",
     "dev:web": "pnpm --filter @control-plane/web dev",
     "build": "pnpm -r --if-present build",
-    "typecheck": "pnpm --filter @control-plane/core build && pnpm -r --if-present typecheck",
+    "typecheck": "pnpm --filter @control-plane/core build && pnpm --filter @control-plane/storage build && pnpm -r --if-present typecheck",
     "test": "pnpm --filter @control-plane/core build && pnpm --filter @control-plane/storage build && vitest run",
     "test:e2e": "playwright test",
     "lint": "prettier --check \"apps/**/*.{ts,tsx,css,html,json}\" \"packages/**/*.{ts,json}\" \"*.json\" \".github/workflows/*.yml\" \"playwright.config.ts\" \"vitest.config.ts\" \".prettierrc.json\""

@@ -85,6 +85,18 @@ importers:
         specifier: 4.6.7
         version: 4.6.7
 
+  packages/message-router:
+    dependencies:
+      '@control-plane/core':
+        specifier: workspace:*
+        version: link:../core
+      '@control-plane/storage':
+        specifier: workspace:*
+        version: link:../storage
+      zod:
+        specifier: 4.6.7
+        version: 4.6.7
+
   packages/runner:
     dependencies:
       '@control-plane/core':

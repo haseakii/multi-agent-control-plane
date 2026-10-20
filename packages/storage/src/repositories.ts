@@ -236,6 +236,7 @@ export function createRepositories(sqlite: Database.Database): StorageRepositori
         from_agent_id: value.fromAgentId,
         to_agent_id: value.toAgentId ?? null,
         type: value.type,
+        idempotency_key: value.idempotencyKey ?? null,
         created_at: value.createdAt,
       }),
       assertNoPotentialSecrets,

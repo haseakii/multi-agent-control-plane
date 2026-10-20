@@ -1,4 +1,4 @@
-import { index, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 const payload = () => text('payload').notNull();
 
@@ -112,12 +112,44 @@ export const messages = sqliteTable(
     fromAgentId: text('from_agent_id').notNull(),
     toAgentId: text('to_agent_id'),
     type: text('type').notNull(),
+    idempotencyKey: text('idempotency_key'),
     createdAt: text('created_at').notNull(),
     payload: payload(),
   },
   (table) => [
     index('messages_project_created_idx').on(table.projectId, table.createdAt),
     index('messages_recipient_idx').on(table.toAgentId, table.createdAt),
+    uniqueIndex('messages_idempotency_unique_idx').on(
+      table.projectId,
+      table.fromAgentId,
+      table.idempotencyKey,
+    ),
+  ],
+);
+
+export const messageDeliveries = sqliteTable(
+  'message_deliveries',
+  {
+    id: text('id').primaryKey(),
+    messageId: text('message_id').notNull(),
+    projectId: text('project_id').notNull(),
+    recipientAgentId: text('recipient_agent_id').notNull(),
+    mailboxKey: text('mailbox_key').notNull(),
+    sequence: integer('sequence').notNull(),
+    state: text('state').notNull(),
+    attemptCount: integer('attempt_count').notNull(),
+    availableAt: text('available_at').notNull(),
+    leaseUntil: text('lease_until'),
+    payload: payload(),
+  },
+  (table) => [
+    index('message_deliveries_recipient_state_idx').on(
+      table.recipientAgentId,
+      table.state,
+      table.availableAt,
+    ),
+    index('message_deliveries_mailbox_sequence_idx').on(table.mailboxKey, table.sequence),
+    index('message_deliveries_message_idx').on(table.messageId),
   ],
 );
 
