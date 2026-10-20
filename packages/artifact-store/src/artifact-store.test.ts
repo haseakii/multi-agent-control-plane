@@ -1,7 +1,7 @@
 import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { openSqliteStorage } from '@control-plane/storage';
+import { openSqliteStorage, PotentialSecretError } from '@control-plane/storage';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   ArtifactStore,
@@ -105,6 +105,25 @@ describe('ArtifactStore', () => {
     expect(loaded.artifact.assignmentId).toBe('assignment-restart');
     expect(loaded.links.map((link) => link.entityType)).toEqual(['task', 'assignment']);
     reopenedStorage.close();
+  });
+
+  it('rejects likely secrets before text-like artifacts reach blob or metadata storage', async () => {
+    const { blobs, storage, store } = createEnvironment();
+
+    await expect(
+      store.publish({
+        projectId: 'project-artifacts',
+        kind: 'log',
+        mimeType: 'text/plain',
+        content: new TextEncoder().encode(
+          'Authorization: Bearer abcdefghijklmnopqrstuvwxyz0123456789',
+        ),
+      }),
+    ).rejects.toBeInstanceOf(PotentialSecretError);
+
+    expect(storage.repositories.artifacts.list()).toHaveLength(0);
+    expect(() => readdirSync(blobs)).toThrow();
+    storage.close();
   });
 
   it('lets durable tasks and messages reference published artifacts by ID', async () => {
