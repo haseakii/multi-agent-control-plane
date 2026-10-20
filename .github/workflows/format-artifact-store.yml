@@ -1,0 +1,35 @@
+name: Format Artifact Store (temporary)
+
+on:
+  push:
+    branches:
+      - codex/issue-10-artifact-store
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/issue-10-artifact-store
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.11.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec prettier --write "packages/artifact-store/src/*.ts"
+      - name: Commit formatting
+        run: |
+          if git diff --quiet -- packages/artifact-store/src; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/artifact-store/src
+          git commit -m "style: format artifact store sources"
+          git push origin HEAD:codex/issue-10-artifact-store
