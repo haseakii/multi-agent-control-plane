@@ -1,9 +1,10 @@
 import { AgentDefinitionSchema, AgentIdSchema } from '@control-plane/core';
+import type { BridgeScope } from '@control-plane/core';
 import { describe, expect, it, vi } from 'vitest';
 import { createFleetToolExecutor } from './executor.js';
 import type { FleetBridgeHooks, FleetControlServices } from './types.js';
 
-function agent(scopes = ['boss.orchestration'] as const) {
+function agent(scopes: readonly BridgeScope[] = ['boss.orchestration']) {
   return AgentDefinitionSchema.parse({
     id: 'boss-agent',
     name: 'Boss',
