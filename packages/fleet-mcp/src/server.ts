@@ -94,6 +94,58 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function auditInput(input: unknown): unknown {
+  if (input === null || typeof input !== 'object' || Array.isArray(input)) {
+    return input;
+  }
+
+  const source = input as Record<string, unknown>;
+  const safe: Record<string, unknown> = {};
+  const allowedKeys = new Set([
+    'agentId',
+    'targetAgentId',
+    'taskId',
+    'parentTaskId',
+    'artifactId',
+    'kind',
+    'mimeType',
+    'type',
+    'limit',
+    'timeoutMs',
+    'dependencyIds',
+    'contextRefs',
+    'artifactRefs',
+  ]);
+
+  for (const [key, value] of Object.entries(source)) {
+    const lower = key.toLowerCase();
+    if (lower.includes('secret') || lower.includes('token') || lower.includes('password')) {
+      safe[`${key}Omitted`] = true;
+      continue;
+    }
+    if (key === 'content') {
+      safe.contentBytes = new TextEncoder().encode(String(value ?? '')).length;
+      continue;
+    }
+    if (key === 'resource') {
+      safe.resourceOmitted = true;
+      if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+        safe.resourceKeys = Object.keys(value as Record<string, unknown>).sort();
+      }
+      continue;
+    }
+    if (key === 'custom') {
+      safe.customQueryProvided = typeof value === 'string' && value.length > 0;
+      continue;
+    }
+    if (allowedKeys.has(key)) {
+      safe[key] = structuredClone(value);
+    }
+  }
+
+  return safe;
+}
+
 export function createFleetMcpServer(options: FleetMcpServerOptions): McpServer {
   ensureBossEligible(options);
 
@@ -121,13 +173,26 @@ export function createFleetMcpServer(options: FleetMcpServerOptions): McpServer 
       operation: definition.operation,
     };
 
-    const decision = await options.hooks.authorize({ ...context, input });
+    const safeInput = auditInput(input);
+    let decision;
+    try {
+      decision = await options.hooks.authorize({ ...context, input });
+    } catch {
+      await options.hooks.audit({
+        ...context,
+        input: safeInput,
+        outcome: 'denied',
+        reason: 'policy_evaluation_failed',
+      });
+      return errorResult('Policy evaluation failed.');
+    }
+
     if (!decision.allowed) {
       const record: FleetAuditRecord = {
         ...context,
-        input,
+        input: safeInput,
         outcome: 'denied',
-        reason: decision.reason,
+        reason: 'policy_denied',
       };
       await options.hooks.audit(record);
       return errorResult(decision.reason);
@@ -135,11 +200,16 @@ export function createFleetMcpServer(options: FleetMcpServerOptions): McpServer 
 
     try {
       const result = await action(context);
-      await options.hooks.audit({ ...context, input, outcome: 'succeeded' });
+      await options.hooks.audit({ ...context, input: safeInput, outcome: 'succeeded' });
       return jsonResult(result);
     } catch (error) {
       const reason = errorMessage(error);
-      await options.hooks.audit({ ...context, input, outcome: 'failed', reason });
+      await options.hooks.audit({
+        ...context,
+        input: safeInput,
+        outcome: 'failed',
+        reason: 'service_error',
+      });
       return errorResult(reason);
     }
   };
