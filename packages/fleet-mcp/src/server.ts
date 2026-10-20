@@ -103,6 +103,11 @@ export function createFleetMcpServer(options: FleetMcpServerOptions): McpServer 
   });
   const scopes = options.agent.controlBridge.scopes;
 
+  const enabled = (name: string): boolean => {
+    const definition = toolDefinition(name);
+    return hasAnyScope(scopes, definition.anyScope);
+  };
+
   const invoke = async (
     name: string,
     input: unknown,
@@ -139,194 +144,205 @@ export function createFleetMcpServer(options: FleetMcpServerOptions): McpServer 
     }
   };
 
-  const register = (
-    name: string,
-    config: Parameters<McpServer['registerTool']>[1],
-    handler: Parameters<McpServer['registerTool']>[2],
-  ) => {
-    const definition = toolDefinition(name);
-    if (hasAnyScope(scopes, definition.anyScope)) {
-      server.registerTool(name, config, handler);
-    }
-  };
+  if (enabled('control_discover_agents')) {
+    server.registerTool(
+      'control_discover_agents',
+      {
+        description: 'Discover eligible agents by provider-neutral capabilities.',
+        inputSchema: z.object({
+          exact: z.array(z.string().min(1).max(128)).optional(),
+          prefixes: z.array(z.string().min(1).max(128)).optional(),
+          custom: z.string().min(1).max(256).optional(),
+          limit: z.number().int().positive().max(100).optional(),
+        }),
+      },
+      async (input) =>
+        invoke('control_discover_agents', input, (context) =>
+          options.services.discoverAgents(input, context),
+        ),
+    );
+  }
 
-  register(
-    'control_discover_agents',
-    {
-      description: 'Discover eligible agents by provider-neutral capabilities.',
-      inputSchema: z.object({
-        exact: z.array(z.string().min(1).max(128)).optional(),
-        prefixes: z.array(z.string().min(1).max(128)).optional(),
-        custom: z.string().min(1).max(256).optional(),
-        limit: z.number().int().positive().max(100).optional(),
-      }),
-    },
-    async (input) =>
-      invoke('control_discover_agents', input, (context) =>
-        options.services.discoverAgents(input, context),
-      ),
-  );
+  if (enabled('control_get_agent')) {
+    server.registerTool(
+      'control_get_agent',
+      {
+        description: 'Read one registered agent definition visible to the current Boss.',
+        inputSchema: z.object({ agentId: z.string().min(1).max(128) }),
+      },
+      async (input) =>
+        invoke('control_get_agent', input, (context) => options.services.getAgent(input, context)),
+    );
+  }
 
-  register(
-    'control_get_agent',
-    {
-      description: 'Read one registered agent definition visible to the current Boss.',
-      inputSchema: z.object({ agentId: z.string().min(1).max(128) }),
-    },
-    async (input) =>
-      invoke('control_get_agent', input, (context) => options.services.getAgent(input, context)),
-  );
+  if (enabled('control_create_task')) {
+    server.registerTool(
+      'control_create_task',
+      {
+        description: 'Create a durable task in the active project.',
+        inputSchema: z.object({
+          title: z.string().min(1),
+          objective: z.string().min(1),
+          parentTaskId: z.string().min(1).optional(),
+          dependencyIds: z.array(z.string().min(1)).optional(),
+          contextRefs: z.array(z.string().min(1)).optional(),
+        }),
+      },
+      async (input) =>
+        invoke('control_create_task', input, (context) =>
+          options.services.createTask(input, context),
+        ),
+    );
+  }
 
-  register(
-    'control_create_task',
-    {
-      description: 'Create a durable task in the active project.',
-      inputSchema: z.object({
-        title: z.string().min(1),
-        objective: z.string().min(1),
-        parentTaskId: z.string().min(1).optional(),
-        dependencyIds: z.array(z.string().min(1)).optional(),
-        contextRefs: z.array(z.string().min(1)).optional(),
-      }),
-    },
-    async (input) =>
-      invoke('control_create_task', input, (context) =>
-        options.services.createTask(input, context),
-      ),
-  );
+  if (enabled('control_delegate_task')) {
+    server.registerTool(
+      'control_delegate_task',
+      {
+        description: 'Delegate a durable task to a selected agent with an optional task-scoped role.',
+        inputSchema: z.object({
+          taskId: z.string().min(1),
+          agentId: z.string().min(1),
+          objective: z.string().min(1).optional(),
+          role: z
+            .object({
+              name: z.string().min(1),
+              description: z.string().optional(),
+            })
+            .optional(),
+        }),
+      },
+      async (input) =>
+        invoke('control_delegate_task', input, (context) =>
+          options.services.delegateTask(input, context),
+        ),
+    );
+  }
 
-  register(
-    'control_delegate_task',
-    {
-      description: 'Delegate a durable task to a selected agent with an optional task-scoped role.',
-      inputSchema: z.object({
-        taskId: z.string().min(1),
-        agentId: z.string().min(1),
-        objective: z.string().min(1).optional(),
-        role: z
-          .object({
-            name: z.string().min(1),
-            description: z.string().optional(),
-          })
-          .optional(),
-      }),
-    },
-    async (input) =>
-      invoke('control_delegate_task', input, (context) =>
-        options.services.delegateTask(input, context),
-      ),
-  );
+  if (enabled('control_get_task')) {
+    server.registerTool(
+      'control_get_task',
+      {
+        description: 'Read one durable task.',
+        inputSchema: z.object({ taskId: z.string().min(1) }),
+      },
+      async (input) =>
+        invoke('control_get_task', input, (context) => options.services.getTask(input, context)),
+    );
+  }
 
-  register(
-    'control_get_task',
-    {
-      description: 'Read one durable task.',
-      inputSchema: z.object({ taskId: z.string().min(1) }),
-    },
-    async (input) =>
-      invoke('control_get_task', input, (context) => options.services.getTask(input, context)),
-  );
+  if (enabled('control_wait_task')) {
+    server.registerTool(
+      'control_wait_task',
+      {
+        description: 'Wait for or poll a durable task using the shared task application service.',
+        inputSchema: z.object({
+          taskId: z.string().min(1),
+          timeoutMs: z.number().int().positive().max(300_000).optional(),
+        }),
+      },
+      async (input) =>
+        invoke('control_wait_task', input, (context) => options.services.waitTask(input, context)),
+    );
+  }
 
-  register(
-    'control_wait_task',
-    {
-      description: 'Wait for or poll a durable task using the shared task application service.',
-      inputSchema: z.object({
-        taskId: z.string().min(1),
-        timeoutMs: z.number().int().positive().max(300_000).optional(),
-      }),
-    },
-    async (input) =>
-      invoke('control_wait_task', input, (context) => options.services.waitTask(input, context)),
-  );
+  if (enabled('control_send_message')) {
+    server.registerTool(
+      'control_send_message',
+      {
+        description:
+          'Send a control-plane-mediated agent message. Sender identity comes from the bridge.',
+        inputSchema: z.object({
+          targetAgentId: z.string().min(1),
+          taskId: z.string().min(1).optional(),
+          type: z.enum(['request', 'response', 'message', 'handoff', 'event', 'status']),
+          content: z.string().optional(),
+          artifactRefs: z.array(z.string().min(1)).optional(),
+        }),
+      },
+      async (input) =>
+        invoke('control_send_message', input, (context) =>
+          options.services.sendMessage(input, context),
+        ),
+    );
+  }
 
-  register(
-    'control_send_message',
-    {
-      description:
-        'Send a control-plane-mediated agent message. Sender identity comes from the bridge.',
-      inputSchema: z.object({
-        targetAgentId: z.string().min(1),
-        taskId: z.string().min(1).optional(),
-        type: z.enum(['request', 'response', 'message', 'handoff', 'event', 'status']),
-        content: z.string().optional(),
-        artifactRefs: z.array(z.string().min(1)).optional(),
-      }),
-    },
-    async (input) =>
-      invoke('control_send_message', input, (context) =>
-        options.services.sendMessage(input, context),
-      ),
-  );
+  if (enabled('control_publish_artifact')) {
+    server.registerTool(
+      'control_publish_artifact',
+      {
+        description: 'Publish an immutable artifact through the shared artifact application service.',
+        inputSchema: z.object({
+          taskId: z.string().min(1).optional(),
+          kind: z.enum([
+            'plan',
+            'report',
+            'patch',
+            'diff',
+            'log',
+            'image',
+            'test-report',
+            'file',
+            'directory-manifest',
+            'json',
+            'text',
+          ]),
+          mimeType: z.string().min(1),
+          content: z.string().max(1_000_000),
+        }),
+      },
+      async (input) =>
+        invoke('control_publish_artifact', input, (context) =>
+          options.services.publishArtifact(input, context),
+        ),
+    );
+  }
 
-  register(
-    'control_publish_artifact',
-    {
-      description: 'Publish an immutable artifact through the shared artifact application service.',
-      inputSchema: z.object({
-        taskId: z.string().min(1).optional(),
-        kind: z.enum([
-          'plan',
-          'report',
-          'patch',
-          'diff',
-          'log',
-          'image',
-          'test-report',
-          'file',
-          'directory-manifest',
-          'json',
-          'text',
-        ]),
-        mimeType: z.string().min(1),
-        content: z.string().max(1_000_000),
-      }),
-    },
-    async (input) =>
-      invoke('control_publish_artifact', input, (context) =>
-        options.services.publishArtifact(input, context),
-      ),
-  );
+  if (enabled('control_get_artifact')) {
+    server.registerTool(
+      'control_get_artifact',
+      {
+        description: 'Read artifact metadata/content allowed to the current bridge identity.',
+        inputSchema: z.object({ artifactId: z.string().min(1) }),
+      },
+      async (input) =>
+        invoke('control_get_artifact', input, (context) =>
+          options.services.getArtifact(input, context),
+        ),
+    );
+  }
 
-  register(
-    'control_get_artifact',
-    {
-      description: 'Read artifact metadata/content allowed to the current bridge identity.',
-      inputSchema: z.object({ artifactId: z.string().min(1) }),
-    },
-    async (input) =>
-      invoke('control_get_artifact', input, (context) =>
-        options.services.getArtifact(input, context),
-      ),
-  );
+  if (enabled('control_request_approval')) {
+    server.registerTool(
+      'control_request_approval',
+      {
+        description: 'Request a durable approval for a policy-controlled operation.',
+        inputSchema: z.object({
+          taskId: z.string().min(1).optional(),
+          action: z.string().min(1),
+          resource: z.record(z.string(), z.unknown()),
+        }),
+      },
+      async (input) =>
+        invoke('control_request_approval', input, (context) =>
+          options.services.requestApproval(input, context),
+        ),
+    );
+  }
 
-  register(
-    'control_request_approval',
-    {
-      description: 'Request a durable approval for a policy-controlled operation.',
-      inputSchema: z.object({
-        taskId: z.string().min(1).optional(),
-        action: z.string().min(1),
-        resource: z.record(z.string(), z.unknown()),
-      }),
-    },
-    async (input) =>
-      invoke('control_request_approval', input, (context) =>
-        options.services.requestApproval(input, context),
-      ),
-  );
-
-  register(
-    'control_cancel_task',
-    {
-      description: 'Cancel a durable task through the shared task application service.',
-      inputSchema: z.object({ taskId: z.string().min(1) }),
-    },
-    async (input) =>
-      invoke('control_cancel_task', input, (context) =>
-        options.services.cancelTask(input, context),
-      ),
-  );
+  if (enabled('control_cancel_task')) {
+    server.registerTool(
+      'control_cancel_task',
+      {
+        description: 'Cancel a durable task through the shared task application service.',
+        inputSchema: z.object({ taskId: z.string().min(1) }),
+      },
+      async (input) =>
+        invoke('control_cancel_task', input, (context) =>
+          options.services.cancelTask(input, context),
+        ),
+    );
+  }
 
   return server;
 }
