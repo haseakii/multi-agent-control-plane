@@ -79,6 +79,25 @@ describe('createFleetToolExecutor', () => {
     );
   });
 
+  it('fails closed when bridge identity does not match the configured agent', async () => {
+    const shared = services();
+    const execute = createFleetToolExecutor({ services: shared, hooks: hooks() });
+
+    const result = await execute({
+      identity: { ...identity(), agentId: AgentIdSchema.parse('other-agent') },
+      agent: agent(),
+      toolName: 'control_get_task',
+      input: { taskId: 'task-1' },
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      error: 'Fleet bridge identity mismatch.',
+      statusCode: 403,
+    });
+    expect(shared.getTask).not.toHaveBeenCalled();
+  });
+
   it('fails closed for unknown tools, invalid payloads, and missing scopes before service dispatch', async () => {
     const shared = services();
     const execute = createFleetToolExecutor({ services: shared, hooks: hooks() });
@@ -154,6 +173,31 @@ describe('createFleetToolExecutor', () => {
     expect(audit).not.toContain('provider token in backend failure');
     expect(audit).toContain('contentBytes');
     expect(audit).toContain('service_error');
+  });
+
+  it('does not expose policy denial details to the MCP proxy', async () => {
+    const shared = services();
+    const bridgeHooks = hooks();
+    vi.mocked(bridgeHooks.authorize).mockResolvedValueOnce({
+      allowed: false,
+      reason: 'sensitive policy backend explanation',
+    });
+    const execute = createFleetToolExecutor({ services: shared, hooks: bridgeHooks });
+
+    const result = await execute({
+      identity: identity(),
+      agent: agent(),
+      toolName: 'control_cancel_task',
+      input: { taskId: 'task-1' },
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      error: 'Fleet tool policy denied.',
+      statusCode: 403,
+    });
+    expect(JSON.stringify(result)).not.toContain('sensitive policy backend explanation');
+    expect(shared.cancelTask).not.toHaveBeenCalled();
   });
 
   it('fails closed when policy throws and does not call shared services', async () => {
