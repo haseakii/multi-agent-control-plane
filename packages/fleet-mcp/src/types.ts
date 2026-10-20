@@ -4,7 +4,7 @@ export type FleetBridgeIdentity = {
   agentId: AgentId;
   projectId: string;
   sessionId: string;
-  taskId?: string;
+  taskId?: string | undefined;
 };
 
 export type FleetToolOperation =
@@ -37,44 +37,44 @@ export type FleetAuditOutcome = 'succeeded' | 'failed' | 'denied';
 export type FleetAuditRecord = FleetCallContext & {
   input: unknown;
   outcome: FleetAuditOutcome;
-  reason?: string;
+  reason?: string | undefined;
 };
 
 export type DiscoverAgentsInput = {
-  exact?: string[];
-  prefixes?: string[];
-  custom?: string;
-  limit?: number;
+  exact?: string[] | undefined;
+  prefixes?: string[] | undefined;
+  custom?: string | undefined;
+  limit?: number | undefined;
 };
 
 export type CreateTaskInput = {
   title: string;
   objective: string;
-  parentTaskId?: string;
-  dependencyIds?: string[];
-  contextRefs?: string[];
+  parentTaskId?: string | undefined;
+  dependencyIds?: string[] | undefined;
+  contextRefs?: string[] | undefined;
 };
 
 export type DelegateTaskInput = {
   taskId: string;
   agentId: string;
-  objective?: string;
+  objective?: string | undefined;
   role?: {
     name: string;
-    description?: string;
+    description?: string | undefined;
   };
 };
 
 export type SendMessageInput = {
   targetAgentId: string;
-  taskId?: string;
+  taskId?: string | undefined;
   type: 'request' | 'response' | 'message' | 'handoff' | 'event' | 'status';
-  content?: string;
-  artifactRefs?: string[];
+  content?: string | undefined;
+  artifactRefs?: string[] | undefined;
 };
 
 export type PublishArtifactInput = {
-  taskId?: string;
+  taskId?: string | undefined;
   kind:
     | 'plan'
     | 'report'
@@ -92,7 +92,7 @@ export type PublishArtifactInput = {
 };
 
 export type RequestApprovalInput = {
-  taskId?: string;
+  taskId?: string | undefined;
   action: string;
   resource: Record<string, unknown>;
 };
@@ -107,7 +107,7 @@ export interface FleetControlServices {
   delegateTask(input: DelegateTaskInput, context: FleetCallContext): Promise<unknown>;
   getTask(input: { taskId: string }, context: FleetCallContext): Promise<Task | unknown>;
   waitTask(
-    input: { taskId: string; timeoutMs?: number },
+    input: { taskId: string; timeoutMs?: number | undefined },
     context: FleetCallContext,
   ): Promise<Task | unknown>;
   sendMessage(input: SendMessageInput, context: FleetCallContext): Promise<unknown>;
@@ -133,8 +133,8 @@ export type FleetMcpServerOptions = {
   agent: AgentDefinition;
   services: FleetControlServices;
   hooks: FleetBridgeHooks;
-  name?: string;
-  version?: string;
+  name?: string | undefined;
+  version?: string | undefined;
 };
 
 export type FleetToolDefinition = {
