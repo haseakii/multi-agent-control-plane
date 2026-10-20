@@ -168,6 +168,28 @@ export const artifacts = sqliteTable(
   ],
 );
 
+export const artifactLinks = sqliteTable(
+  'artifact_links',
+  {
+    id: text('id').primaryKey(),
+    artifactId: text('artifact_id').notNull(),
+    projectId: text('project_id').notNull(),
+    entityType: text('entity_type').notNull(),
+    entityId: text('entity_id').notNull(),
+    createdAt: text('created_at').notNull(),
+    payload: payload(),
+  },
+  (table) => [
+    uniqueIndex('artifact_links_target_unique_idx').on(
+      table.artifactId,
+      table.entityType,
+      table.entityId,
+    ),
+    index('artifact_links_project_idx').on(table.projectId),
+    index('artifact_links_entity_idx').on(table.entityType, table.entityId),
+  ],
+);
+
 export const approvals = sqliteTable(
   'approvals',
   {
