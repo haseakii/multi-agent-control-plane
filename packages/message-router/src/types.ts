@@ -60,9 +60,7 @@ export type MessageAuthorizationRequest = {
   input: SendMessageInput;
 };
 
-export type MessageAuthorizationDecision =
-  | { allowed: true }
-  | { allowed: false; reason: string };
+export type MessageAuthorizationDecision = { allowed: true } | { allowed: false; reason: string };
 
 export type MessageRouterAuditEvent =
   | {
