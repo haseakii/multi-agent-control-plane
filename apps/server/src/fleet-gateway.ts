@@ -83,9 +83,7 @@ function sessionScopedAgent(
   };
 }
 
-function identityFor(
-  grant: ReturnType<FleetBridgeGrantResolver['resolve']>,
-): FleetGatewayIdentity {
+function identityFor(grant: ReturnType<FleetBridgeGrantResolver['resolve']>): FleetGatewayIdentity {
   return {
     agentId: grant.agentId,
     projectId: grant.projectId,
