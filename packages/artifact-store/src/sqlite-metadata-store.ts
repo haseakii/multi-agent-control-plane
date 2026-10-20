@@ -1,11 +1,7 @@
 import { ArtifactSchema } from '@control-plane/core';
 import type { Artifact } from '@control-plane/core';
 import type { SqliteStorage } from '@control-plane/storage';
-import {
-  ArtifactLinkSchema,
-  type ArtifactLink,
-  type ArtifactMetadataStore,
-} from './types.js';
+import { ArtifactLinkSchema, type ArtifactLink, type ArtifactMetadataStore } from './types.js';
 
 export class SqliteArtifactMetadataStore implements ArtifactMetadataStore {
   constructor(private readonly storage: SqliteStorage) {}
