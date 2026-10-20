@@ -10,6 +10,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@control-plane/core": "workspace:*",
+    "@control-plane/storage": "workspace:*",
     "fastify": "5.3.2"
   }
 }
