@@ -53,7 +53,7 @@ function toolDefinition(name: string): FleetToolDefinition {
   return definition;
 }
 
-function ensureBossEligible(options: FleetMcpServerOptions): void {
+function ensureBridgeEligible(options: FleetMcpServerOptions): void {
   const { agent, identity } = options;
   if (agent.id !== identity.agentId) {
     throw new TypeError('Fleet MCP identity must match the configured AgentDefinition.');
@@ -61,14 +61,11 @@ function ensureBossEligible(options: FleetMcpServerOptions): void {
   if (!agent.enabled) {
     throw new TypeError('Disabled agents cannot receive the Fleet MCP bridge.');
   }
-  if (!agent.orchestration.canBeBoss) {
+  if (agent.controlBridge.scopes.includes(bossScope) && !agent.orchestration.canBeBoss) {
     throw new TypeError('AgentDefinition is not Boss-capable.');
   }
   if (agent.controlBridge.transport !== 'mcp') {
-    throw new TypeError('Boss AgentDefinition must use the MCP control bridge transport.');
-  }
-  if (!agent.controlBridge.scopes.includes(bossScope)) {
-    throw new TypeError('Boss AgentDefinition is missing the boss.orchestration bridge scope.');
+    throw new TypeError('AgentDefinition must use the MCP control bridge transport.');
   }
 }
 
@@ -147,7 +144,7 @@ function auditInput(input: unknown): unknown {
 }
 
 export function createFleetMcpServer(options: FleetMcpServerOptions): McpServer {
-  ensureBossEligible(options);
+  ensureBridgeEligible(options);
 
   const server = new McpServer({
     name: options.name ?? 'multi-agent-control-plane-fleet',

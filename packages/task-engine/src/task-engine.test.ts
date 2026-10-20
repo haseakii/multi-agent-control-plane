@@ -185,4 +185,35 @@ describe('TaskEngine', () => {
     expect(storage.repositories.executionAttempts.get(attempt.id)?.state).toBe('cancelled');
     storage.close();
   });
+
+  it('recovers unstarted and approval-blocked attempts without replaying them', () => {
+    const { storage, engine } = createEngine(createDatabasePath());
+    seedProject(storage);
+    for (const suffix of ['queued', 'approval']) {
+      const task = engine.createTask({
+        id: `task-${suffix}`,
+        projectId: 'project-task-engine',
+        title: suffix,
+        objective: 'Recovery boundary',
+        state: 'ready',
+      });
+      const assignment = engine.createAssignment({
+        id: `assignment-${suffix}`,
+        taskId: task.id,
+        agentId: 'agent-child',
+        objective: task.objective,
+      });
+      const attempt = engine.createAttempt(assignment.id, { id: `attempt-${suffix}` });
+      if (suffix === 'approval') {
+        engine.startAttempt(attempt.id);
+        engine.transitionTask(task.id, 'waiting_approval');
+      }
+    }
+    expect(engine.recoverInterruptedAttempts()).toHaveLength(2);
+    expect(engine.getTask('task-queued').state).toBe('ready');
+    expect(engine.getTask('task-approval').state).toBe('waiting');
+    expect(engine.retryAssignment('assignment-queued').number).toBe(2);
+    expect(engine.retryAssignment('assignment-approval').number).toBe(2);
+    storage.close();
+  });
 });

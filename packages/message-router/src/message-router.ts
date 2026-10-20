@@ -163,8 +163,12 @@ export class MessageRouter {
     return { message, delivery };
   }
 
-  async acknowledge(deliveryId: string, deliveredAt = this.options.now()): Promise<void> {
-    const delivery = this.store.markDelivered(deliveryId, deliveredAt);
+  async acknowledge(
+    deliveryId: string,
+    expectedAttemptCount: number,
+    deliveredAt = this.options.now(),
+  ): Promise<void> {
+    const delivery = this.store.markDelivered(deliveryId, expectedAttemptCount, deliveredAt);
     await this.options.hooks.audit({
       type: 'message.delivered',
       messageId: MessageIdSchema.parse(delivery.messageId),
@@ -174,12 +178,14 @@ export class MessageRouter {
 
   async retry(
     deliveryId: string,
+    expectedAttemptCount: number,
     error: string,
     options?: { now?: string; delayMs?: number },
   ): Promise<void> {
     const now = options?.now ?? this.options.now();
     const delivery = this.store.scheduleRetry(
       deliveryId,
+      expectedAttemptCount,
       addMilliseconds(now, options?.delayMs ?? this.retryDelayMs),
       error,
     );

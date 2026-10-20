@@ -121,8 +121,13 @@ export interface MessageRouterStore {
     leaseUntil: string;
     mailboxKey?: string | undefined;
   }): MessageDelivery | undefined;
-  markDelivered(id: string, deliveredAt: string): MessageDelivery;
-  scheduleRetry(id: string, availableAt: string, error: string): MessageDelivery;
+  markDelivered(id: string, expectedAttemptCount: number, deliveredAt: string): MessageDelivery;
+  scheduleRetry(
+    id: string,
+    expectedAttemptCount: number,
+    availableAt: string,
+    error: string,
+  ): MessageDelivery;
   recoverExpired(now: string): number;
 }
 
@@ -132,6 +137,7 @@ export class MessageRouterError extends Error {
       | 'POLICY_DENIED'
       | 'MESSAGE_NOT_FOUND'
       | 'DELIVERY_NOT_FOUND'
+      | 'STALE_DELIVERY_CLAIM'
       | 'INVALID_DELIVERY_STATE'
       | 'INVALID_REPLY_CHAIN',
     message: string,

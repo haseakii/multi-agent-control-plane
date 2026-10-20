@@ -17,6 +17,15 @@ function agent(scopes: readonly BridgeScope[] = ['boss.orchestration']) {
   });
 }
 
+function worker(scopes: readonly BridgeScope[] = ['agent.messaging']) {
+  return AgentDefinitionSchema.parse({
+    ...agent(scopes),
+    id: 'worker-agent',
+    name: 'Worker',
+    orchestration: { canBeBoss: false },
+  });
+}
+
 function services(): FleetControlServices {
   return {
     discoverAgents: vi.fn(async (input) => ({ input })),
@@ -53,6 +62,164 @@ function identity() {
 }
 
 describe('createFleetToolExecutor', () => {
+  it.each([
+    {
+      scope: 'agent.messaging',
+      toolName: 'control_send_message',
+      input: { targetAgentId: 'peer-agent', type: 'message', content: 'Review is ready' },
+      service: 'sendMessage',
+    },
+    {
+      scope: 'artifact.publish',
+      toolName: 'control_publish_artifact',
+      input: { kind: 'text', mimeType: 'text/plain', content: 'Review' },
+      service: 'publishArtifact',
+    },
+    {
+      scope: 'artifact.read',
+      toolName: 'control_get_artifact',
+      input: { artifactId: 'artifact-1' },
+      service: 'getArtifact',
+    },
+    {
+      scope: 'task.status',
+      toolName: 'control_get_task',
+      input: { taskId: 'task-1' },
+      service: 'getTask',
+    },
+    {
+      scope: 'task.status',
+      toolName: 'control_wait_task',
+      input: { taskId: 'task-1' },
+      service: 'waitTask',
+    },
+  ] as const)(
+    'allows worker $toolName only with its independent $scope scope',
+    async (testCase) => {
+      const shared = services();
+      const bridgeHooks = hooks();
+      const execute = createFleetToolExecutor({ services: shared, hooks: bridgeHooks });
+      const bridgeWorker = worker([testCase.scope]);
+      const request = {
+        identity: { ...identity(), agentId: bridgeWorker.id },
+        agent: bridgeWorker,
+        toolName: testCase.toolName,
+        input: testCase.input,
+      };
+
+      await expect(execute(request)).resolves.toMatchObject({ ok: true });
+      expect(shared[testCase.service]).toHaveBeenCalledWith(
+        testCase.input,
+        expect.objectContaining({
+          identity: request.identity,
+          agent: expect.objectContaining({ orchestration: { canBeBoss: false } }),
+        }),
+      );
+      expect(bridgeHooks.authorize).toHaveBeenCalledOnce();
+      expect(bridgeHooks.audit).toHaveBeenCalledWith(
+        expect.objectContaining({ outcome: 'succeeded' }),
+      );
+
+      bridgeWorker.controlBridge.scopes = [];
+      await expect(execute(request)).resolves.toMatchObject({
+        ok: false,
+        error: 'Fleet tool scope denied.',
+        statusCode: 403,
+      });
+      expect(shared[testCase.service]).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each([
+    ['control_discover_agents', {}, 'discoverAgents'],
+    ['control_get_agent', { agentId: 'peer-agent' }, 'getAgent'],
+    ['control_create_task', { title: 'Task', objective: 'Objective' }, 'createTask'],
+    ['control_delegate_task', { taskId: 'task-1', agentId: 'peer-agent' }, 'delegateTask'],
+    ['control_request_approval', { action: 'test', resource: {} }, 'requestApproval'],
+    ['control_cancel_task', { taskId: 'task-1' }, 'cancelTask'],
+  ] as const)(
+    'denies worker %s without delegating to policy or services',
+    async (toolName, input, service) => {
+      const shared = services();
+      const bridgeHooks = hooks();
+      const execute = createFleetToolExecutor({ services: shared, hooks: bridgeHooks });
+      const bridgeWorker = worker([
+        'agent.messaging',
+        'artifact.publish',
+        'artifact.read',
+        'task.status',
+      ]);
+
+      await expect(
+        execute({
+          identity: { ...identity(), agentId: bridgeWorker.id },
+          agent: bridgeWorker,
+          toolName,
+          input,
+        }),
+      ).resolves.toEqual({
+        ok: false,
+        error: 'Fleet tool scope denied.',
+        statusCode: 403,
+      });
+      expect(shared[service]).not.toHaveBeenCalled();
+      expect(bridgeHooks.authorize).not.toHaveBeenCalled();
+    },
+  );
+
+  it('does not let the Boss scope substitute for worker Boss capability', async () => {
+    const shared = services();
+    const bridgeHooks = hooks();
+    const execute = createFleetToolExecutor({ services: shared, hooks: bridgeHooks });
+    const bridgeWorker = worker(['boss.orchestration', 'agent.messaging']);
+
+    for (const toolName of [
+      'control_discover_agents',
+      'control_create_task',
+      'control_delegate_task',
+    ]) {
+      await expect(
+        execute({
+          identity: { ...identity(), agentId: bridgeWorker.id },
+          agent: bridgeWorker,
+          toolName,
+          input: {},
+        }),
+      ).resolves.toEqual({
+        ok: false,
+        error: 'Fleet bridge agent is not eligible.',
+        statusCode: 403,
+      });
+    }
+    expect(shared.discoverAgents).not.toHaveBeenCalled();
+    expect(shared.createTask).not.toHaveBeenCalled();
+    expect(shared.delegateTask).not.toHaveBeenCalled();
+    expect(bridgeHooks.authorize).not.toHaveBeenCalled();
+  });
+
+  it('rejects disabled workers and workers without an MCP bridge', async () => {
+    const shared = services();
+    const bridgeHooks = hooks();
+    const execute = createFleetToolExecutor({ services: shared, hooks: bridgeHooks });
+    const disabled = worker();
+    disabled.enabled = false;
+    const noBridge = worker();
+    noBridge.controlBridge = { transport: 'none', scopes: [] };
+
+    for (const bridgeWorker of [disabled, noBridge]) {
+      await expect(
+        execute({
+          identity: { ...identity(), agentId: bridgeWorker.id },
+          agent: bridgeWorker,
+          toolName: 'control_send_message',
+          input: { targetAgentId: 'peer-agent', type: 'message', content: 'hello' },
+        }),
+      ).resolves.toMatchObject({ ok: false, statusCode: 403 });
+    }
+    expect(shared.sendMessage).not.toHaveBeenCalled();
+    expect(bridgeHooks.authorize).not.toHaveBeenCalled();
+  });
+
   it('revalidates tool input and dispatches through the shared service with grant-bound context', async () => {
     const shared = services();
     const bridgeHooks = hooks();

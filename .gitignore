@@ -9,7 +9,10 @@ coverage/
 .env.*
 !.env.example
 data/
+.data/
 artifacts/
+test-results/
+playwright-report/
 *.db
 *.db-shm
 *.db-wal

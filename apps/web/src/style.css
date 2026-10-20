@@ -28,6 +28,7 @@ body {
 
 button,
 input,
+select,
 textarea {
   font: inherit;
 }
@@ -144,6 +145,8 @@ h2 {
 .panel,
 .agent-card,
 .row-card,
+.task-card,
+.approval-card,
 .message-card,
 .boundary-card {
   border: 1px solid #1f3147;
@@ -218,6 +221,8 @@ h2 {
 
 .agent-card,
 .row-card,
+.task-card,
+.approval-card,
 .message-card,
 .boundary-card {
   border-radius: 13px;
@@ -377,8 +382,21 @@ h2 {
   font-weight: 700;
 }
 
+.project-controls label,
+.goal-form label {
+  display: grid;
+  gap: 7px;
+  color: #9fb0c5;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
 .agent-form input,
 .agent-form textarea,
+.project-controls input,
+.project-controls select,
+.goal-form input,
+.goal-form textarea,
 .boss-controls select {
   width: 100%;
   border: 1px solid #2a4059;
@@ -391,6 +409,10 @@ h2 {
 
 .agent-form input:focus,
 .agent-form textarea:focus,
+.project-controls input:focus,
+.project-controls select:focus,
+.goal-form input:focus,
+.goal-form textarea:focus,
 .boss-controls select:focus {
   border-color: #5b9de8;
   box-shadow: 0 0 0 3px rgb(91 157 232 / 12%);
@@ -398,6 +420,117 @@ h2 {
 
 .agent-form textarea {
   resize: vertical;
+}
+
+.project-controls {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+
+.project-form {
+  display: flex;
+  align-items: end;
+  gap: 10px;
+}
+
+.project-form label {
+  min-width: 0;
+  flex: 1;
+}
+
+.project-form button {
+  flex-shrink: 0;
+}
+
+.goal-form {
+  display: grid;
+  gap: 14px;
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid #1f3147;
+}
+
+.goal-form h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.goal-form textarea {
+  resize: vertical;
+}
+
+.task-card,
+.approval-card {
+  min-width: 0;
+  padding: 14px;
+}
+
+.task-heading,
+.artifact-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.task-heading > div {
+  min-width: 0;
+}
+
+.task-card strong,
+.approval-card strong,
+.row-card strong {
+  overflow-wrap: anywhere;
+}
+
+.task-card small,
+.approval-card small {
+  display: block;
+  color: #7e91aa;
+}
+
+.task-card p,
+.approval-note {
+  margin: 12px 0 0;
+  color: #aab9ca;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.result-content,
+.approval-resource {
+  max-height: 28rem;
+  overflow: auto;
+  border: 1px solid #25384f;
+  border-radius: 8px;
+  background: #08101b;
+  padding: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.85rem;
+  line-height: 1.6;
+}
+
+a {
+  color: #8ec2ff;
+}
+
+button:focus-visible,
+a:focus-visible {
+  outline: 2px solid #8ec2ff;
+  outline-offset: 3px;
+}
+
+.reject-button {
+  border-color: #783d46;
+  background: #2b151a;
+  color: #ffc1c8;
+}
+
+.reject-button:hover:not(:disabled) {
+  background: #442129;
 }
 
 .span-form-2 {
@@ -480,6 +613,20 @@ button:disabled {
 @media (max-width: 900px) {
   .agent-form {
     grid-template-columns: 1fr;
+  }
+
+  .project-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .project-form {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .artifact-actions {
+    align-items: end;
+    flex-direction: column;
   }
 
   .span-form-2 {

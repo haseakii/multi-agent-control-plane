@@ -1,12 +1,38 @@
-import { StrictMode, useEffect, useMemo, useState, type FormEvent } from 'react';
+import {
+  StrictMode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+} from 'react';
 import { createRoot } from 'react-dom/client';
 import './style.css';
 
 type AuthMethod = { id: string; name: string; type?: string };
+type Project = { id: string; name: string; defaultBossAgentId?: string };
+type Task = {
+  id: string;
+  projectId: string;
+  title: string;
+  objective: string;
+  state: string;
+  ownerAgentId?: string;
+  resultArtifactRefs: string[];
+};
+type Artifact = {
+  id: string;
+  projectId: string;
+  kind: string;
+  producerAgentId?: string;
+  sizeBytes: number;
+  mimeType: string;
+};
 
 type Snapshot = {
   generatedAt: string;
-  projects: Array<{ id: string; name: string; defaultBossAgentId?: string }>;
+  projects: Project[];
   agents: Array<{
     definition: {
       id: string;
@@ -21,20 +47,36 @@ type Snapshot = {
     authMethods: AuthMethod[];
     error?: string;
   }>;
-  tasks: Array<{ id: string; title: string; state: string; ownerAgentId?: string }>;
-  timeline: Array<{ id: string; type: string; occurredAt: string; actor: { id: string } }>;
+  tasks: Task[];
+  timeline: Array<{
+    id: string;
+    projectId: string;
+    type: string;
+    occurredAt: string;
+    actor: { id: string };
+  }>;
   messages: Array<{
     id: string;
+    projectId: string;
     fromAgentId: string;
     toAgentId?: string;
     type: string;
     content?: string;
     createdAt: string;
   }>;
-  approvals: Array<{ id: string; action: string; state: string; enforcementMode: string }>;
-  artifacts: Array<{ id: string; kind: string; producerAgentId?: string; sizeBytes: number }>;
+  approvals: Array<{
+    id: string;
+    projectId: string;
+    taskId?: string;
+    requesterAgentId: string;
+    action: string;
+    resource: Record<string, unknown>;
+    state: string;
+    enforcementMode: string;
+  }>;
+  artifacts: Artifact[];
   runners: Array<{ id: string; kind: string; status: string }>;
-  workspaces: Array<{ id: string; provider: string; access: string }>;
+  workspaces: Array<{ id: string; projectId: string; provider: string; access: string }>;
 };
 
 type AgentForm = {
@@ -67,6 +109,68 @@ function Empty({ children }: { children: string }) {
   return <p className="empty">{children}</p>;
 }
 
+function ArtifactPreview({ artifact, onClose }: { artifact: Artifact; onClose: () => void }) {
+  const [content, setContent] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const url = `/api/artifacts/${encodeURIComponent(artifact.id)}/content`;
+  const canPreview =
+    artifact.sizeBytes <= 65_536 &&
+    (artifact.mimeType.startsWith('text/') || artifact.mimeType === 'application/json');
+
+  useEffect(() => {
+    if (!canPreview) {
+      return;
+    }
+    const controller = new AbortController();
+    void fetch(url, { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`Could not load result (HTTP ${response.status}).`);
+        }
+        const value = await response.text();
+        if (!controller.signal.aborted) {
+          setContent(value);
+        }
+      })
+      .catch((reason: unknown) => {
+        if (!controller.signal.aborted) {
+          setError(reason instanceof Error ? reason.message : String(reason));
+        }
+      });
+    return () => controller.abort();
+  }, [canPreview, url]);
+
+  return (
+    <section className="panel span-2" aria-label="Result preview">
+      <div className="panel-heading">
+        <div>
+          <p className="kicker">Durable result</p>
+          <h2>{artifact.id}</h2>
+        </div>
+        <button type="button" onClick={onClose}>
+          Close result
+        </button>
+      </div>
+      {error ? (
+        <p className="inline-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+      {canPreview && !error ? (
+        content === null ? (
+          <p>Loading result…</p>
+        ) : (
+          <pre className="result-content">{content}</pre>
+        )
+      ) : null}
+      {!canPreview ? <p>Large or non-text outputs are available as artifacts.</p> : null}
+      <a href={url} download>
+        Download result
+      </a>
+    </section>
+  );
+}
+
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
   if (init?.body) {
@@ -86,35 +190,58 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 function App() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [agentForm, setAgentForm] = useState<AgentForm>(emptyAgentForm);
+  const [projectName, setProjectName] = useState('');
+  const [selectedProjectId, setSelectedProjectId] = useState('');
+  const [goalTitle, setGoalTitle] = useState('');
+  const [goalObjective, setGoalObjective] = useState('');
+  const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(null);
+  const busyRef = useRef(false);
+  const snapshotRequest = useRef(0);
 
-  const loadSnapshot = async () => {
-    const value = await api<Snapshot>('/api/control-center');
-    setSnapshot(value);
-    setError(null);
-  };
+  const loadSnapshot = useCallback(async () => {
+    const request = ++snapshotRequest.current;
+    try {
+      const value = await api<Snapshot>('/api/control-center');
+      if (request === snapshotRequest.current) {
+        setSnapshot(value);
+        setLoadError(null);
+      }
+    } catch (reason) {
+      if (request === snapshotRequest.current) {
+        setLoadError(reason instanceof Error ? reason.message : String(reason));
+      }
+    }
+  }, []);
 
   useEffect(() => {
     let active = true;
-    api<Snapshot>('/api/control-center')
-      .then((value) => {
-        if (active) {
-          setSnapshot(value);
-        }
-      })
-      .catch((reason: unknown) => {
-        if (active) {
-          setError(reason instanceof Error ? reason.message : String(reason));
-        }
-      });
+    let timeout: number | undefined;
+    const refresh = async () => {
+      await loadSnapshot();
+      if (active) {
+        timeout = window.setTimeout(() => void refresh(), 2_000);
+      }
+    };
+    void refresh();
     return () => {
       active = false;
+      ++snapshotRequest.current;
+      window.clearTimeout(timeout);
     };
-  }, []);
+  }, [loadSnapshot]);
 
-  const project = snapshot?.projects[0];
+  const project =
+    snapshot?.projects.find((item) => item.id === selectedProjectId) ?? snapshot?.projects[0];
+  const tasks = snapshot?.tasks.filter((task) => task.projectId === project?.id) ?? [];
+  const artifacts =
+    snapshot?.artifacts.filter((artifact) => artifact.projectId === project?.id) ?? [];
+  const approvals =
+    snapshot?.approvals.filter((approval) => approval.projectId === project?.id) ?? [];
+  const selectedArtifact = artifacts.find((artifact) => artifact.id === selectedArtifactId);
   const boss = useMemo(
     () => snapshot?.agents.find((agent) => agent.definition.id === project?.defaultBossAgentId),
     [project?.defaultBossAgentId, snapshot?.agents],
@@ -129,6 +256,10 @@ function App() {
     ) ?? [];
 
   const runAction = async (key: string, action: () => Promise<void>) => {
+    if (busyRef.current) {
+      return;
+    }
+    busyRef.current = true;
     setBusy(key);
     setNotice(null);
     setError(null);
@@ -138,9 +269,58 @@ function App() {
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
+      busyRef.current = false;
       setBusy(null);
     }
   };
+
+  const createProject = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!projectName.trim()) {
+      return;
+    }
+    await runAction('project', async () => {
+      const created = await api<Project>('/api/projects', {
+        method: 'POST',
+        body: JSON.stringify({ name: projectName.trim() }),
+      });
+      setSelectedProjectId(created.id);
+      setSelectedArtifactId(null);
+      setProjectName('');
+      setNotice(`Created ${created.name}. Select a Boss to begin.`);
+    });
+  };
+
+  const submitGoal = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!project || !boss || !goalObjective.trim()) {
+      return;
+    }
+    await runAction('goal', async () => {
+      const { task } = await api<{ task: Task }>(
+        `/api/projects/${encodeURIComponent(project.id)}/goals`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            ...(goalTitle.trim() ? { title: goalTitle.trim() } : {}),
+            objective: goalObjective.trim(),
+          }),
+        },
+      );
+      setGoalTitle('');
+      setGoalObjective('');
+      setNotice(`Goal submitted: ${task.title}. Status updates automatically.`);
+    });
+  };
+
+  const decideApproval = (approvalId: string, decision: 'approve' | 'reject') =>
+    runAction(`approval:${approvalId}`, async () => {
+      await api(`/api/approvals/${encodeURIComponent(approvalId)}/${decision}`, {
+        method: 'POST',
+        body: JSON.stringify({}),
+      });
+      setNotice(decision === 'approve' ? 'Approval granted.' : 'Approval rejected.');
+    });
 
   const registerAgent = async (event: FormEvent) => {
     event.preventDefault();
@@ -235,7 +415,7 @@ function App() {
         </div>
         <div className="status" role="status">
           <span className="status-dot" aria-hidden="true" />
-          {error
+          {loadError
             ? 'Control plane needs attention'
             : snapshot
               ? 'Control plane online'
@@ -243,8 +423,21 @@ function App() {
         </div>
       </header>
 
-      {error ? <div className="error-card">{error}</div> : null}
-      {notice ? <div className="notice-card">{notice}</div> : null}
+      {loadError ? (
+        <div className="error-card" role="alert">
+          {loadError}
+        </div>
+      ) : null}
+      {error ? (
+        <div className="error-card" role="alert">
+          {error}
+        </div>
+      ) : null}
+      {notice ? (
+        <div className="notice-card" role="status" aria-label="Action result">
+          {notice}
+        </div>
+      ) : null}
 
       <section className="summary-grid" aria-label="Control plane summary">
         <article className="summary-card">
@@ -259,10 +452,8 @@ function App() {
         </article>
         <article className="summary-card">
           <span>Tasks</span>
-          <strong>{snapshot?.tasks.length ?? 0}</strong>
-          <small>
-            {snapshot?.tasks.filter((task) => task.state === 'completed').length ?? 0} completed
-          </small>
+          <strong>{tasks.length}</strong>
+          <small>{tasks.filter((task) => task.state === 'completed').length} completed</small>
         </article>
         <article className="summary-card">
           <span>Runner</span>
@@ -272,6 +463,58 @@ function App() {
       </section>
 
       <div className="dashboard-grid">
+        <section className="panel span-2">
+          <div className="panel-heading">
+            <div>
+              <p className="kicker">Workspace setup</p>
+              <h2>Projects</h2>
+            </div>
+          </div>
+          <div className="project-controls">
+            <label>
+              Active project
+              <select
+                value={project?.id ?? ''}
+                disabled={!snapshot?.projects.length || busy !== null}
+                onChange={(event) => {
+                  setSelectedProjectId(event.target.value);
+                  setSelectedArtifactId(null);
+                  setNotice(null);
+                  setError(null);
+                }}
+              >
+                <option value="" disabled>
+                  No projects yet
+                </option>
+                {snapshot?.projects.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <form className="project-form" onSubmit={(event) => void createProject(event)}>
+              <label>
+                Project name
+                <input
+                  required
+                  maxLength={256}
+                  value={projectName}
+                  onChange={(event) => setProjectName(event.target.value)}
+                  placeholder="My local project"
+                  disabled={busy === 'project'}
+                />
+              </label>
+              <button type="submit" disabled={busy !== null || !projectName.trim()}>
+                {busy === 'project' ? 'Creating…' : 'Create project'}
+              </button>
+            </form>
+          </div>
+          {!project ? (
+            <Empty>Create a project, register an ACP agent, then select its Boss.</Empty>
+          ) : null}
+        </section>
+
         <section className="panel span-2 setup-panel">
           <div className="panel-heading">
             <div>
@@ -459,6 +702,53 @@ function App() {
               boss.orchestration scope.
             </small>
           </div>
+          <form className="goal-form" onSubmit={(event) => void submitGoal(event)}>
+            <h3>Submit a goal</h3>
+            <label>
+              Goal title (optional)
+              <input
+                value={goalTitle}
+                maxLength={256}
+                onChange={(event) => setGoalTitle(event.target.value)}
+                placeholder="Review the project"
+                disabled={busy === 'goal'}
+              />
+            </label>
+            <label>
+              Goal objective
+              <textarea
+                required
+                rows={4}
+                maxLength={100_000}
+                value={goalObjective}
+                onChange={(event) => setGoalObjective(event.target.value)}
+                placeholder="Describe the outcome you want the Boss to deliver."
+                disabled={busy === 'goal'}
+              />
+            </label>
+            <div className="form-actions">
+              <button
+                type="submit"
+                disabled={
+                  busy !== null ||
+                  !project ||
+                  !bossCandidates.some(
+                    (agent) => agent.definition.id === project.defaultBossAgentId,
+                  ) ||
+                  !goalObjective.trim()
+                }
+              >
+                {busy === 'goal' ? 'Submitting…' : 'Submit goal'}
+              </button>
+              <small>
+                {!project
+                  ? 'Create a project first.'
+                  : !boss
+                    ? 'Select an eligible Boss first.'
+                    : `Runs with ${boss.definition.name}. Tasks and approvals update every 2 seconds.`}
+              </small>
+            </div>
+          </form>
         </section>
 
         <section className="panel">
@@ -469,15 +759,37 @@ function App() {
             </div>
           </div>
           <div className="stack">
-            {snapshot?.tasks.map((task) => (
-              <article className="row-card" key={task.id}>
-                <div>
-                  <strong>{task.title}</strong>
-                  <small>{task.ownerAgentId ?? 'unassigned'}</small>
+            {tasks.map((task) => (
+              <article className="task-card" key={task.id}>
+                <div className="task-heading">
+                  <div>
+                    <strong>{task.title}</strong>
+                    <small>
+                      {task.ownerAgentId ?? 'unassigned'} · {task.id}
+                    </small>
+                  </div>
+                  <Badge>{task.state}</Badge>
                 </div>
-                <Badge>{task.state}</Badge>
+                <p>{task.objective}</p>
+                {task.resultArtifactRefs.length > 0 ? (
+                  <div className="card-actions">
+                    {task.resultArtifactRefs.map((id, index) => (
+                      <button
+                        type="button"
+                        key={id}
+                        disabled={!artifacts.some((artifact) => artifact.id === id)}
+                        onClick={() => setSelectedArtifactId(id)}
+                      >
+                        {task.resultArtifactRefs.length === 1
+                          ? 'View result'
+                          : `View result ${index + 1}`}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
               </article>
             ))}
+            {snapshot && tasks.length === 0 ? <Empty>No tasks in this project yet.</Empty> : null}
           </div>
         </section>
 
@@ -489,19 +801,29 @@ function App() {
             </div>
           </div>
           <ol className="timeline">
-            {snapshot?.timeline.map((event) => (
-              <li key={event.id}>
-                <span />
-                <div>
-                  <strong>{event.type}</strong>
-                  <small>
-                    {event.actor.id} · {new Date(event.occurredAt).toLocaleTimeString()}
-                  </small>
-                </div>
-              </li>
-            ))}
+            {snapshot?.timeline
+              .filter((event) => event.projectId === project?.id)
+              .map((event) => (
+                <li key={event.id}>
+                  <span />
+                  <div>
+                    <strong>{event.type}</strong>
+                    <small>
+                      {event.actor.id} · {new Date(event.occurredAt).toLocaleTimeString()}
+                    </small>
+                  </div>
+                </li>
+              ))}
           </ol>
         </section>
+
+        {selectedArtifact ? (
+          <ArtifactPreview
+            key={selectedArtifact.id}
+            artifact={selectedArtifact}
+            onClose={() => setSelectedArtifactId(null)}
+          />
+        ) : null}
 
         <section className="panel span-2">
           <div className="panel-heading">
@@ -511,17 +833,19 @@ function App() {
             </div>
           </div>
           <div className="message-list">
-            {snapshot?.messages.map((message) => (
-              <article className="message-card" key={message.id}>
-                <div className="message-route">
-                  <strong>{message.fromAgentId}</strong>
-                  <span>→</span>
-                  <strong>{message.toAgentId ?? 'control-plane'}</strong>
-                  <Badge>{message.type}</Badge>
-                </div>
-                <p>{message.content ?? 'No inline content'}</p>
-              </article>
-            ))}
+            {snapshot?.messages
+              .filter((message) => message.projectId === project?.id)
+              .map((message) => (
+                <article className="message-card" key={message.id}>
+                  <div className="message-route">
+                    <strong>{message.fromAgentId}</strong>
+                    <span>→</span>
+                    <strong>{message.toAgentId ?? 'control-plane'}</strong>
+                    <Badge>{message.type}</Badge>
+                  </div>
+                  <p>{message.content ?? 'No inline content'}</p>
+                </article>
+              ))}
           </div>
         </section>
 
@@ -533,15 +857,51 @@ function App() {
             </div>
           </div>
           <div className="stack">
-            {snapshot?.approvals.map((approval) => (
-              <article className="row-card" key={approval.id}>
-                <div>
-                  <strong>{approval.action}</strong>
-                  <small>{approval.enforcementMode}</small>
+            {approvals.map((approval) => (
+              <article className="approval-card" key={approval.id}>
+                <div className="task-heading">
+                  <div>
+                    <strong>{approval.action}</strong>
+                    <small>
+                      {approval.requesterAgentId} · {approval.enforcementMode}
+                    </small>
+                  </div>
+                  <Badge>{approval.state}</Badge>
                 </div>
-                <Badge>{approval.state}</Badge>
+                {approval.taskId ? <small>Task: {approval.taskId}</small> : null}
+                <pre className="approval-resource">
+                  {JSON.stringify(approval.resource, null, 2)}
+                </pre>
+                {approval.state === 'pending' ? (
+                  <>
+                    <p className="approval-note">
+                      Review the requested action and resource. Nothing is approved automatically.
+                    </p>
+                    <div className="card-actions">
+                      <button
+                        type="button"
+                        disabled={busy !== null}
+                        onClick={() => void decideApproval(approval.id, 'approve')}
+                      >
+                        Approve
+                      </button>
+                      <button
+                        className="reject-button"
+                        type="button"
+                        disabled={busy !== null}
+                        onClick={() => void decideApproval(approval.id, 'reject')}
+                      >
+                        Reject
+                      </button>
+                      {busy === `approval:${approval.id}` ? <small>Saving decision…</small> : null}
+                    </div>
+                  </>
+                ) : null}
               </article>
             ))}
+            {snapshot && approvals.length === 0 ? (
+              <Empty>No approvals in this project.</Empty>
+            ) : null}
           </div>
         </section>
 
@@ -553,7 +913,7 @@ function App() {
             </div>
           </div>
           <div className="stack">
-            {snapshot?.artifacts.map((artifact) => (
+            {artifacts.map((artifact) => (
               <article className="row-card" key={artifact.id}>
                 <div>
                   <strong>{artifact.id}</strong>
@@ -561,9 +921,17 @@ function App() {
                     {artifact.producerAgentId ?? 'system'} · {artifact.sizeBytes} bytes
                   </small>
                 </div>
-                <Badge>{artifact.kind}</Badge>
+                <div className="artifact-actions">
+                  <Badge>{artifact.kind}</Badge>
+                  <button type="button" onClick={() => setSelectedArtifactId(artifact.id)}>
+                    View artifact
+                  </button>
+                </div>
               </article>
             ))}
+            {snapshot && artifacts.length === 0 ? (
+              <Empty>No artifacts in this project yet.</Empty>
+            ) : null}
           </div>
         </section>
 
@@ -582,13 +950,15 @@ function App() {
                 <Badge>{runner.status}</Badge>
               </article>
             ))}
-            {snapshot?.workspaces.map((workspace) => (
-              <article className="boundary-card" key={workspace.id}>
-                <strong>{workspace.id}</strong>
-                <span>{workspace.provider}</span>
-                <Badge>{workspace.access}</Badge>
-              </article>
-            ))}
+            {snapshot?.workspaces
+              .filter((workspace) => workspace.projectId === project?.id)
+              .map((workspace) => (
+                <article className="boundary-card" key={workspace.id}>
+                  <strong>{workspace.id}</strong>
+                  <span>{workspace.provider}</span>
+                  <Badge>{workspace.access}</Badge>
+                </article>
+              ))}
           </div>
           <p className="security-note">
             LocalRunner and Git worktrees are coordination boundaries, not OS security sandboxes.

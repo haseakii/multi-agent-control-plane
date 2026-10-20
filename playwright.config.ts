@@ -12,7 +12,7 @@ export default defineConfig({
   webServer: [
     {
       command:
-        'CONTROL_PLANE_DEMO=1 CONTROL_PLANE_DB=.data/playwright.sqlite pnpm --filter @control-plane/server dev',
+        'CONTROL_PLANE_DEMO=1 CONTROL_PLANE_DB=.data/playwright.sqlite node --import tsx apps/server/src/main.ts',
       url: 'http://127.0.0.1:3000/health',
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,

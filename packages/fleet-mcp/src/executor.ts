@@ -123,7 +123,11 @@ function validateExecutionIdentity(
   if (identity.agentId !== agent.id) {
     return { ok: false, error: 'Fleet bridge identity mismatch.', statusCode: 403 };
   }
-  if (!agent.enabled || !agent.orchestration.canBeBoss || agent.controlBridge.transport !== 'mcp') {
+  if (
+    !agent.enabled ||
+    agent.controlBridge.transport !== 'mcp' ||
+    (agent.controlBridge.scopes.includes('boss.orchestration') && !agent.orchestration.canBeBoss)
+  ) {
     return { ok: false, error: 'Fleet bridge agent is not eligible.', statusCode: 403 };
   }
   return undefined;

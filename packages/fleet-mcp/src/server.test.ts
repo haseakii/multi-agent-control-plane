@@ -1,6 +1,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { AgentDefinitionSchema, AgentIdSchema } from '@control-plane/core';
+import type { AgentDefinition, BridgeScope } from '@control-plane/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createFleetMcpServer } from './server.js';
 import type { FleetBridgeHooks, FleetControlServices } from './types.js';
@@ -23,6 +24,15 @@ function boss(
     auth: { mode: 'agent-managed' },
     orchestration: { canBeBoss: true },
     controlBridge: { transport: 'mcp', scopes: [...scopes] },
+  });
+}
+
+function worker(scopes: readonly BridgeScope[] = ['agent.messaging']) {
+  return AgentDefinitionSchema.parse({
+    ...boss(scopes),
+    id: 'agent-worker',
+    name: 'Worker',
+    orchestration: { canBeBoss: false },
   });
 }
 
@@ -63,6 +73,7 @@ afterEach(async () => {
 });
 
 async function connected(options?: {
+  agent?: AgentDefinition;
   scopes?: readonly (
     | 'boss.orchestration'
     | 'agent.messaging'
@@ -72,19 +83,21 @@ async function connected(options?: {
   )[];
   allow?: boolean;
 }) {
-  const bridgeAgent = boss(
-    options?.scopes ?? [
-      'boss.orchestration',
-      'agent.messaging',
-      'artifact.read',
-      'artifact.publish',
-    ],
-  );
+  const bridgeAgent =
+    options?.agent ??
+    boss(
+      options?.scopes ?? [
+        'boss.orchestration',
+        'agent.messaging',
+        'artifact.read',
+        'artifact.publish',
+      ],
+    );
   const bridgeServices = services();
   const bridgeHooks = hooks(options?.allow ?? true);
   const server = createFleetMcpServer({
     identity: {
-      agentId: AgentIdSchema.parse('agent-boss'),
+      agentId: bridgeAgent.id,
       projectId: 'project-1',
       sessionId: 'session-1',
       taskId: 'task-root',
@@ -103,6 +116,77 @@ async function connected(options?: {
 }
 
 describe('Fleet MCP bridge', () => {
+  it('exposes only messaging to a messaging-only worker, without assigning Boss capability', async () => {
+    const { client, bridgeServices, bridgeHooks } = await connected({ agent: worker() });
+    const names = (await client.listTools()).tools.map((tool) => tool.name);
+    expect(names).toEqual(['control_send_message']);
+
+    const result = await client.callTool({
+      name: 'control_send_message',
+      arguments: { targetAgentId: 'agent-peer', type: 'message', content: 'Review ready' },
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(bridgeServices.sendMessage).toHaveBeenCalledWith(
+      { targetAgentId: 'agent-peer', type: 'message', content: 'Review ready' },
+      expect.objectContaining({
+        identity: expect.objectContaining({ agentId: 'agent-worker' }),
+        agent: expect.objectContaining({ orchestration: { canBeBoss: false } }),
+      }),
+    );
+    expect(bridgeHooks.authorize).toHaveBeenCalledOnce();
+  });
+
+  it('exposes independently scoped worker artifact/status tools but no Boss operations', async () => {
+    const { client, bridgeServices } = await connected({
+      agent: worker(['artifact.publish', 'artifact.read', 'task.status']),
+    });
+    const names = (await client.listTools()).tools.map((tool) => tool.name).sort();
+    expect(names).toEqual([
+      'control_get_artifact',
+      'control_get_task',
+      'control_publish_artifact',
+      'control_wait_task',
+    ]);
+
+    for (const request of [
+      { name: 'control_get_artifact', arguments: { artifactId: 'artifact-1' } },
+      { name: 'control_get_task', arguments: { taskId: 'task-1' } },
+      {
+        name: 'control_publish_artifact',
+        arguments: { kind: 'text', mimeType: 'text/plain', content: 'Review' },
+      },
+      { name: 'control_wait_task', arguments: { taskId: 'task-1' } },
+    ]) {
+      expect((await client.callTool(request)).isError).not.toBe(true);
+    }
+    expect(bridgeServices.getArtifact).toHaveBeenCalledOnce();
+    expect(bridgeServices.getTask).toHaveBeenCalledOnce();
+    expect(bridgeServices.publishArtifact).toHaveBeenCalledOnce();
+    expect(bridgeServices.waitTask).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ['control_discover_agents', {}],
+    ['control_get_agent', { agentId: 'agent-peer' }],
+    ['control_create_task', { title: 'Task', objective: 'Objective' }],
+    ['control_delegate_task', { taskId: 'task-1', agentId: 'agent-peer' }],
+    ['control_request_approval', { action: 'test', resource: {} }],
+    ['control_cancel_task', { taskId: 'task-1' }],
+  ] as const)('does not dispatch worker attempts to call unregistered %s', async (name, input) => {
+    const { client, bridgeServices, bridgeHooks } = await connected({
+      agent: worker(['agent.messaging', 'artifact.read', 'artifact.publish', 'task.status']),
+    });
+
+    const result = await client.callTool({ name, arguments: input });
+
+    expect(result.isError).toBe(true);
+    expect(bridgeHooks.authorize).not.toHaveBeenCalled();
+    expect(
+      Object.values(bridgeServices).every((service) => vi.mocked(service).mock.calls.length === 0),
+    ).toBe(true);
+  });
+
   it('exposes scoped tools and forwards discovery through shared services with bound identity', async () => {
     const { client, bridgeServices, bridgeHooks } = await connected();
     const listed = await client.listTools();
@@ -265,5 +349,30 @@ describe('Fleet MCP bridge', () => {
         hooks: hooks(),
       }),
     ).toThrow('not Boss-capable');
+  });
+
+  it('rejects disabled workers and workers with no MCP bridge', () => {
+    const disabled = worker();
+    disabled.enabled = false;
+    const noBridge = worker([]);
+    noBridge.controlBridge.transport = 'none';
+
+    for (const [agent, reason] of [
+      [disabled, 'Disabled agents'],
+      [noBridge, 'MCP control bridge transport'],
+    ] as const) {
+      expect(() =>
+        createFleetMcpServer({
+          identity: {
+            agentId: agent.id,
+            projectId: 'project-1',
+            sessionId: 'session-1',
+          },
+          agent,
+          services: services(),
+          hooks: hooks(),
+        }),
+      ).toThrow(reason);
+    }
   });
 });

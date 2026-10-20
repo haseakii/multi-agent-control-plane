@@ -12,6 +12,7 @@ export type FleetGatewayCompositionOptions = {
   getAgent(agentId: AgentDefinition['id']): AgentDefinition | undefined;
   services: FleetControlServices;
   hooks: FleetBridgeHooks;
+  auditDenied?: FleetBridgeGatewayOptions['auditDenied'];
 };
 
 export function createFleetGatewayOptions(
@@ -24,6 +25,7 @@ export function createFleetGatewayOptions(
 
   return {
     grants: options.grants,
+    ...(options.auditDenied ? { auditDenied: options.auditDenied } : {}),
     getAgent: options.getAgent,
     execute: async (request) =>
       executeTool({
