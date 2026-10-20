@@ -6,7 +6,6 @@ import { ProcessAgentRuntimeControl } from './process-control.js';
 
 const fixturePath = fileURLToPath(new URL('../fixtures/auth-agent.mjs', import.meta.url));
 
-
 function definition() {
   return AgentDefinitionSchema.parse({
     id: 'fixture-agent',
