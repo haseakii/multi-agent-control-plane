@@ -32,9 +32,13 @@ export const workspaces = sqliteTable(
   {
     id: text('id').primaryKey(),
     projectId: text('project_id').notNull(),
+    branchName: text('branch_name'),
     payload: payload(),
   },
-  (table) => [index('workspaces_project_idx').on(table.projectId)],
+  (table) => [
+    index('workspaces_project_idx').on(table.projectId),
+    index('workspaces_project_branch_idx').on(table.projectId, table.branchName),
+  ],
 );
 
 export const tasks = sqliteTable(
@@ -196,10 +200,22 @@ export const approvals = sqliteTable(
     id: text('id').primaryKey(),
     projectId: text('project_id').notNull(),
     taskId: text('task_id'),
+    assignmentId: text('assignment_id'),
+    action: text('action'),
+    enforcementMode: text('enforcement_mode'),
+    boundary: text('boundary'),
     state: text('state').notNull(),
+    requestedAt: text('requested_at'),
     payload: payload(),
   },
-  (table) => [index('approvals_project_state_idx').on(table.projectId, table.state)],
+  (table) => [
+    index('approvals_project_state_idx').on(table.projectId, table.state),
+    index('approvals_project_pending_time_idx').on(
+      table.projectId,
+      table.state,
+      table.requestedAt,
+    ),
+  ],
 );
 
 export const events = sqliteTable(
