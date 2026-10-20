@@ -10,6 +10,7 @@ import {
   type RunnerId,
 } from '@control-plane/core';
 import { EventChannel } from './event-channel.js';
+import { redactPotentialSecrets } from './redact.js';
 import type {
   ProcessHandle,
   ProcessSpec,
@@ -366,7 +367,7 @@ export class LocalRunner implements Runner {
     value: string,
   ): void {
     for (let offset = 0; offset < value.length; offset += this.outputChunkCharacters) {
-      const chunk = value.slice(offset, offset + this.outputChunkCharacters);
+      const chunk = redactPotentialSecrets(value.slice(offset, offset + this.outputChunkCharacters));
       if (chunk.length > 0) {
         this.publish(record, { type, chunk });
       }
