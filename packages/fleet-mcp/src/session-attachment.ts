@@ -41,7 +41,10 @@ export type FleetSessionRef = {
 };
 
 export interface FleetSessionRuntime {
-  newSession(input: { cwd: string; mcpServers?: McpServer[] | undefined }): Promise<FleetSessionRef>;
+  newSession(input: {
+    cwd: string;
+    mcpServers?: McpServer[] | undefined;
+  }): Promise<FleetSessionRef>;
   resumeSession(
     sessionId: string,
     input: { cwd: string; mcpServers?: McpServer[] | undefined },
@@ -139,10 +142,7 @@ export class FleetBossSessionAttachment {
     }
   }
 
-  async resume(
-    sessionId: string,
-    context: FleetBossSessionContext,
-  ): Promise<FleetAttachedSession> {
+  async resume(sessionId: string, context: FleetBossSessionContext): Promise<FleetAttachedSession> {
     validateContext(context);
     const grant = await this.grantIssuer.issue(grantRequest(context, sessionId));
 
