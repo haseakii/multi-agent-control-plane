@@ -38,16 +38,17 @@ function sleep(milliseconds: number, signal?: AbortSignal): Promise<void> {
     return Promise.reject(signal.reason ?? new Error('Approval wait aborted.'));
   }
   return new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(resolve, milliseconds);
-    timeout.unref();
     const onAbort = () => {
       clearTimeout(timeout);
+      signal?.removeEventListener('abort', onAbort);
       reject(signal?.reason ?? new Error('Approval wait aborted.'));
     };
+    const timeout = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, milliseconds);
+    timeout.unref();
     signal?.addEventListener('abort', onAbort, { once: true });
-    if (signal) {
-      timeout[Symbol.dispose] = () => signal.removeEventListener('abort', onAbort);
-    }
   });
 }
 
