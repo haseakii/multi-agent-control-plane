@@ -32,6 +32,9 @@ importers:
       '@control-plane/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@control-plane/fleet-mcp':
+        specifier: workspace:*
+        version: link:../../packages/fleet-mcp
       '@control-plane/storage':
         specifier: workspace:*
         version: link:../../packages/storage
@@ -48,9 +51,6 @@ importers:
       '@control-plane/artifact-store':
         specifier: workspace:*
         version: link:../../packages/artifact-store
-      '@control-plane/fleet-mcp':
-        specifier: workspace:*
-        version: link:../../packages/fleet-mcp
       '@control-plane/message-router':
         specifier: workspace:*
         version: link:../../packages/message-router
