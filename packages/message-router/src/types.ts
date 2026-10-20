@@ -94,8 +94,8 @@ export type MessageRouterOptions = {
   now: () => string;
   idFactory: MessageRouterIdFactory;
   hooks: MessageRouterHooks;
-  leaseMs?: number;
-  retryDelayMs?: number;
+  leaseMs?: number | undefined;
+  retryDelayMs?: number | undefined;
 };
 
 export interface MessageRouterStore {
@@ -121,7 +121,7 @@ export interface MessageRouterStore {
     recipientAgentId: string;
     now: string;
     leaseUntil: string;
-    mailboxKey?: string;
+    mailboxKey?: string | undefined;
   }): MessageDelivery | undefined;
   markDelivered(id: string, deliveredAt: string): MessageDelivery;
   scheduleRetry(id: string, availableAt: string, error: string): MessageDelivery;
