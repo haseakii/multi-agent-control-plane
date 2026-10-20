@@ -170,7 +170,79 @@ describe('Fleet MCP bridge', () => {
         toolName: 'control_cancel_task',
         operation: 'tasks.cancel',
         outcome: 'denied',
-        reason: 'policy denied',
+        reason: 'policy_denied',
+      }),
+    );
+  });
+
+  it('redacts message, artifact, approval, and service-error details from audit records', async () => {
+    const { client, bridgeServices, bridgeHooks } = await connected();
+
+    await client.callTool({
+      name: 'control_send_message',
+      arguments: {
+        targetAgentId: 'agent-worker',
+        type: 'message',
+        content: 'provider-token-secret',
+      },
+    });
+    await client.callTool({
+      name: 'control_publish_artifact',
+      arguments: {
+        kind: 'text',
+        mimeType: 'text/plain',
+        content: 'private artifact body',
+      },
+    });
+    await client.callTool({
+      name: 'control_request_approval',
+      arguments: {
+        action: 'write-file',
+        resource: { targetPath: '/private/project.env', token: 'do-not-log' },
+      },
+    });
+
+    vi.mocked(bridgeServices.getTask).mockRejectedValueOnce(
+      new Error('provider token leaked in service error'),
+    );
+    const failed = await client.callTool({
+      name: 'control_get_task',
+      arguments: { taskId: 'task-1' },
+    });
+    expect(failed.isError).toBe(true);
+
+    const serializedAudit = JSON.stringify(vi.mocked(bridgeHooks.audit).mock.calls);
+    expect(serializedAudit).not.toContain('provider-token-secret');
+    expect(serializedAudit).not.toContain('private artifact body');
+    expect(serializedAudit).not.toContain('/private/project.env');
+    expect(serializedAudit).not.toContain('do-not-log');
+    expect(serializedAudit).not.toContain('provider token leaked in service error');
+    expect(serializedAudit).toContain('contentBytes');
+    expect(serializedAudit).toContain('resourceOmitted');
+    expect(serializedAudit).toContain('service_error');
+  });
+
+  it('fails closed and audits a generic reason when policy evaluation throws', async () => {
+    const { client, bridgeServices, bridgeHooks } = await connected();
+    vi.mocked(bridgeHooks.authorize).mockRejectedValueOnce(
+      new Error('secret policy backend detail'),
+    );
+
+    const result = await client.callTool({
+      name: 'control_create_task',
+      arguments: { title: 'Task', objective: 'Objective' },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(bridgeServices.createTask).not.toHaveBeenCalled();
+    expect(JSON.stringify(vi.mocked(bridgeHooks.audit).mock.calls)).not.toContain(
+      'secret policy backend detail',
+    );
+    expect(bridgeHooks.audit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toolName: 'control_create_task',
+        outcome: 'denied',
+        reason: 'policy_evaluation_failed',
       }),
     );
   });
