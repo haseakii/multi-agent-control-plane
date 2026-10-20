@@ -10,7 +10,7 @@ const secretValuePatterns = [
 
 export class PotentialSecretError extends Error {
   constructor(path: string) {
-    super(`Potential secret detected at ${path}; task/message/event payload was not persisted.`);
+    super(`Potential secret detected at ${path}; sensitive payload was not persisted.`);
     this.name = 'PotentialSecretError';
   }
 }
