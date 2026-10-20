@@ -132,6 +132,7 @@ export class MessageRouterError extends Error {
       | 'POLICY_DENIED'
       | 'MESSAGE_NOT_FOUND'
       | 'DELIVERY_NOT_FOUND'
+      | 'INVALID_DELIVERY_STATE'
       | 'INVALID_REPLY_CHAIN',
     message: string,
   ) {
