@@ -116,7 +116,9 @@ function hasAnyScope(scopes: readonly BridgeScope[], required: readonly BridgeSc
   return required.some((scope) => scopes.includes(scope));
 }
 
-function validateExecutionIdentity(request: FleetToolExecutionRequest): FleetToolExecutionResult | undefined {
+function validateExecutionIdentity(
+  request: FleetToolExecutionRequest,
+): FleetToolExecutionResult | undefined {
   const { identity, agent } = request;
   if (identity.agentId !== agent.id) {
     return { ok: false, error: 'Fleet bridge identity mismatch.', statusCode: 403 };
