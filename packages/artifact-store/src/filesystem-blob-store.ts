@@ -97,7 +97,10 @@ export class FilesystemArtifactBlobStore implements ArtifactBlobStore {
     }
     const resolved = resolve(this.rootPath, storageKey);
     if (resolved !== this.rootPath && !resolved.startsWith(`${this.rootPath}${sep}`)) {
-      throw new ArtifactStoreError('INVALID_STORAGE_KEY', 'Artifact storage key escapes root path.');
+      throw new ArtifactStoreError(
+        'INVALID_STORAGE_KEY',
+        'Artifact storage key escapes root path.',
+      );
     }
     return resolved;
   }

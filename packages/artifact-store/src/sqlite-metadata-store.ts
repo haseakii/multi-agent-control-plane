@@ -41,7 +41,9 @@ export class SqliteArtifactMetadataStore implements ArtifactMetadataStore {
          WHERE artifact_id = ? AND entity_type = ? AND entity_id = ?
          LIMIT 1`,
       )
-      .get(parsed.artifactId, parsed.entityType, parsed.entityId) as { payload: string } | undefined;
+      .get(parsed.artifactId, parsed.entityType, parsed.entityId) as
+      | { payload: string }
+      | undefined;
     if (!row) {
       throw new Error('Artifact link was not persisted.');
     }
