@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import {
   AgentDefinitionSchema,
+  AgentMessageSchema,
   ApprovalSchema,
   ArtifactSchema,
   AssignmentSchema,
@@ -27,7 +28,7 @@ export type ControlCenterSnapshot = {
   tasks: ReturnType<typeof TaskSchema.parse>[];
   assignments: ReturnType<typeof AssignmentSchema.parse>[];
   timeline: ReturnType<typeof AuditEventSchema.parse>[];
-  messages: ReturnType<typeof import('@control-plane/core').AgentMessageSchema.parse>[];
+  messages: ReturnType<typeof AgentMessageSchema.parse>[];
   approvals: ReturnType<typeof ApprovalSchema.parse>[];
   artifacts: ReturnType<typeof ArtifactSchema.parse>[];
   runners: ReturnType<typeof RunnerSchema.parse>[];
