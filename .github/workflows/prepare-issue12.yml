@@ -21,7 +21,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: pnpm install --lockfile-only --no-frozen-lockfile
+      - run: pnpm install --no-frozen-lockfile
       - run: pnpm exec prettier --write "apps/server/src/*.ts" "apps/web/src/*.{ts,tsx,css}" "apps/web/vite.config.ts" "playwright.config.ts" "tests/e2e/*.ts"
       - name: Commit generated changes
         run: |
