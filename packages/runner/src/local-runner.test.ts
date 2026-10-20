@@ -122,6 +122,37 @@ describe('LocalRunner', () => {
     expect(output).toContain('[REDACTED_SECRET]');
   });
 
+  it('exposes a claimed raw stdout transport without applying log redaction', async () => {
+    const runner = new LocalRunner({ id: 'runner-transport-test', defaultStopGracePeriodMs: 50 });
+    const secret = 'Bearer abcdefghijklmnopqrstuvwxyz0123456789';
+    const handle = await runner.spawn({
+      command: process.execPath,
+      args: ['-e', `console.log('${secret}'); setInterval(() => {}, 1000)`],
+      cwd: tempDirectory(),
+    });
+
+    const eventsPromise = collectEvents(runner, handle);
+    const transport = runner.transport(handle);
+    const reader = transport.readable.getReader();
+    const first = await reader.read();
+
+    expect(first.done).toBe(false);
+    expect(new TextDecoder().decode(first.value)).toContain(secret);
+    expect(() => runner.transport(handle)).toThrow('already been claimed');
+
+    await runner.stop(handle);
+    const events = await eventsPromise;
+    const normalized = events
+      .filter(
+        (event): event is Extract<RunnerEvent, { type: 'process.stdout' }> =>
+          event.type === 'process.stdout',
+      )
+      .map((event) => event.chunk)
+      .join('');
+    expect(normalized).not.toContain('abcdefghijklmnopqrstuvwxyz0123456789');
+    expect(normalized).toContain('[REDACTED_SECRET]');
+  });
+
   it('times out and terminates long-running processes', async () => {
     const runner = new LocalRunner({ id: 'runner-timeout-test', defaultStopGracePeriodMs: 50 });
     const handle = await runner.spawn({
