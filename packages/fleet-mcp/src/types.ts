@@ -59,10 +59,12 @@ export type DelegateTaskInput = {
   taskId: string;
   agentId: string;
   objective?: string | undefined;
-  role?: {
-    name: string;
-    description?: string | undefined;
-  };
+  role?:
+    | {
+        name: string;
+        description?: string | undefined;
+      }
+    | undefined;
 };
 
 export type SendMessageInput = {
