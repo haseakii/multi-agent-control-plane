@@ -4,11 +4,7 @@ import type {
   PermissionRequest,
 } from '@control-plane/acp-runtime';
 import type { PolicyGate } from './policy-gate.js';
-import {
-  ApprovalRejectedError,
-  PolicyDeniedError,
-  type PolicyRequest,
-} from './types.js';
+import { ApprovalRejectedError, PolicyDeniedError, type PolicyRequest } from './types.js';
 
 export type AcpPermissionPolicyMapper = (request: PermissionRequest) => PolicyRequest;
 export type AcpPermissionOptionSelector = (request: PermissionRequest) => string | undefined;

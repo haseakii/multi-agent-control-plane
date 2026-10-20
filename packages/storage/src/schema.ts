@@ -210,11 +210,7 @@ export const approvals = sqliteTable(
   },
   (table) => [
     index('approvals_project_state_idx').on(table.projectId, table.state),
-    index('approvals_project_pending_time_idx').on(
-      table.projectId,
-      table.state,
-      table.requestedAt,
-    ),
+    index('approvals_project_pending_time_idx').on(table.projectId, table.state, table.requestedAt),
   ],
 );
 

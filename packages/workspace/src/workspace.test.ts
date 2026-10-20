@@ -26,7 +26,10 @@ function tempDirectory(prefix: string): string {
   return directory;
 }
 
-function policy(storage: ReturnType<typeof openSqliteStorage>, rules: ConstructorParameters<typeof PolicyEngine>[0]['rules']) {
+function policy(
+  storage: ReturnType<typeof openSqliteStorage>,
+  rules: ConstructorParameters<typeof PolicyEngine>[0]['rules'],
+) {
   const approvals = new ApprovalService(new SqliteApprovalStore(storage), {
     now: () => '2026-10-20T03:30:00.000Z',
     idFactory: () => `approval-${++sequence}`,

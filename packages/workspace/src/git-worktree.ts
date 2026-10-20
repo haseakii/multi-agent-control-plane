@@ -17,7 +17,12 @@ import {
 } from './types.js';
 
 function assertSafeRef(value: string): void {
-  if (value.startsWith('-') || value.includes('\0') || value.includes('\n') || value.includes('\r')) {
+  if (
+    value.startsWith('-') ||
+    value.includes('\0') ||
+    value.includes('\n') ||
+    value.includes('\r')
+  ) {
     throw new TypeError(`Unsafe Git ref: ${value}`);
   }
 }
@@ -40,7 +45,10 @@ export class GitWorktreeWorkspaceProvider {
     const id = parsed.id ?? WorkspaceIdSchema.parse(this.idFactory());
     const targetPath = resolve(worktreeRoot, id);
 
-    if (targetPath === worktreeRoot || !targetPath.startsWith(`${worktreeRoot}/`) && !targetPath.startsWith(`${worktreeRoot}\\`)) {
+    if (
+      targetPath === worktreeRoot ||
+      (!targetPath.startsWith(`${worktreeRoot}/`) && !targetPath.startsWith(`${worktreeRoot}\\`))
+    ) {
       throw new TypeError('Worktree target must remain under the configured worktree root.');
     }
 
@@ -84,7 +92,9 @@ export class GitWorktreeWorkspaceProvider {
           });
           return this.storage.repositories.workspaces.upsert(workspace);
         } catch (error) {
-          await this.git.run(repositoryPath, ['worktree', 'remove', '--force', targetPath]).catch(() => undefined);
+          await this.git
+            .run(repositoryPath, ['worktree', 'remove', '--force', targetPath])
+            .catch(() => undefined);
           await rm(targetPath, { recursive: true, force: true }).catch(() => undefined);
           throw error;
         }
@@ -94,7 +104,12 @@ export class GitWorktreeWorkspaceProvider {
 
   async remove(workspaceId: string): Promise<void> {
     const workspace = this.requireGitWorkspace(workspaceId);
-    await this.git.run(workspace.repositoryId!, ['worktree', 'remove', '--force', workspace.rootPath]);
+    await this.git.run(workspace.repositoryId!, [
+      'worktree',
+      'remove',
+      '--force',
+      workspace.rootPath,
+    ]);
     this.storage.repositories.workspaces.delete(workspace.id);
   }
 
