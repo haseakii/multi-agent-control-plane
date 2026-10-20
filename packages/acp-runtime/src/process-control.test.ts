@@ -1,26 +1,11 @@
+import { fileURLToPath } from 'node:url';
 import { AgentDefinitionSchema } from '@control-plane/core';
 import { LocalRunner } from '@control-plane/runner';
 import { describe, expect, it } from 'vitest';
 import { ProcessAgentRuntimeControl } from './process-control.js';
 
-const fixture = String.raw`
-import * as acp from '@agentclientprotocol/sdk';
-import { Readable, Writable } from 'node:stream';
+const fixturePath = fileURLToPath(new URL('../fixtures/auth-agent.mjs', import.meta.url));
 
-const stream = acp.ndJsonStream(
-  Writable.toWeb(process.stdout),
-  Readable.toWeb(process.stdin),
-);
-
-acp.agent({ name: 'auth-fixture' })
-  .onRequest(acp.methods.agent.initialize, (ctx) => ({
-    protocolVersion: ctx.params.protocolVersion,
-    agentCapabilities: {},
-    authMethods: [{ id: 'agent-login', name: 'Agent login' }],
-  }))
-  .onRequest(acp.methods.agent.authenticate, () => ({}))
-  .connect(stream);
-`;
 
 function definition() {
   return AgentDefinitionSchema.parse({
@@ -30,7 +15,7 @@ function definition() {
     runtime: {
       type: 'acp-stdio',
       command: process.execPath,
-      args: ['--input-type=module', '-e', fixture],
+      args: [fixturePath],
       cwd: process.cwd(),
     },
     capabilities: [{ name: 'test.fixture', source: 'configured' }],
