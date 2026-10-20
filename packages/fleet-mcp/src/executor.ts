@@ -9,10 +9,7 @@ import type {
   FleetMcpServerOptions,
 } from './types.js';
 
-export type FleetToolExecutionRequest = Pick<
-  FleetMcpServerOptions,
-  'identity' | 'agent'
-> & {
+export type FleetToolExecutionRequest = Pick<FleetMcpServerOptions, 'identity' | 'agent'> & {
   toolName: string;
   input: unknown;
 };
