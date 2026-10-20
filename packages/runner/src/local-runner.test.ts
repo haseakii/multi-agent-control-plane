@@ -31,6 +31,16 @@ async function collectEvents(
 }
 
 describe('LocalRunner', () => {
+  it.runIf(process.platform === 'win32').each(['.cmd', '.bat', '.ps1'])(
+    'rejects a Windows %s wrapper before spawning',
+    async (extension) => {
+      const runner = new LocalRunner();
+      await expect(runner.spawn({ command: `C:/missing/adapter${extension}` })).rejects.toThrow(
+        'Windows .cmd/.bat/.ps1 wrappers cannot run with shell:false',
+      );
+    },
+  );
+
   it('spawns a process and exposes normalized stdout/stderr/exit events with runner identity', async () => {
     const runner = new LocalRunner({ id: 'runner-local-test', labels: ['test'] });
     const handle = await runner.spawn({

@@ -11,6 +11,7 @@ import {
 } from '@control-plane/core';
 import { EventChannel } from './event-channel.js';
 import { redactPotentialSecrets } from './redact.js';
+import { windowsWrapperIssue } from './windows-command.js';
 import type {
   ProcessHandle,
   ProcessSpec,
@@ -402,6 +403,9 @@ export class LocalRunner implements Runner {
     if (spec.command.trim().length === 0) {
       throw new TypeError('Process command must not be empty.');
     }
+
+    const wrapperIssue = windowsWrapperIssue(spec.command, process.platform);
+    if (wrapperIssue) throw new TypeError(wrapperIssue);
 
     const args = [...(spec.args ?? [])];
     if (args.length > this.maxArguments) {

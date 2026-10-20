@@ -94,3 +94,6 @@ The repository now has a runnable Phase 0 baseline: server health endpoint, web 
 V0 is successful when a user can register arbitrary stdio ACP agents, authorize them independently, choose any eligible agent as Boss, and have the Boss discover and delegate tasks to another ACP worker through the control plane with durable tasks/messages and visible execution history.
 
 See [docs/architecture/overview.md](docs/architecture/overview.md), [docs/architecture/v0-scope.md](docs/architecture/v0-scope.md), and [docs/roadmap/v0.md](docs/roadmap/v0.md).
+
+See [real-agent preflight](docs/guides/real-agent-preflight.md) for the disabled
+Codex ACP example and offline-only `pnpm diagnose:agent` command.
