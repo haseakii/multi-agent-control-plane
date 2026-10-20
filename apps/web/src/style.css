@@ -352,3 +352,143 @@ h2 {
     grid-column: span 1;
   }
 }
+
+.notice-card {
+  max-width: 1400px;
+  margin: 0 auto 20px;
+  padding: 14px 16px;
+  border: 1px solid #2d6654;
+  border-radius: 12px;
+  background: #102921;
+  color: #b9f0d7;
+}
+
+.agent-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.agent-form label {
+  display: grid;
+  gap: 7px;
+  color: #9fb0c5;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.agent-form input,
+.agent-form textarea,
+.boss-controls select {
+  width: 100%;
+  border: 1px solid #2a4059;
+  border-radius: 10px;
+  background: #091522;
+  color: #e7edf5;
+  padding: 10px 12px;
+  outline: none;
+}
+
+.agent-form input:focus,
+.agent-form textarea:focus,
+.boss-controls select:focus {
+  border-color: #5b9de8;
+  box-shadow: 0 0 0 3px rgb(91 157 232 / 12%);
+}
+
+.agent-form textarea {
+  resize: vertical;
+}
+
+.span-form-2 {
+  grid-column: span 2;
+}
+
+.checkbox-label {
+  align-content: center;
+  grid-template-columns: auto 1fr !important;
+  align-items: center;
+}
+
+.checkbox-label input {
+  width: auto;
+}
+
+.form-actions,
+.card-actions,
+.boss-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.form-actions {
+  justify-content: space-between;
+}
+
+.form-actions small,
+.boss-controls small,
+.terminal-note {
+  color: #75889f;
+  line-height: 1.5;
+}
+
+button {
+  border: 1px solid #38618a;
+  border-radius: 9px;
+  background: #153353;
+  color: #ddebfb;
+  padding: 9px 12px;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+button:hover:not(:disabled) {
+  background: #1b426c;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.card-actions {
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+
+.card-actions button {
+  padding: 7px 9px;
+  font-size: 0.76rem;
+}
+
+.inline-error {
+  margin: 0 0 12px;
+  color: #ff9ca9;
+  font-size: 0.8rem;
+}
+
+.terminal-note {
+  display: block;
+  margin-top: 10px;
+}
+
+.boss-controls select {
+  max-width: 420px;
+}
+
+@media (max-width: 900px) {
+  .agent-form {
+    grid-template-columns: 1fr;
+  }
+
+  .span-form-2 {
+    grid-column: span 1;
+  }
+
+  .form-actions,
+  .boss-controls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}

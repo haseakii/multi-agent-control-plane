@@ -15,6 +15,7 @@ import type {
   ProcessHandle,
   ProcessSpec,
   ProcessState,
+  ProcessTransport,
   ProcessStatus,
   Runner,
   RunnerEvent,
@@ -38,7 +39,100 @@ type ProcessRecord = {
   exitSignal?: NodeJS.Signals | null;
   exitedAt?: string;
   finalized: boolean;
+  stdoutTransport: RawByteChannel;
 };
+
+class RawByteChannel {
+  private readonly queued: Uint8Array[] = [];
+  private queuedBytes = 0;
+  private controller: ReadableStreamDefaultController<Uint8Array> | undefined;
+  private claimed = false;
+  private closed = false;
+  private consumerCancelled = false;
+  private failure: Error | undefined;
+  private overflowed = false;
+
+  constructor(private readonly maxQueuedBytes = 1024 * 1024) {}
+
+  push(chunk: Uint8Array): void {
+    if (this.closed || this.failure) {
+      return;
+    }
+
+    const copy = Uint8Array.from(chunk);
+    if (this.controller) {
+      this.controller.enqueue(copy);
+      return;
+    }
+
+    if (this.overflowed || this.queuedBytes + copy.byteLength > this.maxQueuedBytes) {
+      this.overflowed = true;
+      this.queued.length = 0;
+      this.queuedBytes = 0;
+      return;
+    }
+
+    this.queued.push(copy);
+    this.queuedBytes += copy.byteLength;
+  }
+
+  close(): void {
+    if (this.closed || this.failure) {
+      return;
+    }
+    this.closed = true;
+    if (!this.consumerCancelled) {
+      this.controller?.close();
+    }
+    this.controller = undefined;
+  }
+
+  fail(error: Error): void {
+    if (this.closed || this.failure) {
+      return;
+    }
+    this.failure = error;
+    if (!this.consumerCancelled) {
+      this.controller?.error(error);
+    }
+    this.controller = undefined;
+  }
+
+  claim(): ReadableStream<Uint8Array> {
+    if (this.claimed) {
+      throw new Error('Process stdout transport has already been claimed.');
+    }
+    this.claimed = true;
+
+    return new ReadableStream<Uint8Array>({
+      start: (controller) => {
+        this.controller = controller;
+        if (this.overflowed) {
+          controller.error(new Error('Process stdout exceeded the pre-claim transport buffer.'));
+          return;
+        }
+        for (const chunk of this.queued.splice(0)) {
+          controller.enqueue(chunk);
+        }
+        this.queuedBytes = 0;
+        if (this.failure) {
+          controller.error(this.failure);
+          return;
+        }
+        if (this.closed) {
+          controller.close();
+          this.controller = undefined;
+        }
+      },
+      cancel: () => {
+        this.consumerCancelled = true;
+        this.controller = undefined;
+        this.queued.length = 0;
+        this.queuedBytes = 0;
+      },
+    });
+  }
+}
 
 export type LocalRunnerOptions = {
   id?: string;
@@ -161,6 +255,7 @@ export class LocalRunner implements Runner {
       resolveExit,
       sequence: 0,
       finalized: false,
+      stdoutTransport: new RawByteChannel(),
     };
     this.records.set(id, record);
 
@@ -168,6 +263,7 @@ export class LocalRunner implements Runner {
     this.attachOutput(record, child.stderr, 'process.stderr');
 
     child.once('error', (error) => {
+      record.stdoutTransport.fail(error);
       this.publish(record, {
         type: 'process.error',
         message: error.message,
@@ -249,6 +345,24 @@ export class LocalRunner implements Runner {
     }
 
     return this.stopRecord(record, options.gracePeriodMs ?? this.defaultStopGracePeriodMs);
+  }
+
+  transport(handle: ProcessHandle): ProcessTransport {
+    const record = this.getRecord(handle);
+    const readable = record.stdoutTransport.claim();
+    const writable = new WritableStream<Uint8Array>({
+      write: async (chunk) => {
+        await this.writeStdin(handle, chunk);
+      },
+      close: () => {
+        this.endStdin(handle);
+      },
+      abort: async () => {
+        await this.stop(handle);
+      },
+    });
+
+    return { readable, writable };
   }
 
   async writeStdin(handle: ProcessHandle, chunk: string | Uint8Array): Promise<void> {
@@ -350,13 +464,16 @@ export class LocalRunner implements Runner {
   ): void {
     const decoder = new StringDecoder('utf8');
     stream.on('data', (chunk: Buffer | string) => {
-      this.publishOutput(
-        record,
-        type,
-        decoder.write(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)),
-      );
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      if (type === 'process.stdout') {
+        record.stdoutTransport.push(bytes);
+      }
+      this.publishOutput(record, type, decoder.write(bytes));
     });
     stream.once('end', () => {
+      if (type === 'process.stdout') {
+        record.stdoutTransport.close();
+      }
       this.publishOutput(record, type, decoder.end());
     });
   }

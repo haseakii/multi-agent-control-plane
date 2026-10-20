@@ -1,6 +1,8 @@
-import { StrictMode, useEffect, useMemo, useState } from 'react';
+import { StrictMode, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { createRoot } from 'react-dom/client';
 import './style.css';
+
+type AuthMethod = { id: string; name: string; type?: string };
 
 type Snapshot = {
   generatedAt: string;
@@ -10,10 +12,14 @@ type Snapshot = {
       id: string;
       name: string;
       enabled: boolean;
+      runtime: { command: string; args: string[]; cwd?: string; environmentAllowlist?: string[] };
       orchestration: { canBeBoss: boolean };
-      capabilities: Array<{ name: string }>;
+      controlBridge: { transport: string; scopes: string[] };
+      capabilities: Array<{ name: string; source: string }>;
     };
     readiness: { runtime: string; auth: string };
+    authMethods: AuthMethod[];
+    error?: string;
   }>;
   tasks: Array<{ id: string; title: string; state: string; ownerAgentId?: string }>;
   timeline: Array<{ id: string; type: string; occurredAt: string; actor: { id: string } }>;
@@ -31,6 +37,28 @@ type Snapshot = {
   workspaces: Array<{ id: string; provider: string; access: string }>;
 };
 
+type AgentForm = {
+  id: string;
+  name: string;
+  command: string;
+  args: string;
+  cwd: string;
+  environmentAllowlist: string;
+  capabilities: string;
+  canBeBoss: boolean;
+};
+
+const emptyAgentForm: AgentForm = {
+  id: '',
+  name: '',
+  command: '',
+  args: '',
+  cwd: '',
+  environmentAllowlist: '',
+  capabilities: '',
+  canBeBoss: false,
+};
+
 function Badge({ children }: { children: string }) {
   return <span className="badge">{children}</span>;
 }
@@ -39,19 +67,38 @@ function Empty({ children }: { children: string }) {
   return <p className="empty">{children}</p>;
 }
 
+async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers);
+  if (init?.body) {
+    headers.set('content-type', 'application/json');
+  }
+  const response = await fetch(path, {
+    ...(init ?? {}),
+    headers,
+  });
+  const payload = (await response.json()) as T & { error?: string };
+  if (!response.ok) {
+    throw new Error(payload.error ?? `Request failed with HTTP ${response.status}`);
+  }
+  return payload;
+}
+
 function App() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [agentForm, setAgentForm] = useState<AgentForm>(emptyAgentForm);
+
+  const loadSnapshot = async () => {
+    const value = await api<Snapshot>('/api/control-center');
+    setSnapshot(value);
+    setError(null);
+  };
 
   useEffect(() => {
     let active = true;
-    fetch('/api/control-center')
-      .then(async (response) => {
-        if (!response.ok) {
-          throw new Error(`Control-center API returned ${response.status}`);
-        }
-        return (await response.json()) as Snapshot;
-      })
+    api<Snapshot>('/api/control-center')
       .then((value) => {
         if (active) {
           setSnapshot(value);
@@ -72,6 +119,108 @@ function App() {
     () => snapshot?.agents.find((agent) => agent.definition.id === project?.defaultBossAgentId),
     [project?.defaultBossAgentId, snapshot?.agents],
   );
+  const bossCandidates =
+    snapshot?.agents.filter(
+      (agent) =>
+        agent.definition.enabled &&
+        agent.definition.orchestration.canBeBoss &&
+        agent.definition.controlBridge.transport === 'mcp' &&
+        agent.definition.controlBridge.scopes.includes('boss.orchestration'),
+    ) ?? [];
+
+  const runAction = async (key: string, action: () => Promise<void>) => {
+    setBusy(key);
+    setNotice(null);
+    setError(null);
+    try {
+      await action();
+      await loadSnapshot();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const registerAgent = async (event: FormEvent) => {
+    event.preventDefault();
+    await runAction('register', async () => {
+      const capabilities = agentForm.capabilities
+        .split(',')
+        .map((value) => value.trim())
+        .filter(Boolean)
+        .map((name) => ({ name, source: 'configured' }));
+      const args = agentForm.args
+        .split('\n')
+        .map((value) => value.trim())
+        .filter(Boolean);
+      const environmentAllowlist = agentForm.environmentAllowlist
+        .split(',')
+        .map((value) => value.trim())
+        .filter(Boolean);
+
+      await api('/api/agents', {
+        method: 'POST',
+        body: JSON.stringify({
+          id: agentForm.id.trim(),
+          name: agentForm.name.trim(),
+          enabled: true,
+          runtime: {
+            type: 'acp-stdio',
+            command: agentForm.command.trim(),
+            args,
+            ...(agentForm.cwd.trim() ? { cwd: agentForm.cwd.trim() } : {}),
+            ...(environmentAllowlist.length > 0 ? { environmentAllowlist } : {}),
+          },
+          capabilities,
+          auth: { mode: 'agent-managed' },
+          orchestration: { canBeBoss: agentForm.canBeBoss },
+          controlBridge: agentForm.canBeBoss
+            ? {
+                transport: 'mcp',
+                scopes: [
+                  'boss.orchestration',
+                  'agent.messaging',
+                  'artifact.read',
+                  'artifact.publish',
+                  'task.status',
+                ],
+              }
+            : { transport: 'none', scopes: [] },
+        }),
+      });
+      setAgentForm(emptyAgentForm);
+      setNotice('Agent registered. Probe it to inspect ACP readiness and authentication.');
+    });
+  };
+
+  const probe = (agentId: string) =>
+    runAction(`probe:${agentId}`, async () => {
+      await api(`/api/agents/${encodeURIComponent(agentId)}/probe`, { method: 'POST' });
+      setNotice(`Probed ${agentId}.`);
+    });
+
+  const authenticate = (agentId: string, methodId: string) =>
+    runAction(`auth:${agentId}`, async () => {
+      await api(`/api/agents/${encodeURIComponent(agentId)}/auth`, {
+        method: 'POST',
+        body: JSON.stringify({ methodId }),
+      });
+      setNotice(`Authentication action completed for ${agentId}.`);
+    });
+
+  const selectBoss = (agentId: string) => {
+    if (!project) {
+      return Promise.resolve();
+    }
+    return runAction('boss', async () => {
+      await api(`/api/projects/${encodeURIComponent(project.id)}/boss`, {
+        method: 'PUT',
+        body: JSON.stringify({ agentId }),
+      });
+      setNotice(`Selected ${agentId} as Boss for ${project.name}.`);
+    });
+  };
 
   return (
     <main className="page-shell">
@@ -80,17 +229,22 @@ function App() {
           <p className="eyebrow">LOCAL-FIRST · V0 CONTROL CENTER</p>
           <h1>Multi-Agent Control Plane</h1>
           <p className="intro">
-            Observe agents, durable tasks, messages, approvals, artifacts, and execution history
-            without assigning fixed vendor roles.
+            Register arbitrary ACP agents, authorize them independently, select an eligible Boss,
+            and observe durable orchestration without fixed vendor roles.
           </p>
         </div>
         <div className="status" role="status">
           <span className="status-dot" aria-hidden="true" />
-          {error ? 'Control plane unavailable' : snapshot ? 'Control plane online' : 'Connecting…'}
+          {error
+            ? 'Control plane needs attention'
+            : snapshot
+              ? 'Control plane online'
+              : 'Connecting…'}
         </div>
       </header>
 
       {error ? <div className="error-card">{error}</div> : null}
+      {notice ? <div className="notice-card">{notice}</div> : null}
 
       <section className="summary-grid" aria-label="Control plane summary">
         <article className="summary-card">
@@ -118,6 +272,100 @@ function App() {
       </section>
 
       <div className="dashboard-grid">
+        <section className="panel span-2 setup-panel">
+          <div className="panel-heading">
+            <div>
+              <p className="kicker">Local setup</p>
+              <h2>Register ACP agent</h2>
+            </div>
+          </div>
+          <form className="agent-form" onSubmit={(event) => void registerAgent(event)}>
+            <label>
+              Agent id
+              <input
+                required
+                value={agentForm.id}
+                onChange={(event) => setAgentForm({ ...agentForm, id: event.target.value })}
+                placeholder="codex-local"
+              />
+            </label>
+            <label>
+              Display name
+              <input
+                required
+                value={agentForm.name}
+                onChange={(event) => setAgentForm({ ...agentForm, name: event.target.value })}
+                placeholder="Local coding agent"
+              />
+            </label>
+            <label className="span-form-2">
+              Command
+              <input
+                required
+                value={agentForm.command}
+                onChange={(event) => setAgentForm({ ...agentForm, command: event.target.value })}
+                placeholder="/absolute/or/PATH/agent-command"
+              />
+            </label>
+            <label>
+              Working directory
+              <input
+                value={agentForm.cwd}
+                onChange={(event) => setAgentForm({ ...agentForm, cwd: event.target.value })}
+                placeholder="optional"
+              />
+            </label>
+            <label>
+              Capabilities
+              <input
+                value={agentForm.capabilities}
+                onChange={(event) =>
+                  setAgentForm({ ...agentForm, capabilities: event.target.value })
+                }
+                placeholder="code.read, code.write"
+              />
+            </label>
+            <label>
+              Environment keys to inherit
+              <input
+                value={agentForm.environmentAllowlist}
+                onChange={(event) =>
+                  setAgentForm({ ...agentForm, environmentAllowlist: event.target.value })
+                }
+                placeholder="HOME, CUSTOM_AGENT_CONFIG"
+              />
+            </label>
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={agentForm.canBeBoss}
+                onChange={(event) =>
+                  setAgentForm({ ...agentForm, canBeBoss: event.target.checked })
+                }
+              />
+              Boss-capable with scoped Fleet MCP
+            </label>
+            <label className="span-form-2">
+              Arguments, one per line
+              <textarea
+                rows={3}
+                value={agentForm.args}
+                onChange={(event) => setAgentForm({ ...agentForm, args: event.target.value })}
+                placeholder="--acp\n--stdio"
+              />
+            </label>
+            <div className="form-actions span-form-2">
+              <button type="submit" disabled={busy !== null}>
+                {busy === 'register' ? 'Registering…' : 'Register agent'}
+              </button>
+              <small>
+                Environment values are never entered here; only explicitly allowed variable names
+                are inherited by LocalRunner.
+              </small>
+            </div>
+          </form>
+        </section>
+
         <section className="panel span-2">
           <div className="panel-heading">
             <div>
@@ -142,14 +390,74 @@ function App() {
                   <span>Runtime: {agent.readiness.runtime}</span>
                   <span>Auth: {agent.readiness.auth}</span>
                 </div>
+                {agent.error ? <p className="inline-error">{agent.error}</p> : null}
                 <div className="chips">
                   {agent.definition.capabilities.map((capability) => (
                     <span key={capability.name}>{capability.name}</span>
                   ))}
                 </div>
+                <div className="card-actions">
+                  <button
+                    type="button"
+                    disabled={busy !== null}
+                    onClick={() => void probe(agent.definition.id)}
+                  >
+                    {busy === `probe:${agent.definition.id}` ? 'Probing…' : 'Probe ACP'}
+                  </button>
+                  {agent.authMethods
+                    .filter((method) => method.type !== 'terminal')
+                    .map((method) => (
+                      <button
+                        type="button"
+                        key={method.id}
+                        disabled={busy !== null}
+                        onClick={() => void authenticate(agent.definition.id, method.id)}
+                      >
+                        {busy === `auth:${agent.definition.id}`
+                          ? 'Authorizing…'
+                          : `Auth: ${method.name}`}
+                      </button>
+                    ))}
+                </div>
+                {agent.authMethods.some((method) => method.type === 'terminal') ? (
+                  <small className="terminal-note">
+                    Terminal authentication is advertised and must be completed interactively
+                    outside this API.
+                  </small>
+                ) : null}
               </article>
             ))}
             {snapshot && snapshot.agents.length === 0 ? <Empty>No registered agents.</Empty> : null}
+          </div>
+        </section>
+
+        <section className="panel span-2">
+          <div className="panel-heading">
+            <div>
+              <p className="kicker">Orchestration</p>
+              <h2>Boss selection</h2>
+            </div>
+          </div>
+          <div className="boss-controls">
+            <select
+              aria-label="Select Boss agent"
+              value={project?.defaultBossAgentId ?? ''}
+              disabled={!project || busy !== null}
+              onChange={(event) => void selectBoss(event.target.value)}
+            >
+              <option value="" disabled>
+                Select an eligible Boss
+              </option>
+              {bossCandidates.map((agent) => (
+                <option key={agent.definition.id} value={agent.definition.id}>
+                  {agent.definition.name} ({agent.definition.id})
+                </option>
+              ))}
+            </select>
+            <small>
+              Eligibility requires an enabled Boss-capable agent with MCP transport and the
+              boss.orchestration scope.
+            </small>
           </div>
         </section>
 

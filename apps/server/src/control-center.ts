@@ -1,3 +1,4 @@
+import type { AgentAuthMethodSummary, AgentReadiness } from '@control-plane/acp-runtime';
 import { createHash } from 'node:crypto';
 import {
   AgentDefinitionSchema,
@@ -20,10 +21,9 @@ export type ControlCenterSnapshot = {
   projects: ReturnType<typeof ProjectSchema.parse>[];
   agents: Array<{
     definition: ReturnType<typeof AgentDefinitionSchema.parse>;
-    readiness: {
-      runtime: 'unknown';
-      auth: 'not_reported';
-    };
+    readiness: AgentReadiness;
+    authMethods: AgentAuthMethodSummary[];
+    error?: string | undefined;
   }>;
   tasks: ReturnType<typeof TaskSchema.parse>[];
   assignments: ReturnType<typeof AssignmentSchema.parse>[];
@@ -265,17 +265,34 @@ export function seedDemoState(storage: SqliteStorage): void {
   }
 }
 
-export function readControlCenterSnapshot(storage: SqliteStorage): ControlCenterSnapshot {
+export type AgentRuntimeStateProvider = (
+  agentId: ReturnType<typeof AgentDefinitionSchema.parse>['id'],
+) => {
+  readiness: AgentReadiness;
+  authMethods: AgentAuthMethodSummary[];
+  error?: string | undefined;
+};
+
+export function readControlCenterSnapshot(
+  storage: SqliteStorage,
+  runtimeState?: AgentRuntimeStateProvider,
+): ControlCenterSnapshot {
   const repositories = storage.repositories;
+  const generatedAt = new Date().toISOString();
   return {
-    generatedAt: new Date().toISOString(),
+    generatedAt,
     projects: repositories.projects.list(),
     agents: repositories.agentDefinitions.list().map((definition) => ({
       definition,
-      readiness: {
-        runtime: 'unknown' as const,
-        auth: 'not_reported' as const,
-      },
+      ...(runtimeState?.(definition.id) ?? {
+        readiness: {
+          runtime: 'unknown' as const,
+          auth: 'unknown' as const,
+          observedAt: generatedAt,
+          authMethodIds: [],
+        },
+        authMethods: [],
+      }),
     })),
     tasks: repositories.tasks.list(),
     assignments: repositories.assignments.list(),

@@ -18,6 +18,11 @@ export type ProcessHandle = {
   startedAt: string;
 };
 
+export type ProcessTransport = {
+  writable: WritableStream<Uint8Array>;
+  readable: ReadableStream<Uint8Array>;
+};
+
 export type ProcessStatus = ProcessHandle & {
   state: ProcessState;
   exitedAt?: string;
@@ -57,6 +62,7 @@ export interface Runner {
   status(handle: ProcessHandle): ProcessStatus;
   wait(handle: ProcessHandle): Promise<ProcessStatus>;
   events(handle: ProcessHandle, options?: { replay?: boolean }): AsyncIterable<RunnerEvent>;
+  transport(handle: ProcessHandle): ProcessTransport;
   writeStdin(handle: ProcessHandle, chunk: string | Uint8Array): Promise<void>;
   endStdin(handle: ProcessHandle): void;
 }
