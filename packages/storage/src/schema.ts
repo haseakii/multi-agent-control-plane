@@ -121,6 +121,32 @@ export const messages = sqliteTable(
   ],
 );
 
+export const messageDeliveries = sqliteTable(
+  'message_deliveries',
+  {
+    id: text('id').primaryKey(),
+    messageId: text('message_id').notNull(),
+    projectId: text('project_id').notNull(),
+    recipientAgentId: text('recipient_agent_id').notNull(),
+    mailboxKey: text('mailbox_key').notNull(),
+    sequence: integer('sequence').notNull(),
+    state: text('state').notNull(),
+    attemptCount: integer('attempt_count').notNull(),
+    availableAt: text('available_at').notNull(),
+    leaseUntil: text('lease_until'),
+    payload: payload(),
+  },
+  (table) => [
+    index('message_deliveries_recipient_state_idx').on(
+      table.recipientAgentId,
+      table.state,
+      table.availableAt,
+    ),
+    index('message_deliveries_mailbox_sequence_idx').on(table.mailboxKey, table.sequence),
+    index('message_deliveries_message_idx').on(table.messageId),
+  ],
+);
+
 export const artifacts = sqliteTable(
   'artifacts',
   {
