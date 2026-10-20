@@ -69,11 +69,12 @@ describe('FleetBridgeHttpProxy', () => {
   });
 
   it('surfaces gateway failures without echoing the grant token', async () => {
-    const fetchImpl = vi.fn<typeof fetch>(async () =>
-      new Response(JSON.stringify({ ok: false, error: 'policy denied' }), {
-        status: 403,
-        headers: { 'content-type': 'application/json' },
-      }),
+    const fetchImpl = vi.fn<typeof fetch>(
+      async () =>
+        new Response(JSON.stringify({ ok: false, error: 'policy denied' }), {
+          status: 403,
+          headers: { 'content-type': 'application/json' },
+        }),
     );
     const proxy = new FleetBridgeHttpProxy({
       baseUrl: 'http://127.0.0.1:3000',
@@ -81,14 +82,16 @@ describe('FleetBridgeHttpProxy', () => {
       fetchImpl,
     });
 
-    await expect(proxy.services().cancelTask(
-      { taskId: 'task-1' },
-      {
-        identity: manifest().identity,
-        agent: manifest().agent,
-        toolName: 'control_cancel_task',
-        operation: 'tasks.cancel',
-      },
-    )).rejects.toThrow('policy denied');
+    await expect(
+      proxy.services().cancelTask(
+        { taskId: 'task-1' },
+        {
+          identity: manifest().identity,
+          agent: manifest().agent,
+          toolName: 'control_cancel_task',
+          operation: 'tasks.cancel',
+        },
+      ),
+    ).rejects.toThrow('policy denied');
   });
 });

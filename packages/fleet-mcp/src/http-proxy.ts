@@ -1,11 +1,7 @@
 import { AgentDefinitionSchema } from '@control-plane/core';
 import type { AgentDefinition } from '@control-plane/core';
 import { createFleetMcpServer } from './server.js';
-import type {
-  FleetBridgeIdentity,
-  FleetControlServices,
-  FleetMcpServerOptions,
-} from './types.js';
+import type { FleetBridgeIdentity, FleetControlServices, FleetMcpServerOptions } from './types.js';
 
 export type FleetBridgeProxyManifest = {
   identity: FleetBridgeIdentity;
@@ -82,7 +78,9 @@ export class FleetBridgeHttpProxy {
     });
     const payload = (await response.json()) as BridgeToolResponse;
     if (!response.ok || !payload.ok) {
-      throw new Error(payload.error ?? `Fleet bridge tool request failed with HTTP ${response.status}.`);
+      throw new Error(
+        payload.error ?? `Fleet bridge tool request failed with HTTP ${response.status}.`,
+      );
     }
     return payload.result;
   }

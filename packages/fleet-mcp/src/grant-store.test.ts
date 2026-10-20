@@ -28,9 +28,7 @@ describe('InMemoryFleetBridgeGrantStore', () => {
 
     await store.bindSession(grant.token, 'session-1');
     expect(store.resolve(grant.token).sessionId).toBe('session-1');
-    await expect(store.bindSession(grant.token, 'session-2')).rejects.toThrow(
-      'already bound',
-    );
+    await expect(store.bindSession(grant.token, 'session-2')).rejects.toThrow('already bound');
 
     await store.revoke(grant.token);
     expect(() => store.resolve(grant.token)).toThrow(FleetBridgeGrantError);
