@@ -51,7 +51,7 @@ export class MessageRouter {
       throw new MessageRouterError('POLICY_DENIED', decision.reason);
     }
 
-    return this.store.transaction(() => {
+    const result = this.store.transaction(() => {
       if (parsed.idempotencyKey) {
         const existing = this.store.findMessageByIdempotency(
           sender.projectId,
@@ -66,7 +66,7 @@ export class MessageRouter {
               `Delivery for idempotent message not found: ${existing.id}`,
             );
           }
-          return { message: existing, delivery };
+          return { routed: { message: existing, delivery }, created: false };
         }
       }
 
@@ -117,14 +117,18 @@ export class MessageRouter {
           }),
         availableAt: now,
       });
-      void this.options.hooks.audit({
+      return { routed: { message: saved, delivery }, created: true };
+    });
+
+    if (result.created) {
+      await this.options.hooks.audit({
         type: 'message.queued',
         sender,
-        message: saved,
-        delivery,
+        message: result.routed.message,
+        delivery: result.routed.delivery,
       });
-      return { message: saved, delivery };
-    });
+    }
+    return result.routed;
   }
 
   async claimNext(
