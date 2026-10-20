@@ -5,12 +5,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createFleetMcpServer } from './server.js';
 import type { FleetBridgeHooks, FleetControlServices } from './types.js';
 
-function boss(scopes = [
-  'boss.orchestration',
-  'agent.messaging',
-  'artifact.read',
-  'artifact.publish',
-] as const) {
+function boss(
+  scopes = ['boss.orchestration', 'agent.messaging', 'artifact.read', 'artifact.publish'] as const,
+) {
   return AgentDefinitionSchema.parse({
     id: 'agent-boss',
     name: 'Boss candidate',
@@ -69,12 +66,14 @@ async function connected(options?: {
   )[];
   allow?: boolean;
 }) {
-  const bridgeAgent = boss(options?.scopes ?? [
-    'boss.orchestration',
-    'agent.messaging',
-    'artifact.read',
-    'artifact.publish',
-  ]);
+  const bridgeAgent = boss(
+    options?.scopes ?? [
+      'boss.orchestration',
+      'agent.messaging',
+      'artifact.read',
+      'artifact.publish',
+    ],
+  );
   const bridgeServices = services();
   const bridgeHooks = hooks(options?.allow ?? true);
   const server = createFleetMcpServer({

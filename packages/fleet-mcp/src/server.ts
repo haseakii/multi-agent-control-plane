@@ -190,7 +190,9 @@ export function createFleetMcpServer(options: FleetMcpServerOptions): McpServer 
       }),
     },
     async (input) =>
-      invoke('control_create_task', input, (context) => options.services.createTask(input, context)),
+      invoke('control_create_task', input, (context) =>
+        options.services.createTask(input, context),
+      ),
   );
 
   register(
@@ -241,7 +243,8 @@ export function createFleetMcpServer(options: FleetMcpServerOptions): McpServer 
   register(
     'control_send_message',
     {
-      description: 'Send a control-plane-mediated agent message. Sender identity comes from the bridge.',
+      description:
+        'Send a control-plane-mediated agent message. Sender identity comes from the bridge.',
       inputSchema: z.object({
         targetAgentId: z.string().min(1),
         taskId: z.string().min(1).optional(),
@@ -251,7 +254,9 @@ export function createFleetMcpServer(options: FleetMcpServerOptions): McpServer 
       }),
     },
     async (input) =>
-      invoke('control_send_message', input, (context) => options.services.sendMessage(input, context)),
+      invoke('control_send_message', input, (context) =>
+        options.services.sendMessage(input, context),
+      ),
   );
 
   register(
@@ -318,7 +323,9 @@ export function createFleetMcpServer(options: FleetMcpServerOptions): McpServer 
       inputSchema: z.object({ taskId: z.string().min(1) }),
     },
     async (input) =>
-      invoke('control_cancel_task', input, (context) => options.services.cancelTask(input, context)),
+      invoke('control_cancel_task', input, (context) =>
+        options.services.cancelTask(input, context),
+      ),
   );
 
   return server;

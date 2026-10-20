@@ -1,10 +1,4 @@
-import type {
-  AgentDefinition,
-  AgentId,
-  Artifact,
-  BridgeScope,
-  Task,
-} from '@control-plane/core';
+import type { AgentDefinition, AgentId, Artifact, BridgeScope, Task } from '@control-plane/core';
 
 export type FleetBridgeIdentity = {
   agentId: AgentId;
@@ -36,9 +30,7 @@ export type FleetAuthorizationRequest = FleetCallContext & {
   input: unknown;
 };
 
-export type FleetAuthorizationDecision =
-  | { allowed: true }
-  | { allowed: false; reason: string };
+export type FleetAuthorizationDecision = { allowed: true } | { allowed: false; reason: string };
 
 export type FleetAuditOutcome = 'succeeded' | 'failed' | 'denied';
 
@@ -107,7 +99,10 @@ export type RequestApprovalInput = {
 
 export interface FleetControlServices {
   discoverAgents(input: DiscoverAgentsInput, context: FleetCallContext): Promise<unknown>;
-  getAgent(input: { agentId: string }, context: FleetCallContext): Promise<AgentDefinition | unknown>;
+  getAgent(
+    input: { agentId: string },
+    context: FleetCallContext,
+  ): Promise<AgentDefinition | unknown>;
   createTask(input: CreateTaskInput, context: FleetCallContext): Promise<Task | unknown>;
   delegateTask(input: DelegateTaskInput, context: FleetCallContext): Promise<unknown>;
   getTask(input: { taskId: string }, context: FleetCallContext): Promise<Task | unknown>;
@@ -116,8 +111,14 @@ export interface FleetControlServices {
     context: FleetCallContext,
   ): Promise<Task | unknown>;
   sendMessage(input: SendMessageInput, context: FleetCallContext): Promise<unknown>;
-  publishArtifact(input: PublishArtifactInput, context: FleetCallContext): Promise<Artifact | unknown>;
-  getArtifact(input: { artifactId: string }, context: FleetCallContext): Promise<Artifact | unknown>;
+  publishArtifact(
+    input: PublishArtifactInput,
+    context: FleetCallContext,
+  ): Promise<Artifact | unknown>;
+  getArtifact(
+    input: { artifactId: string },
+    context: FleetCallContext,
+  ): Promise<Artifact | unknown>;
   requestApproval(input: RequestApprovalInput, context: FleetCallContext): Promise<unknown>;
   cancelTask(input: { taskId: string }, context: FleetCallContext): Promise<Task | unknown>;
 }
