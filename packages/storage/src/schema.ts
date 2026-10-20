@@ -112,12 +112,18 @@ export const messages = sqliteTable(
     fromAgentId: text('from_agent_id').notNull(),
     toAgentId: text('to_agent_id'),
     type: text('type').notNull(),
+    idempotencyKey: text('idempotency_key'),
     createdAt: text('created_at').notNull(),
     payload: payload(),
   },
   (table) => [
     index('messages_project_created_idx').on(table.projectId, table.createdAt),
     index('messages_recipient_idx').on(table.toAgentId, table.createdAt),
+    index('messages_idempotency_idx').on(
+      table.projectId,
+      table.fromAgentId,
+      table.idempotencyKey,
+    ),
   ],
 );
 
