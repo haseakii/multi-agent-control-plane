@@ -90,7 +90,10 @@ export class FilesystemArtifactBlobStore implements ArtifactBlobStore {
 
   private resolveStorageKey(storageKey: string): string {
     if (!/^sha256\/[a-f0-9]{2}\/[a-f0-9]{64}$/.test(storageKey)) {
-      throw new ArtifactStoreError('INVALID_STORAGE_KEY', `Invalid artifact storage key: ${storageKey}`);
+      throw new ArtifactStoreError(
+        'INVALID_STORAGE_KEY',
+        `Invalid artifact storage key: ${storageKey}`,
+      );
     }
     const resolved = resolve(this.rootPath, storageKey);
     if (resolved !== this.rootPath && !resolved.startsWith(`${this.rootPath}${sep}`)) {
