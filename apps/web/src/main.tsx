@@ -233,7 +233,11 @@ function App() {
         </div>
         <div className="status" role="status">
           <span className="status-dot" aria-hidden="true" />
-          {error ? 'Control plane needs attention' : snapshot ? 'Control plane online' : 'Connecting…'}
+          {error
+            ? 'Control plane needs attention'
+            : snapshot
+              ? 'Control plane online'
+              : 'Connecting…'}
         </div>
       </header>
 

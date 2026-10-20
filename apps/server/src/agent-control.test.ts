@@ -117,13 +117,25 @@ describe('agent registration, auth, and Boss controls', () => {
     const snapshot = await app.inject({ method: 'GET', url: '/api/control-center' });
     const body = snapshot.json();
     expect(body.agents).toHaveLength(2);
-    expect(body.agents.every((agent: { readiness: { auth: string } }) => agent.readiness.auth === 'unknown')).toBe(true);
+    expect(
+      body.agents.every(
+        (agent: { readiness: { auth: string } }) => agent.readiness.auth === 'unknown',
+      ),
+    ).toBe(true);
   });
 
   it('probes and authenticates agents independently without claiming auth state for others', async () => {
     const { app } = setup();
-    await app.inject({ method: 'POST', url: '/api/agents', payload: definition('boss-agent', true) });
-    await app.inject({ method: 'POST', url: '/api/agents', payload: definition('worker-agent', false) });
+    await app.inject({
+      method: 'POST',
+      url: '/api/agents',
+      payload: definition('boss-agent', true),
+    });
+    await app.inject({
+      method: 'POST',
+      url: '/api/agents',
+      payload: definition('worker-agent', false),
+    });
 
     const probed = await app.inject({ method: 'POST', url: '/api/agents/boss-agent/probe' });
     expect(probed.statusCode).toBe(200);
@@ -141,7 +153,9 @@ describe('agent registration, auth, and Boss controls', () => {
     expect(authenticated.json()).toMatchObject({ readiness: { auth: 'ready' } });
 
     const list = (await app.inject({ method: 'GET', url: '/api/agents' })).json();
-    const worker = list.find((agent: { definition: { id: string } }) => agent.definition.id === 'worker-agent');
+    const worker = list.find(
+      (agent: { definition: { id: string } }) => agent.definition.id === 'worker-agent',
+    );
     expect(worker.readiness.auth).toBe('unknown');
 
     const workerProbe = await app.inject({ method: 'POST', url: '/api/agents/worker-agent/probe' });
@@ -150,8 +164,16 @@ describe('agent registration, auth, and Boss controls', () => {
 
   it('persists Boss selection and rejects agents outside the Boss bridge ceiling', async () => {
     const { app, storage } = setup();
-    await app.inject({ method: 'POST', url: '/api/agents', payload: definition('boss-agent', true) });
-    await app.inject({ method: 'POST', url: '/api/agents', payload: definition('worker-agent', false) });
+    await app.inject({
+      method: 'POST',
+      url: '/api/agents',
+      payload: definition('boss-agent', true),
+    });
+    await app.inject({
+      method: 'POST',
+      url: '/api/agents',
+      payload: definition('worker-agent', false),
+    });
 
     const selected = await app.inject({
       method: 'PUT',
@@ -172,7 +194,11 @@ describe('agent registration, auth, and Boss controls', () => {
 
   it('supports validated updates while preventing agent id changes', async () => {
     const { app, storage } = setup();
-    await app.inject({ method: 'POST', url: '/api/agents', payload: definition('boss-agent', true) });
+    await app.inject({
+      method: 'POST',
+      url: '/api/agents',
+      payload: definition('boss-agent', true),
+    });
 
     const updated = await app.inject({
       method: 'PATCH',

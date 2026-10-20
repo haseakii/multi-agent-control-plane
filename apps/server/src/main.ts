@@ -12,10 +12,7 @@ const filename = resolve(process.env.CONTROL_PLANE_DB ?? '.data/control-plane.sq
 const storage = openSqliteStorage({ filename });
 const runner = new LocalRunner({ id: 'local' });
 storage.repositories.runners.upsert(runner.descriptor());
-const agentControl = new AgentControlService(
-  storage,
-  new ProcessAgentRuntimeControl(runner),
-);
+const agentControl = new AgentControlService(storage, new ProcessAgentRuntimeControl(runner));
 
 if (process.env.CONTROL_PLANE_DEMO === '1') {
   seedDemoState(storage);

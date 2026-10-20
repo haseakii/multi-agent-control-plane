@@ -17,10 +17,7 @@ export type AgentRuntimeObservation = {
 
 export interface AgentRuntimeControl {
   probe(definition: AgentDefinition): Promise<AgentRuntimeObservation>;
-  authenticate(
-    definition: AgentDefinition,
-    methodId: string,
-  ): Promise<AgentRuntimeObservation>;
+  authenticate(definition: AgentDefinition, methodId: string): Promise<AgentRuntimeObservation>;
 }
 
 export type ProcessAgentRuntimeControlOptions = {
@@ -84,24 +81,18 @@ export class ProcessAgentRuntimeControl implements AgentRuntimeControl {
     definition: AgentDefinition,
     methodId: string,
   ): Promise<AgentRuntimeObservation> {
-    return this.withConnection(
-      definition,
-      this.authenticationTimeoutMs,
-      async (connection) => {
-        const method = connection.authMethods.find((candidate) => candidate.id === methodId);
-        if (!method) {
-          throw new RangeError(`Authentication method not advertised: ${methodId}`);
-        }
-        if ('type' in method && method.type === 'terminal') {
-          throw new TypeError(
-            'Terminal authentication is not supported by the control-plane API.',
-          );
-        }
+    return this.withConnection(definition, this.authenticationTimeoutMs, async (connection) => {
+      const method = connection.authMethods.find((candidate) => candidate.id === methodId);
+      if (!method) {
+        throw new RangeError(`Authentication method not advertised: ${methodId}`);
+      }
+      if ('type' in method && method.type === 'terminal') {
+        throw new TypeError('Terminal authentication is not supported by the control-plane API.');
+      }
 
-        await connection.authenticate(methodId);
-        return observation(connection);
-      },
-    );
+      await connection.authenticate(methodId);
+      return observation(connection);
+    });
   }
 
   private async withConnection<T>(
@@ -118,10 +109,7 @@ export class ProcessAgentRuntimeControl implements AgentRuntimeControl {
     }
   }
 
-  private async start(
-    definition: AgentDefinition,
-    timeoutMs: number,
-  ): Promise<StartedConnection> {
+  private async start(definition: AgentDefinition, timeoutMs: number): Promise<StartedConnection> {
     const handle = await this.runner.spawn({
       command: definition.runtime.command,
       args: [...definition.runtime.args],
