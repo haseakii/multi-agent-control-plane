@@ -98,6 +98,37 @@ describe('MessageRouter', () => {
     storage.close();
   });
 
+  it('retries a failed delivery after the configured delay without reordering the mailbox', async () => {
+    const filename = databasePath();
+    let current = '2026-10-20T01:01:30.000Z';
+    const { storage, router } = createRouter(filename, () => current);
+
+    const first = await router.send(sender, {
+      toAgentId: 'agent-b',
+      taskId: 'task-retry',
+      type: 'message',
+      content: 'retry me',
+    });
+    await router.send(sender, {
+      toAgentId: 'agent-b',
+      taskId: 'task-retry',
+      type: 'message',
+      content: 'wait behind the first',
+    });
+
+    const claim = await router.claimNext('agent-b');
+    expect(claim?.message.id).toBe(first.message.id);
+    await router.retry(claim!.delivery.id, 'recipient temporarily unavailable');
+
+    expect(await router.claimNext('agent-b')).toBeUndefined();
+    current = '2026-10-20T01:01:30.300Z';
+
+    const retried = await router.claimNext('agent-b');
+    expect(retried?.message.id).toBe(first.message.id);
+    expect(retried?.delivery.attemptCount).toBe(2);
+    storage.close();
+  });
+
   it('redelivers an unacknowledged message after restart and lease expiry', async () => {
     const filename = databasePath();
     let current = '2026-10-20T01:02:00.000Z';
