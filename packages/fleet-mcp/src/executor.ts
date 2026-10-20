@@ -116,6 +116,17 @@ function hasAnyScope(scopes: readonly BridgeScope[], required: readonly BridgeSc
   return required.some((scope) => scopes.includes(scope));
 }
 
+function validateExecutionIdentity(request: FleetToolExecutionRequest): FleetToolExecutionResult | undefined {
+  const { identity, agent } = request;
+  if (identity.agentId !== agent.id) {
+    return { ok: false, error: 'Fleet bridge identity mismatch.', statusCode: 403 };
+  }
+  if (!agent.enabled || !agent.orchestration.canBeBoss || agent.controlBridge.transport !== 'mcp') {
+    return { ok: false, error: 'Fleet bridge agent is not eligible.', statusCode: 403 };
+  }
+  return undefined;
+}
+
 function auditInput(input: unknown): unknown {
   if (input === null || typeof input !== 'object' || Array.isArray(input)) {
     return input;
@@ -207,6 +218,11 @@ export type FleetToolExecutorOptions = {
 
 export function createFleetToolExecutor(options: FleetToolExecutorOptions) {
   return async (request: FleetToolExecutionRequest): Promise<FleetToolExecutionResult> => {
+    const identityError = validateExecutionIdentity(request);
+    if (identityError) {
+      return identityError;
+    }
+
     if (!isToolName(request.toolName)) {
       return { ok: false, error: 'Unknown Fleet tool.', statusCode: 404 };
     }
@@ -250,7 +266,7 @@ export function createFleetToolExecutor(options: FleetToolExecutorOptions) {
         reason: 'policy_denied',
       };
       await options.hooks.audit(record);
-      return { ok: false, error: decision.reason, statusCode: 403 };
+      return { ok: false, error: 'Fleet tool policy denied.', statusCode: 403 };
     }
 
     try {
