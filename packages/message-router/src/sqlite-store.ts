@@ -155,6 +155,15 @@ export class SqliteMessageRouterStore implements MessageRouterStore {
   markDelivered(id: string, deliveredAt: string): MessageDelivery {
     return this.transaction(() => {
       const current = this.requireDelivery(id);
+      if (current.state === 'delivered') {
+        return current;
+      }
+      if (current.state !== 'delivering') {
+        throw new MessageRouterError(
+          'INVALID_DELIVERY_STATE',
+          `Cannot acknowledge delivery ${id} from state ${current.state}`,
+        );
+      }
       const next = MessageDeliverySchema.parse({
         ...current,
         state: 'delivered',
@@ -170,6 +179,12 @@ export class SqliteMessageRouterStore implements MessageRouterStore {
   scheduleRetry(id: string, availableAt: string, error: string): MessageDelivery {
     return this.transaction(() => {
       const current = this.requireDelivery(id);
+      if (current.state !== 'delivering') {
+        throw new MessageRouterError(
+          'INVALID_DELIVERY_STATE',
+          `Cannot retry delivery ${id} from state ${current.state}`,
+        );
+      }
       const next = MessageDeliverySchema.parse({
         ...current,
         state: 'pending',
