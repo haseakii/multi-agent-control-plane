@@ -106,7 +106,9 @@ function App() {
         <article className="summary-card">
           <span>Tasks</span>
           <strong>{snapshot?.tasks.length ?? 0}</strong>
-          <small>{snapshot?.tasks.filter((task) => task.state === 'completed').length ?? 0} completed</small>
+          <small>
+            {snapshot?.tasks.filter((task) => task.state === 'completed').length ?? 0} completed
+          </small>
         </article>
         <article className="summary-card">
           <span>Runner</span>
@@ -132,7 +134,9 @@ function App() {
                     <strong>{agent.definition.name}</strong>
                     <small>{agent.definition.id}</small>
                   </div>
-                  <Badge>{agent.definition.orchestration.canBeBoss ? 'Boss eligible' : 'Worker'}</Badge>
+                  <Badge>
+                    {agent.definition.orchestration.canBeBoss ? 'Boss eligible' : 'Worker'}
+                  </Badge>
                 </div>
                 <div className="agent-meta">
                   <span>Runtime: {agent.readiness.runtime}</span>
@@ -182,7 +186,9 @@ function App() {
                 <span />
                 <div>
                   <strong>{event.type}</strong>
-                  <small>{event.actor.id} · {new Date(event.occurredAt).toLocaleTimeString()}</small>
+                  <small>
+                    {event.actor.id} · {new Date(event.occurredAt).toLocaleTimeString()}
+                  </small>
                 </div>
               </li>
             ))}
@@ -243,7 +249,9 @@ function App() {
               <article className="row-card" key={artifact.id}>
                 <div>
                   <strong>{artifact.id}</strong>
-                  <small>{artifact.producerAgentId ?? 'system'} · {artifact.sizeBytes} bytes</small>
+                  <small>
+                    {artifact.producerAgentId ?? 'system'} · {artifact.sizeBytes} bytes
+                  </small>
                 </div>
                 <Badge>{artifact.kind}</Badge>
               </article>

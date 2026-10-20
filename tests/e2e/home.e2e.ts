@@ -19,7 +19,9 @@ test('web control center renders durable multi-agent demo state', async ({ page 
   await expect(page.getByText('worker.completed')).toBeVisible();
 
   await expect(page.getByRole('heading', { name: 'Messages' })).toBeVisible();
-  await expect(page.getByText('Review complete; durable result published as an artifact.')).toBeVisible();
+  await expect(
+    page.getByText('Review complete; durable result published as an artifact.'),
+  ).toBeVisible();
 
   await expect(page.getByRole('heading', { name: 'Approvals' })).toBeVisible();
   await expect(page.getByText('workspace.write')).toBeVisible();
