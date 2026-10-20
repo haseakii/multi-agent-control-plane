@@ -1,6 +1,6 @@
 :root {
   color: #e7edf5;
-  background: #0b1220;
+  background: #08101b;
   font-family:
     Inter,
     ui-sans-serif,
@@ -23,60 +23,83 @@ body {
   min-width: 320px;
   min-height: 100vh;
   margin: 0;
+  background: #08101b;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
 }
 
 .page-shell {
-  display: grid;
   min-height: 100vh;
-  place-items: center;
-  padding: 32px 20px;
-  background: radial-gradient(ellipse at 50% 0%, rgb(35 76 132 / 24%), transparent 58%), #0b1220;
+  padding: 32px;
+  background:
+    radial-gradient(circle at 20% 0%, rgb(30 92 145 / 18%), transparent 34rem),
+    linear-gradient(180deg, #0a1422 0%, #08101b 100%);
 }
 
-.hero {
-  width: min(100%, 760px);
-  padding: clamp(28px, 6vw, 64px);
-  border: 1px solid #26364d;
-  border-radius: 24px;
-  background: rgb(15 25 42 / 88%);
-  box-shadow: 0 24px 80px rgb(0 0 0 / 24%);
+.topbar {
+  display: flex;
+  max-width: 1400px;
+  margin: 0 auto 28px;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
 }
 
-.eyebrow {
-  margin: 0 0 18px;
-  color: #8ebdff;
-  font-size: 0.75rem;
-  font-weight: 700;
-  letter-spacing: 0.16em;
+.eyebrow,
+.kicker {
+  margin: 0 0 8px;
+  color: #70adff;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+h1,
+h2,
+p {
+  margin-top: 0;
 }
 
 h1 {
-  max-width: 620px;
-  margin: 0;
-  font-size: clamp(2.1rem, 6vw, 4rem);
-  line-height: 1.05;
-  letter-spacing: -0.045em;
+  margin-bottom: 12px;
+  font-size: clamp(2.2rem, 5vw, 4.4rem);
+  line-height: 1;
+  letter-spacing: -0.05em;
+}
+
+h2 {
+  margin-bottom: 0;
+  font-size: 1.05rem;
 }
 
 .intro {
-  max-width: 560px;
-  margin: 24px 0;
-  color: #bac8da;
-  font-size: 1.1rem;
-  line-height: 1.7;
+  max-width: 760px;
+  margin-bottom: 0;
+  color: #93a4ba;
+  line-height: 1.65;
+}
+
+.status,
+.badge {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #30435b;
+  border-radius: 999px;
+  background: #0f1b2a;
+  color: #c8d8ea;
 }
 
 .status {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
+  flex: 0 0 auto;
+  gap: 9px;
   padding: 10px 14px;
-  border: 1px solid #285a4b;
-  border-radius: 999px;
-  background: #102c27;
-  color: #b5f4d8;
-  font-size: 0.9rem;
-  font-weight: 600;
+  font-size: 0.86rem;
+  font-weight: 700;
 }
 
 .status-dot {
@@ -84,13 +107,248 @@ h1 {
   height: 8px;
   border-radius: 50%;
   background: #55d6a1;
-  box-shadow: 0 0 12px rgb(85 214 161 / 55%);
+  box-shadow: 0 0 14px rgb(85 214 161 / 55%);
 }
 
-.note {
-  max-width: 560px;
-  margin: 28px 0 0;
-  color: #8293aa;
-  font-size: 0.9rem;
-  line-height: 1.6;
+.badge {
+  padding: 5px 9px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.error-card {
+  max-width: 1400px;
+  margin: 0 auto 20px;
+  padding: 14px 16px;
+  border: 1px solid #783d46;
+  border-radius: 12px;
+  background: #2b151a;
+  color: #ffc1c8;
+}
+
+.summary-grid,
+.dashboard-grid {
+  width: min(100%, 1400px);
+  margin-inline: auto;
+  display: grid;
+  gap: 16px;
+}
+
+.summary-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-bottom: 16px;
+}
+
+.summary-card,
+.panel,
+.agent-card,
+.row-card,
+.message-card,
+.boundary-card {
+  border: 1px solid #1f3147;
+  background: rgb(12 23 38 / 88%);
+  box-shadow: 0 16px 40px rgb(0 0 0 / 12%);
+}
+
+.summary-card {
+  min-height: 112px;
+  padding: 18px;
+  border-radius: 16px;
+}
+
+.summary-card span,
+.summary-card small,
+.agent-card small,
+.row-card small,
+.timeline small,
+.boundary-card span {
+  color: #7e91aa;
+}
+
+.summary-card span,
+.summary-card small {
+  display: block;
+}
+
+.summary-card strong {
+  display: block;
+  margin: 10px 0 4px;
+  font-size: 1.15rem;
+}
+
+.dashboard-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.panel {
+  min-width: 0;
+  padding: 20px;
+  border-radius: 18px;
+}
+
+.span-2 {
+  grid-column: span 2;
+}
+
+.panel-heading,
+.agent-title,
+.row-card,
+.message-route,
+.boundary-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.panel-heading {
+  margin-bottom: 16px;
+}
+
+.agent-grid,
+.boundary-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.agent-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.agent-card,
+.row-card,
+.message-card,
+.boundary-card {
+  border-radius: 13px;
+}
+
+.agent-card {
+  padding: 16px;
+}
+
+.agent-title small,
+.agent-meta span,
+.row-card small,
+.timeline small {
+  display: block;
+}
+
+.agent-meta {
+  display: flex;
+  gap: 16px;
+  margin: 14px 0;
+  color: #8296b0;
+  font-size: 0.8rem;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.chips span {
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: #12263a;
+  color: #8ec2ff;
+  font-size: 0.75rem;
+}
+
+.stack,
+.message-list {
+  display: grid;
+  gap: 10px;
+}
+
+.row-card,
+.boundary-card {
+  padding: 13px 14px;
+}
+
+.timeline {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.timeline li {
+  position: relative;
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  gap: 10px;
+  padding: 0 0 18px;
+}
+
+.timeline li > span {
+  width: 8px;
+  height: 8px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: #70adff;
+  box-shadow: 0 0 0 4px rgb(112 173 255 / 10%);
+}
+
+.timeline li:not(:last-child)::after {
+  position: absolute;
+  top: 15px;
+  bottom: 3px;
+  left: 3px;
+  width: 1px;
+  background: #25384f;
+  content: '';
+}
+
+.message-card {
+  padding: 14px;
+}
+
+.message-route {
+  justify-content: flex-start;
+}
+
+.message-route p,
+.message-card p {
+  margin-bottom: 0;
+}
+
+.message-card p {
+  margin-top: 12px;
+  color: #aab9ca;
+}
+
+.boundary-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.security-note,
+.empty {
+  margin: 16px 0 0;
+  color: #75889f;
+  font-size: 0.82rem;
+  line-height: 1.55;
+}
+
+@media (max-width: 900px) {
+  .page-shell {
+    padding: 22px 16px;
+  }
+
+  .topbar {
+    flex-direction: column;
+  }
+
+  .summary-grid,
+  .dashboard-grid,
+  .agent-grid,
+  .boundary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .span-2 {
+    grid-column: span 1;
+  }
 }
