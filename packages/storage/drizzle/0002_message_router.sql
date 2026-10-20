@@ -1,3 +1,13 @@
+ALTER TABLE messages ADD COLUMN idempotency_key text;
+--> statement-breakpoint
+UPDATE messages
+SET idempotency_key = json_extract(payload, '$.idempotencyKey')
+WHERE json_extract(payload, '$.idempotencyKey') IS NOT NULL;
+--> statement-breakpoint
+CREATE UNIQUE INDEX messages_idempotency_unique_idx
+ON messages (project_id, from_agent_id, idempotency_key)
+WHERE idempotency_key IS NOT NULL;
+--> statement-breakpoint
 CREATE TABLE message_deliveries (
   id text PRIMARY KEY NOT NULL,
   message_id text NOT NULL,
