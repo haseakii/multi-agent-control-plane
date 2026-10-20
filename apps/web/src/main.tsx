@@ -68,11 +68,13 @@ function Empty({ children }: { children: string }) {
 }
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers);
+  if (init?.body) {
+    headers.set('content-type', 'application/json');
+  }
   const response = await fetch(path, {
-    ...init,
-    headers: init?.body
-      ? { 'content-type': 'application/json', ...(init.headers ?? {}) }
-      : init?.headers,
+    ...(init ?? {}),
+    headers,
   });
   const payload = (await response.json()) as T & { error?: string };
   if (!response.ok) {
