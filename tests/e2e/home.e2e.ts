@@ -7,8 +7,8 @@ test('web control center renders durable multi-agent demo state', async ({ page 
   await expect(page.getByRole('status')).toContainText('Control plane online');
 
   await expect(page.getByRole('heading', { name: 'Agents' })).toBeVisible();
-  await expect(page.getByText('Demo Boss ACP').last()).toBeVisible();
-  await expect(page.getByText('Demo Worker ACP')).toBeVisible();
+  await expect(page.locator('.agent-card').filter({ hasText: 'Demo Boss ACP' })).toBeVisible();
+  await expect(page.locator('.agent-card').filter({ hasText: 'Demo Worker ACP' })).toBeVisible();
 
   await expect(page.getByRole('heading', { name: 'Tasks' })).toBeVisible();
   await expect(page.getByText('Prepare V0 architecture summary')).toBeVisible();
