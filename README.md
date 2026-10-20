@@ -57,6 +57,12 @@ User / API / UI
 
 Prerequisites: Node.js 22+ and pnpm 10.
 
+The default install targets Windows, macOS, and Linux (glibc or musl) on x64 or
+arm64, using the native SQLite binaries bundled with the pinned `better-sqlite3`
+package. Its unnecessary install-time rebuild is disabled so Windows does not
+require Visual Studio C++ build tools. Other operating systems or architectures
+need a separately configured source build and are not covered by this setup.
+
 ```bash
 pnpm install
 pnpm lint
@@ -65,6 +71,10 @@ pnpm test
 pnpm build
 pnpm test:e2e
 ```
+
+Browser tests start their own API and web servers; stop any existing services on
+ports 3000 and 4173 before running them. Tests never reuse your normal local API
+or its database.
 
 Start the API and web UI in separate terminals:
 

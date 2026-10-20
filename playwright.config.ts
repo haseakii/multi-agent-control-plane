@@ -11,10 +11,13 @@ export default defineConfig({
   },
   webServer: [
     {
-      command:
-        'CONTROL_PLANE_DEMO=1 CONTROL_PLANE_DB=.data/playwright.sqlite node --import tsx apps/server/src/main.ts',
+      command: 'node --import tsx apps/server/src/main.ts',
+      env: {
+        CONTROL_PLANE_DEMO: '1',
+        CONTROL_PLANE_DB: '.data/playwright.sqlite',
+      },
       url: 'http://127.0.0.1:3000/health',
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer: false,
       timeout: 120_000,
       stdout: 'pipe',
       stderr: 'pipe',
@@ -22,7 +25,7 @@ export default defineConfig({
     {
       command: 'pnpm --filter @control-plane/web dev:e2e',
       url: 'http://127.0.0.1:4173',
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer: false,
       timeout: 120_000,
       stdout: 'pipe',
       stderr: 'pipe',
