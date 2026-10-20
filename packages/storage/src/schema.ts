@@ -1,4 +1,4 @@
-import { index, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 const payload = () => text('payload').notNull();
 
@@ -119,7 +119,7 @@ export const messages = sqliteTable(
   (table) => [
     index('messages_project_created_idx').on(table.projectId, table.createdAt),
     index('messages_recipient_idx').on(table.toAgentId, table.createdAt),
-    index('messages_idempotency_idx').on(
+    uniqueIndex('messages_idempotency_unique_idx').on(
       table.projectId,
       table.fromAgentId,
       table.idempotencyKey,
