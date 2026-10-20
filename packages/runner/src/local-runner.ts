@@ -48,6 +48,7 @@ class RawByteChannel {
   private controller: ReadableStreamDefaultController<Uint8Array> | undefined;
   private claimed = false;
   private closed = false;
+  private consumerCancelled = false;
   private failure: Error | undefined;
   private overflowed = false;
 
@@ -80,7 +81,10 @@ class RawByteChannel {
       return;
     }
     this.closed = true;
-    this.controller?.close();
+    if (!this.consumerCancelled) {
+      this.controller?.close();
+    }
+    this.controller = undefined;
   }
 
   fail(error: Error): void {
@@ -88,7 +92,10 @@ class RawByteChannel {
       return;
     }
     this.failure = error;
-    this.controller?.error(error);
+    if (!this.consumerCancelled) {
+      this.controller?.error(error);
+    }
+    this.controller = undefined;
   }
 
   claim(): ReadableStream<Uint8Array> {
@@ -114,7 +121,14 @@ class RawByteChannel {
         }
         if (this.closed) {
           controller.close();
+          this.controller = undefined;
         }
+      },
+      cancel: () => {
+        this.consumerCancelled = true;
+        this.controller = undefined;
+        this.queued.length = 0;
+        this.queuedBytes = 0;
       },
     });
   }
