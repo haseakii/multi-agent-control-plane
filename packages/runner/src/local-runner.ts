@@ -367,7 +367,9 @@ export class LocalRunner implements Runner {
     value: string,
   ): void {
     for (let offset = 0; offset < value.length; offset += this.outputChunkCharacters) {
-      const chunk = redactPotentialSecrets(value.slice(offset, offset + this.outputChunkCharacters));
+      const chunk = redactPotentialSecrets(
+        value.slice(offset, offset + this.outputChunkCharacters),
+      );
       if (chunk.length > 0) {
         this.publish(record, { type, chunk });
       }
