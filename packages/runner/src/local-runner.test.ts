@@ -96,6 +96,32 @@ describe('LocalRunner', () => {
     expect(JSON.parse(stdout.trim())).toEqual({ visible: 'explicit' });
   });
 
+  it('redacts likely credentials from normalized process output', async () => {
+    const runner = new LocalRunner({ id: 'runner-redaction-test' });
+    const handle = await runner.spawn({
+      command: process.execPath,
+      args: [
+        '-e',
+        "console.log('Bearer abcdefghijklmnopqrstuvwxyz0123456789'); console.error('sk-abcdefghijklmnopqrstuvwxyz1234567890')",
+      ],
+      cwd: tempDirectory(),
+    });
+
+    const eventsPromise = collectEvents(runner, handle);
+    await runner.wait(handle);
+    const events = await eventsPromise;
+    const output = events
+      .filter(
+        (event): event is Extract<RunnerEvent, { type: 'process.stdout' | 'process.stderr' }> =>
+          event.type === 'process.stdout' || event.type === 'process.stderr',
+      )
+      .map((event) => event.chunk)
+      .join('');
+
+    expect(output).not.toContain('abcdefghijklmnopqrstuvwxyz0123456789');
+    expect(output).toContain('[REDACTED_SECRET]');
+  });
+
   it('times out and terminates long-running processes', async () => {
     const runner = new LocalRunner({ id: 'runner-timeout-test', defaultStopGracePeriodMs: 50 });
     const handle = await runner.spawn({

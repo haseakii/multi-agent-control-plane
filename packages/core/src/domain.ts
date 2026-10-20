@@ -339,9 +339,12 @@ export const ApprovalSchema = z
     projectId: ProjectIdSchema,
     taskId: TaskIdSchema.optional(),
     requesterAgentId: AgentIdSchema.optional(),
+    assignmentId: AssignmentIdSchema.optional(),
     action: z.string().min(1),
     resource: JsonValueSchema,
+    policyRuleId: z.string().min(1).optional(),
     enforcementMode: EnforcementModeSchema,
+    boundary: z.string().min(1).optional(),
     state: ApprovalStateSchema,
     requestedAt: TimestampSchema,
     decidedAt: TimestampSchema.optional(),
@@ -376,6 +379,7 @@ export const WorkspaceSchema = z
     access: WorkspaceAccessSchema,
     repositoryId: z.string().min(1).optional(),
     baseRevision: z.string().min(1).optional(),
+    branchName: z.string().min(1).optional(),
   })
   .strict();
 export type Workspace = z.infer<typeof WorkspaceSchema>;

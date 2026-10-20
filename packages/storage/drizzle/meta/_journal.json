@@ -29,6 +29,13 @@
       "when": 1792467000000,
       "tag": "0003_artifact_store",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1792473000000,
+      "tag": "0004_policy_workspaces",
+      "breakpoints": true
     }
   ]
 }

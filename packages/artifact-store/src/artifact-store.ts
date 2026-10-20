@@ -1,5 +1,6 @@
 import { ArtifactIdSchema, ArtifactSchema } from '@control-plane/core';
 import type { Artifact } from '@control-plane/core';
+import { assertNoPotentialSecrets } from '@control-plane/storage';
 import {
   ArtifactLinkSchema,
   ArtifactLinkTargetSchema,
@@ -15,6 +16,26 @@ import {
   type PublishArtifactInput,
 } from './types.js';
 
+const secretScannedKinds = new Set([
+  'text',
+  'json',
+  'diff',
+  'patch',
+  'log',
+  'test-report',
+  'plan',
+  'directory-manifest',
+]);
+
+function shouldScanForSecrets(kind: string, mimeType: string): boolean {
+  return (
+    secretScannedKinds.has(kind) ||
+    mimeType.startsWith('text/') ||
+    mimeType.includes('json') ||
+    mimeType.includes('xml')
+  );
+}
+
 export class ArtifactStore {
   constructor(
     private readonly blobs: ArtifactBlobStore,
@@ -24,6 +45,9 @@ export class ArtifactStore {
 
   async publish(input: PublishArtifactInput): Promise<PublishedArtifact> {
     const parsed = PublishArtifactInputSchema.parse(input);
+    if (shouldScanForSecrets(parsed.kind, parsed.mimeType)) {
+      assertNoPotentialSecrets(new TextDecoder('utf-8', { fatal: false }).decode(parsed.content));
+    }
     const blob = await this.blobs.put(parsed.content);
     const now = this.options.now();
     const artifact = ArtifactSchema.parse({
