@@ -18,10 +18,7 @@ import {
   ProjectSchema,
   RunnerSchema,
 } from '@control-plane/core';
-import {
-  createFleetMcpServer,
-  type FleetControlServices,
-} from '@control-plane/fleet-mcp';
+import { createFleetMcpServer, type FleetControlServices } from '@control-plane/fleet-mcp';
 import { MessageRouter, SqliteMessageRouterStore } from '@control-plane/message-router';
 import { openSqliteStorage } from '@control-plane/storage';
 import { TaskEngine } from '@control-plane/task-engine';
@@ -68,8 +65,9 @@ function fakeAgent(name: string, responseText: (prompt: string) => string) {
     .onRequest(acp.methods.agent.session.load, () => ({}))
     .onRequest(acp.methods.agent.session.prompt, async (ctx) => {
       const prompt = ctx.params.prompt
-        .filter((item): item is Extract<(typeof ctx.params.prompt)[number], { type: 'text' }> =>
-          item.type === 'text',
+        .filter(
+          (item): item is Extract<(typeof ctx.params.prompt)[number], { type: 'text' }> =>
+            item.type === 'text',
         )
         .map((item) => item.text)
         .join('\n');
@@ -247,7 +245,11 @@ describe('V0 multi-agent integration path', () => {
 
     const bossSession = await bossRuntime.newSession({ cwd: '/boss' });
     const workerSession = await workerRuntime.newSession({ cwd: '/worker' });
-    const bossOpening = await promptText(bossRuntime, bossSession.sessionId, 'Complete the V0 goal.');
+    const bossOpening = await promptText(
+      bossRuntime,
+      bossSession.sessionId,
+      'Complete the V0 goal.',
+    );
     expect(bossOpening).toContain('discover and delegate');
 
     let delegatedAttemptId = '';
@@ -338,10 +340,7 @@ describe('V0 multi-agent integration path', () => {
       { capabilities: {} },
     );
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    await Promise.all([
-      fleetClient.connect(clientTransport),
-      fleetServer.connect(serverTransport),
-    ]);
+    await Promise.all([fleetClient.connect(clientTransport), fleetServer.connect(serverTransport)]);
 
     const discovery = await fleetClient.callTool({
       name: 'control_discover_agents',
