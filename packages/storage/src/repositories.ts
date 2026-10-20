@@ -185,6 +185,7 @@ export function createRepositories(sqlite: Database.Database): StorageRepositori
     runners: new SqliteJsonRepository(sqlite, 'runners', RunnerSchema),
     workspaces: new SqliteJsonRepository(sqlite, 'workspaces', WorkspaceSchema, (value) => ({
       project_id: value.projectId,
+      branch_name: value.branchName ?? null,
     })),
     tasks: new SqliteJsonRepository(
       sqlite,
@@ -249,7 +250,12 @@ export function createRepositories(sqlite: Database.Database): StorageRepositori
     approvals: new SqliteJsonRepository(sqlite, 'approvals', ApprovalSchema, (value) => ({
       project_id: value.projectId,
       task_id: value.taskId ?? null,
+      assignment_id: value.assignmentId ?? null,
+      action: value.action,
+      enforcement_mode: value.enforcementMode,
+      boundary: value.boundary ?? null,
       state: value.state,
+      requested_at: value.requestedAt,
     })),
     events: new SqliteEventRepository(sqlite),
     transaction<T>(operation: () => T): T {
