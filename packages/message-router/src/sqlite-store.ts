@@ -30,7 +30,7 @@ export class SqliteMessageRouterStore implements MessageRouterStore {
          FROM messages
          WHERE project_id = ?
            AND from_agent_id = ?
-           AND json_extract(payload, '$.idempotencyKey') = ?
+           AND idempotency_key = ?
          ORDER BY rowid
          LIMIT 1`,
       )
