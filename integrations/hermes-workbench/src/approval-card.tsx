@@ -2,7 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import type { SnapshotData } from './adapter';
 import { PermissionEditPreview } from './permission-edit-preview';
-import { approvalSummary } from './approval-summary';
+import { approvalOutcome, approvalSummary } from './approval-summary';
 import s from './approval-card.module.css';
 type Approval = SnapshotData['approvals'][number];
 type Props = {
@@ -13,17 +13,19 @@ type Props = {
 };
 export function ApprovalCard({ approval: a, taskTitle, busy, onDecide }: Props) {
   const summary = approvalSummary(a.resource);
+  const pending = a.state === 'pending';
+  const outcome = approvalOutcome(a.state);
   const stale =
     Date.now() > Date.parse(a.decisionEligibility.checkedAt) + a.decisionEligibility.validForMs;
   return (
     <article className={s.card} aria-label={`${summary.title} · ${taskTitle}`}>
       <header className={s.header}>
-        <span className={s.badge}>需要你确认</span>
+        <span className={s.badge}>{pending ? '需要你确认' : outcome.title}</span>
         <h3>{summary.title}</h3>
         <p>{taskTitle}</p>
       </header>
       <div className={s.body}>
-        <p className={s.impact}>{summary.impact}</p>
+        <p className={s.impact}>{pending ? summary.impact : outcome.message}</p>
         {a.acp?.review.action === 'process.execute' && (
           <>
             <div className={s.field}>
@@ -45,7 +47,7 @@ export function ApprovalCard({ approval: a, taskTitle, busy, onDecide }: Props) 
           </div>
         )}
         <aside className={s.risk} aria-label="操作影响与风险">
-          <strong>确认前请核对</strong>
+          <strong>{pending ? '确认前请核对' : '操作影响与风险'}</strong>
           <p>{summary.risk}</p>
         </aside>
         <PermissionEditPreview resource={a.resource} />
@@ -65,32 +67,46 @@ export function ApprovalCard({ approval: a, taskTitle, busy, onDecide }: Props) 
         </details>
       </div>
       <footer className={s.actions}>
-        <div>
-          <strong>仅允许这一次操作</strong>
-          <span>
-            {summary.expiresAt
-              ? `请在 ${new Date(summary.expiresAt).toLocaleTimeString('zh-CN', { hour12: false })} 前处理`
-              : '后续请求仍按项目权限处理'}
-          </span>
-          {(!a.decisionEligibility.canApprove || stale) && (
-            <span role="status">请求信息不完整、已失效或正在刷新，暂不能允许。</span>
-          )}
-        </div>
-        <button
-          type="button"
-          disabled={busy || !a.decisionEligibility.canReject}
-          onClick={() => onDecide(a.id, 'reject')}
-        >
-          拒绝
-        </button>
-        <button
-          className={s.primary}
-          type="button"
-          disabled={busy || !a.decisionEligibility.canApprove || stale}
-          onClick={() => onDecide(a.id, 'approve')}
-        >
-          允许本次
-        </button>
+        {pending ? (
+          <>
+            <div>
+              <strong>仅允许这一次操作</strong>
+              <span>
+                {summary.expiresAt
+                  ? `请在 ${new Date(summary.expiresAt).toLocaleTimeString('zh-CN', { hour12: false })} 前处理`
+                  : '后续请求仍按项目权限处理'}
+              </span>
+              {(!a.decisionEligibility.canApprove || stale) && (
+                <span role="status">请求信息不完整、已失效或正在刷新，暂不能允许。</span>
+              )}
+            </div>
+            <button
+              type="button"
+              disabled={busy || !a.decisionEligibility.canReject}
+              onClick={() => onDecide(a.id, 'reject')}
+            >
+              拒绝
+            </button>
+            <button
+              className={s.primary}
+              type="button"
+              disabled={busy || !a.decisionEligibility.canApprove || stale}
+              onClick={() => onDecide(a.id, 'approve')}
+            >
+              允许本次
+            </button>
+          </>
+        ) : (
+          <div role="status">
+            <strong>{outcome.title}</strong>
+            {summary.expiresAt && (
+              <span>
+                请求截止：{new Date(summary.expiresAt).toLocaleString('zh-CN', { hour12: false })}
+              </span>
+            )}
+            <span>历史请求仅供查看，不能再次批准。需要补做时请在原会话说明。</span>
+          </div>
+        )}
       </footer>
     </article>
   );
@@ -102,6 +118,7 @@ export function ApprovalDialog({
   ...props
 }: Omit<Props, 'approval'> & { approval?: Approval; onClose: () => void; error?: string }) {
   const ref = useRef<HTMLDialogElement>(null);
+  const pending = approval?.state === 'pending';
   useEffect(() => {
     const previous = document.activeElement;
     const dialog = ref.current!;
@@ -115,7 +132,7 @@ export function ApprovalDialog({
     <dialog
       ref={ref}
       className={s.dialog}
-      aria-label="处理待确认操作"
+      aria-label={pending ? '处理待确认操作' : '查看操作记录'}
       onCancel={(event) => {
         event.preventDefault();
         onClose();
@@ -123,8 +140,8 @@ export function ApprovalDialog({
     >
       <div className={s.dialogHeader}>
         <div>
-          <strong>操作确认</strong>
-          <span>核对内容后，再决定是否继续</span>
+          <strong>{pending ? '操作确认' : '操作记录'}</strong>
+          <span>{pending ? '核对内容后，再决定是否继续' : '查看已关闭请求的内容与原因'}</span>
         </div>
         <button type="button" aria-label="关闭操作确认" autoFocus onClick={onClose}>
           ×
@@ -135,7 +152,7 @@ export function ApprovalDialog({
           {error}
         </p>
       )}
-      {approval?.state === 'pending' ? (
+      {approval ? (
         <ApprovalCard approval={approval} {...props} />
       ) : (
         <div className={s.resolved} role="status">

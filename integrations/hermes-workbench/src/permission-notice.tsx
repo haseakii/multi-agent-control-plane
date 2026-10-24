@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { taskFamily, type SnapshotData, type TaskData } from './adapter';
+import { conversationRounds, taskFamily, type SnapshotData, type TaskData } from './adapter';
 import s from './workbench.module.css';
 import { approvalSummary } from './approval-summary';
 
@@ -18,11 +18,19 @@ export function PermissionNotice({
   onLocate: (id: string) => void;
 }) {
   const ids = new Set(taskFamily(snapshot, task).map((member) => member.id));
-  const requests = snapshot.approvals.filter(
-    (item) => item.taskId && ids.has(item.taskId) && item.action === 'acp.tool',
+  const historyIds = new Set(
+    conversationRounds(snapshot, task.id)
+      .filter((round) => round.projectId === task.projectId)
+      .flatMap((round) => taskFamily(snapshot, round))
+      .map((member) => member.id),
   );
-  const pending = requests.filter((item) => item.state === 'pending');
-  const expired = requests.filter((item) => item.state === 'expired');
+  const requests = snapshot.approvals.filter(
+    (item) => item.projectId === task.projectId && item.taskId && item.action === 'acp.tool',
+  );
+  const pending = requests.filter((item) => item.state === 'pending' && ids.has(item.taskId!));
+  const expired = requests.filter(
+    (item) => item.state === 'expired' && historyIds.has(item.taskId!),
+  );
   if (!pending.length && !expired.length) return null;
   return (
     <section className={s.taskFeedback} aria-label="操作确认状态">
@@ -54,16 +62,22 @@ export function PermissionNotice({
         </article>
       ) : (
         <article>
-          <strong>本轮有 {expired.length} 项操作确认已过期</strong>
-          <p>过期请求未获批准，确认按钮已关闭。请核对实际结果；需要补做时，在下方继续发送要求。</p>
-          <p>
-            涉及文件：
-            {[
-              ...new Set(
-                expired.map((item) => item.acp?.review.target?.split(/[\\/]/).at(-1) ?? '未提供'),
-              ),
-            ].join('、')}
-          </p>
+          <strong>本会话有 {expired.length} 项历史操作确认已过期</strong>
+          <p>过期请求未获批准，不等于你主动拒绝。历史详情仅供查看；需要补做时，在下方继续说明。</p>
+          {expired.map((item) => {
+            const summary = approvalSummary(item.resource);
+            return (
+              <div key={item.id} className={s.pendingOperation}>
+                <span>
+                  <strong>{summary.title} · 已过期</strong>
+                  <code>{summary.command ?? summary.target ?? '成员操作'}</code>
+                </span>
+                <button type="button" onClick={() => onLocate(item.id)}>
+                  查看过期请求
+                </button>
+              </div>
+            );
+          })}
           <button onClick={onInspect}>查看执行记录</button>
         </article>
       )}

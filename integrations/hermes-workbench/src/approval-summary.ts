@@ -1,5 +1,19 @@
 import { z } from 'zod';
 
+/** Approval state is authoritative; an agent's narrative may describe any denial as user rejection. */
+export function approvalOutcome(state: string) {
+  if (state === 'expired')
+    return {
+      title: '已过期 · 未获授权',
+      message: '审批记录为过期，未收到有效批准；这不等于你主动拒绝。请查看执行记录核对实际结果。',
+    };
+  if (state === 'rejected')
+    return { title: '已拒绝', message: '这项请求已被拒绝。已有文件改动仍需单独检查。' };
+  if (state === 'approved')
+    return { title: '已批准', message: '这项请求已获批准；是否执行成功仍需查看执行记录。' };
+  return { title: '请求已关闭', message: '请查看最新审批与执行记录。' };
+}
+
 const Review = z.object({
   review: z.object({
     action: z.string().nullable().optional(),
