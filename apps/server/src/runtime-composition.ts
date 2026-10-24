@@ -8,6 +8,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { workspaceGuidance, LocalWorkspaceInventory } from './workspace-guidance.js';
+import { diagnoseTaskRecovery } from './task-recovery.js';
 import {
   LocalDirectoryBindings,
   type DirectoryInspectionOptions,
@@ -1370,6 +1371,53 @@ export class ControlPlaneRuntime {
   projectEvents(projectId: string) {
     this.getProject(projectId);
     return this.storage.repositories.events.listByProject(projectId);
+  }
+
+  taskRecovery(taskId: string, observedAt = Date.now()) {
+    const task = this.getTask(taskId);
+    const tasks = this.storage.repositories.tasks
+      .list()
+      .filter((t) => t.projectId === task.projectId);
+    const tree = new Set([task.id]);
+    for (let size = -1; size !== tree.size; ) {
+      size = tree.size;
+      for (const t of tasks) if (t.parentTaskId && tree.has(t.parentTaskId)) tree.add(t.id);
+    }
+    const events = this.projectEvents(task.projectId);
+    let latestTaskId = task.id;
+    const visited = new Set<string>([task.id]);
+    for (;;) {
+      const next = events
+        .filter(
+          (e) => e.type === 'task.followup.created' && e.payload.sourceTaskId === latestTaskId,
+        )
+        .at(-1)?.taskId;
+      if (!next || visited.has(next) || !tasks.some((t) => t.id === next)) break;
+      visited.add(next);
+      latestTaskId = next;
+    }
+    const latestAttempt = this.storage.repositories.executionAttempts
+      .list()
+      .filter((a) => a.taskId === task.id)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.number - a.number)[0];
+    const pending = this.approvals
+      .listPending(task.projectId)
+      .filter((a) => a.taskId && tree.has(a.taskId));
+    const review = pending.filter((a) => a.action === 'git.merge').length;
+    const push = pending.filter((a) => a.action === 'git.push').length;
+    return {
+      latestTaskId,
+      diagnostic: diagnoseTaskRecovery({
+        task,
+        latestTaskId,
+        executionActive: this.taskExecutionActive(task.id),
+        ...(latestAttempt ? { latestAttempt } : {}),
+        pendingApprovalCount: pending.length,
+        pendingApprovals: { execution: pending.length - review - push, review, push },
+        events,
+        now: observedAt,
+      }),
+    };
   }
 
   createDraft(projectId: string, input: unknown) {

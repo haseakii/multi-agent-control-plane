@@ -25,6 +25,9 @@ import {
   Moon,
   ListChecks,
   Pencil,
+  Eye,
+  GitPullRequest,
+  PanelLeft,
 } from 'lucide-react';
 import {
   artifactUrl,
@@ -85,7 +88,7 @@ import { AgentConnections } from './agent-connections';
 import { AgentPermissions } from './agent-permissions';
 import { ExecutionDetails } from './execution-details';
 import { TaskFeedback } from './task-feedback';
-import { PermissionEditPreview } from './permission-edit-preview';
+import { ApprovalCard, ApprovalDialog } from './approval-card';
 import { PermissionNotice } from './permission-notice';
 import { workbenchError } from './workbench-error';
 import { WorkspaceReviewPanel } from './workspace-review';
@@ -393,8 +396,11 @@ function Workbench() {
   const [rail, setRail] = useState<'agents' | 'results' | 'process' | 'files' | 'preview' | null>(
     'process',
   );
+  const [approvalTarget, setApprovalTarget] = useState<string>();
   const [previewOpened, setPreviewOpened] = useState(false);
   const [fileFocus, setFileFocus] = useState<FileFocus | null>(null);
+  const [reviewFocus, setReviewFocus] = useState<{ taskId: string }>();
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [workspaceChoice, setWorkspaceChoice] = useState<WorkspaceSelection>(readWorkspaceDraft);
   useEffect(() => {
     saveWorkspaceDraft(workspaceChoice);
@@ -533,6 +539,7 @@ function Workbench() {
   }, [synchronizePreviews, synchronizeInstructions, changePreferences]);
   const select = (id: string | null) => {
     setFileFocus(null);
+    setReviewFocus(undefined);
     if (id !== activeRef.current) {
       submission.current = undefined;
       setActionError('');
@@ -649,6 +656,19 @@ function Workbench() {
     previewLoader.current?.retry(id);
   };
   const approvals = pendingTaskApprovals(snapshot?.approvals ?? [], snapshot?.tasks ?? [], root);
+  const executionApprovals = approvals.filter((approval) => approval.action === 'acp.tool');
+  const pendingReviews =
+    snapshot?.approvals.filter(
+      (approval) =>
+        approval.state === 'pending' &&
+        approval.action === 'git.merge' &&
+        approval.projectId === root?.projectId &&
+        family.some((task) => task.id === approval.taskId),
+    ) ?? [];
+  const openApproval = (id: string) => {
+    setActionError('');
+    setApprovalTarget(id);
+  };
   const action = async (fn: () => Promise<unknown>) => {
     setSending(true);
     setActionError('');
@@ -824,7 +844,20 @@ function Workbench() {
     <div className={s.app}>
       <header className={s.topbar}>
         <div className={s.brand}>
-          <strong>Hermes 工作台</strong>
+          <div className={s.brandRow}>
+            <button
+              type="button"
+              className={s.sidebarToggle}
+              aria-label={sidebarCollapsed ? '展开任务列表' : '收起任务列表'}
+              title={sidebarCollapsed ? '展开任务列表' : '收起任务列表'}
+              aria-expanded={!sidebarCollapsed}
+              aria-controls="task-history"
+              onClick={() => setSidebarCollapsed((value) => !value)}
+            >
+              <PanelLeft size={18} />
+            </button>
+            <strong>Hermes 工作台</strong>
+          </div>
           <small>本地多 Agent 协作</small>
         </div>
         <span className={s.activeTab}>01 工作台</span>
@@ -855,7 +888,7 @@ function Workbench() {
         </button>
       </header>
       <div className={s.layout}>
-        <aside className={s.sidebar}>
+        <aside className={s.sidebar} id="task-history" hidden={sidebarCollapsed}>
           <button className={s.newTask} disabled={sending} onClick={newTask}>
             <Plus size={16} /> 新任务
           </button>
@@ -1300,43 +1333,85 @@ function Workbench() {
           ) : (
             <>
               <div className={s.taskHeader}>
-                <button aria-label="返回工作台" disabled={sending} onClick={() => select(null)}>
-                  <ArrowLeft size={16} />
-                </button>
-                <div>
-                  <h1>{conversation?.title}</h1>
-                  <small>
-                    {leader ?? '执行成员'} · 第 {rounds.length} 轮 · {stateLabel(root.state)}
-                  </small>
+                <div className={s.taskHeading}>
+                  <button aria-label="返回工作台" disabled={sending} onClick={() => select(null)}>
+                    <ArrowLeft size={16} />
+                  </button>
+                  <div className={s.taskTitle}>
+                    <h1 title={conversation?.title}>{conversation?.title}</h1>
+                    <small>
+                      {leader ?? '执行成员'} · 第 {rounds.length} 轮
+                      <span className={s.statePill} data-state={root.state}>
+                        {stateLabel(root.state)}
+                      </span>
+                    </small>
+                  </div>
+                  <div className={s.taskNextActions}>
+                    {executionApprovals.length > 0 && (
+                      <button
+                        className={s.pendingShortcut}
+                        onClick={() => openApproval(executionApprovals[0]!.id)}
+                      >
+                        <ListChecks size={16} /> 待确认 {executionApprovals.length}
+                      </button>
+                    )}
+                    {pendingReviews.length > 0 && (
+                      <button
+                        className={s.reviewShortcut}
+                        onClick={() => {
+                          setFileFocus(null);
+                          setReviewFocus({ taskId: pendingReviews[0]!.taskId! });
+                          setRail('files');
+                        }}
+                      >
+                        <GitPullRequest size={16} /> 审阅改动 {pendingReviews.length}
+                      </button>
+                    )}
+                  </div>
                 </div>
-                <button onClick={() => setRail(rail === 'agents' ? null : 'agents')}>
-                  <Users size={16} /> 协作 {allSubagents.length}
-                </button>
-                <button onClick={() => setRail(rail === 'results' ? null : 'results')}>
-                  <FileText size={16} /> 结果 {artifacts.length}
-                </button>
-                <button
-                  aria-pressed={rail === 'process'}
-                  onClick={() => setRail(rail === 'process' ? null : 'process')}
-                >
-                  <ListChecks size={16} /> 过程
-                </button>
-                <button
-                  aria-pressed={rail === 'files'}
-                  onClick={() => setRail(rail === 'files' ? null : 'files')}
-                >
-                  <FileText size={16} /> 文件改动
-                </button>
-                <button
-                  aria-pressed={rail === 'preview'}
-                  onClick={() => {
-                    setPreviewOpened(true);
-                    setRail(rail === 'preview' ? null : 'preview');
-                  }}
-                >
-                  页面预览
-                </button>
-                <AgentPermissions key={root.projectId} projectId={root.projectId} />
+                <div className={s.taskToolbar}>
+                  <nav className={s.viewSwitch} aria-label="任务查看方式">
+                    <button
+                      aria-pressed={rail === 'process'}
+                      onClick={() => setRail(rail === 'process' ? null : 'process')}
+                    >
+                      <ListChecks size={16} /> 过程
+                    </button>
+                    <button
+                      aria-pressed={rail === 'files'}
+                      onClick={() => {
+                        setReviewFocus(undefined);
+                        setRail(rail === 'files' ? null : 'files');
+                      }}
+                    >
+                      <FileText size={16} /> 文件改动
+                    </button>
+                    <button
+                      aria-pressed={rail === 'preview'}
+                      onClick={() => {
+                        setPreviewOpened(true);
+                        setRail(rail === 'preview' ? null : 'preview');
+                      }}
+                    >
+                      <Eye size={16} /> 页面预览
+                    </button>
+                  </nav>
+                  <div className={s.taskUtilities}>
+                    <button
+                      aria-pressed={rail === 'agents'}
+                      onClick={() => setRail(rail === 'agents' ? null : 'agents')}
+                    >
+                      <Users size={15} /> 协作 {allSubagents.length}
+                    </button>
+                    <button
+                      aria-pressed={rail === 'results'}
+                      onClick={() => setRail(rail === 'results' ? null : 'results')}
+                    >
+                      <FileText size={15} /> 产物 {artifacts.length}
+                    </button>
+                    <AgentPermissions key={root.projectId} projectId={root.projectId} />
+                  </div>
+                </div>
               </div>
               {currentProject && (
                 <div className={s.projectContext}>
@@ -1356,46 +1431,50 @@ function Workbench() {
               )}
               <div className={s.execution}>
                 <section className={s.conversation}>
-                  <div className={s.steps} aria-label="协作进度">
-                    <span data-done>1 已接收目标</span>
-                    <span data-done={subagents.length > 0}>
-                      2{' '}
-                      {subagents.length
-                        ? '已委派协作者'
-                        : root.state === 'failed' || root.state === 'cancelled'
-                          ? '本轮执行已结束'
-                          : root.state === 'blocked' || recoverable
-                            ? '等待处理'
-                            : root.state === 'completed'
-                              ? '处理完成'
-                              : '成员处理中'}
-                    </span>
-                    <span
-                      data-done={
-                        root.state === 'completed' ||
-                        subagents.some((t) => t.status === 'completed')
-                      }
-                    >
-                      3{' '}
-                      {subagents.some((t) => t.status === 'completed') || root.state === 'completed'
-                        ? '结果已保存'
-                        : '等待结果'}
-                    </span>
-                    <span data-done={root.state === 'completed'}>
-                      4{' '}
-                      {root.state === 'completed'
-                        ? '汇总完成'
-                        : root.state === 'failed' || root.state === 'cancelled'
-                          ? '本轮未完成'
-                          : root.state === 'blocked' || recoverable
-                            ? '恢复后继续'
-                            : '等待汇总'}
-                    </span>
-                  </div>
+                  {allSubagents.length > 0 && (
+                    <div className={s.steps} aria-label="协作进度">
+                      <span data-done>1 已接收目标</span>
+                      <span data-done={subagents.length > 0}>
+                        2{' '}
+                        {subagents.length
+                          ? '已委派协作者'
+                          : root.state === 'failed' || root.state === 'cancelled'
+                            ? '本轮执行已结束'
+                            : root.state === 'blocked' || recoverable
+                              ? '等待处理'
+                              : root.state === 'completed'
+                                ? '处理完成'
+                                : '成员处理中'}
+                      </span>
+                      <span
+                        data-done={
+                          root.state === 'completed' ||
+                          subagents.some((t) => t.status === 'completed')
+                        }
+                      >
+                        3{' '}
+                        {subagents.some((t) => t.status === 'completed') ||
+                        root.state === 'completed'
+                          ? '结果已保存'
+                          : '等待结果'}
+                      </span>
+                      <span data-done={root.state === 'completed'}>
+                        4{' '}
+                        {root.state === 'completed'
+                          ? '汇总完成'
+                          : root.state === 'failed' || root.state === 'cancelled'
+                            ? '本轮未完成'
+                            : root.state === 'blocked' || recoverable
+                              ? '恢复后继续'
+                              : '等待汇总'}
+                      </span>
+                    </div>
+                  )}
                   {snapshot && (
                     <PermissionNotice
                       snapshot={snapshot}
                       task={root}
+                      onLocate={openApproval}
                       onInspect={() => setRail('process')}
                     />
                   )}
@@ -1446,6 +1525,7 @@ function Workbench() {
                       event.preventDefault();
                       event.stopPropagation();
                       setFileFocus(focus);
+                      setReviewFocus(undefined);
                       setRail('files');
                     }}
                   >
@@ -1491,57 +1571,18 @@ function Workbench() {
                                     <button onClick={() => setRail('files')}>查看文件改动</button>
                                   </div>
                                 ) : (
-                                  <div key={a.id}>
-                                    <strong>成员请求执行操作</strong>
-                                    <dl>
-                                      <dt>来自任务</dt>
-                                      <dd>
-                                        {snapshot?.tasks.find((task) => task.id === a.taskId)
-                                          ?.title ?? a.taskId}
-                                      </dd>
-                                      <dt>工具</dt>
-                                      <dd>{a.acp?.review.tool ?? '未提供'}</dd>
-                                      <dt>操作</dt>
-                                      <dd>{a.acp?.review.action ?? a.action}</dd>
-                                      <dt>目标</dt>
-                                      <dd>{a.acp?.review.target ?? '未提供'}</dd>
-                                    </dl>
-                                    <PermissionEditPreview resource={a.resource} />
-                                    <p>
-                                      {a.decisionEligibility.canApprove
-                                        ? '请查看请求内容，确认后再继续。'
-                                        : '请求信息不完整或已失效，暂不能允许。可以拒绝该操作，让 Agent 继续处理。'}
-                                    </p>
-                                    <details>
-                                      <summary>查看请求详情</summary>
-                                      <pre>{JSON.stringify(a.resource, null, 2)}</pre>
-                                    </details>
-                                    <small>
-                                      执行边界：{a.boundary ?? '未提供'} · {a.enforcementMode}
-                                    </small>
-                                    <button
-                                      disabled={sending || !a.decisionEligibility.canReject}
-                                      onClick={() =>
-                                        void action(() => decideApproval(a.id, 'reject'))
-                                      }
-                                    >
-                                      拒绝
-                                    </button>
-                                    <button
-                                      disabled={
-                                        sending ||
-                                        !a.decisionEligibility.canApprove ||
-                                        Date.now() >
-                                          Date.parse(a.decisionEligibility.checkedAt) +
-                                            a.decisionEligibility.validForMs
-                                      }
-                                      onClick={() =>
-                                        void action(() => decideApproval(a.id, 'approve'))
-                                      }
-                                    >
-                                      允许本次
-                                    </button>
-                                  </div>
+                                  <ApprovalCard
+                                    key={a.id}
+                                    approval={a}
+                                    taskTitle={
+                                      snapshot?.tasks.find((t) => t.id === a.taskId)?.title ??
+                                      '当前任务'
+                                    }
+                                    busy={sending}
+                                    onDecide={(id, decision) =>
+                                      void action(() => decideApproval(id, decision))
+                                    }
+                                  />
                                 ),
                               )}
                             </div>
@@ -1607,6 +1648,7 @@ function Workbench() {
                   <WorkspaceReviewPanel
                     taskIds={rounds.map((r) => r.id)}
                     focus={fileFocus}
+                    reviewFocus={reviewFocus}
                     onClose={() => setRail(null)}
                   />
                 )}
@@ -1667,6 +1709,20 @@ function Workbench() {
       <footer className={s.bottom}>
         Hermes 工作台 · 任务和对话保存在本机 <span>执行引擎：Multi-Agent Control Plane · ACP</span>
       </footer>
+      {approvalTarget && snapshot && (
+        <ApprovalDialog
+          error={actionError}
+          approval={snapshot.approvals.find((a) => a.id === approvalTarget)}
+          taskTitle={
+            snapshot.tasks.find(
+              (t) => t.id === snapshot.approvals.find((a) => a.id === approvalTarget)?.taskId,
+            )?.title ?? '当前任务'
+          }
+          busy={sending}
+          onDecide={(id, decision) => void action(() => decideApproval(id, decision))}
+          onClose={() => setApprovalTarget(undefined)}
+        />
+      )}
       {connectionsOpen && (
         <AgentConnections
           initialMemberId={connectionTarget}

@@ -287,10 +287,12 @@ export function WorkspaceReviewPanel({
   taskIds,
   onClose,
   focus,
+  reviewFocus,
 }: {
   taskIds: string[];
   onClose: () => void;
   focus?: FileFocus | null;
+  reviewFocus?: { taskId: string };
 }) {
   const layout = useReviewWidth();
   const [snapshot, setSnapshot] = useState<SnapshotData>();
@@ -305,6 +307,12 @@ export function WorkspaceReviewPanel({
       setSelectedFile(focus.path);
     } else setSelectedFile(undefined);
   }, [focus]);
+  useEffect(() => {
+    if (!reviewFocus) return;
+    setSelectedTaskId(reviewFocus.taskId);
+    setSelectedReviewId('');
+    setSelectedFile(undefined);
+  }, [reviewFocus]);
   const [readError, setReadError] = useState('');
   const [actionError, setActionError] = useState('');
   const [notice, setNotice] = useState('');
