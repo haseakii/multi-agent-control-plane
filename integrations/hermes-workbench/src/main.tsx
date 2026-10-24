@@ -85,7 +85,7 @@ import { AgentConnections } from './agent-connections';
 import { AgentPermissions } from './agent-permissions';
 import { ExecutionDetails } from './execution-details';
 import { TaskFeedback } from './task-feedback';
-import { PermissionEditPreview } from './permission-edit-preview';
+import { ApprovalCard, ApprovalDialog } from './approval-card';
 import { PermissionNotice } from './permission-notice';
 import { workbenchError } from './workbench-error';
 import { WorkspaceReviewPanel } from './workspace-review';
@@ -393,6 +393,7 @@ function Workbench() {
   const [rail, setRail] = useState<'agents' | 'results' | 'process' | 'files' | 'preview' | null>(
     'process',
   );
+  const [approvalTarget, setApprovalTarget] = useState<string>();
   const [previewOpened, setPreviewOpened] = useState(false);
   const [fileFocus, setFileFocus] = useState<FileFocus | null>(null);
   const [workspaceChoice, setWorkspaceChoice] = useState<WorkspaceSelection>(readWorkspaceDraft);
@@ -649,6 +650,11 @@ function Workbench() {
     previewLoader.current?.retry(id);
   };
   const approvals = pendingTaskApprovals(snapshot?.approvals ?? [], snapshot?.tasks ?? [], root);
+  const executionApprovals = approvals.filter((approval) => approval.action === 'acp.tool');
+  const openApproval = (id: string) => {
+    setActionError('');
+    setApprovalTarget(id);
+  };
   const action = async (fn: () => Promise<unknown>) => {
     setSending(true);
     setActionError('');
@@ -1309,6 +1315,14 @@ function Workbench() {
                     {leader ?? '执行成员'} · 第 {rounds.length} 轮 · {stateLabel(root.state)}
                   </small>
                 </div>
+                {executionApprovals.length > 0 && (
+                  <button
+                    className={s.pendingShortcut}
+                    onClick={() => openApproval(executionApprovals[0]!.id)}
+                  >
+                    <ListChecks size={16} /> 待确认 {executionApprovals.length}
+                  </button>
+                )}
                 <button onClick={() => setRail(rail === 'agents' ? null : 'agents')}>
                   <Users size={16} /> 协作 {allSubagents.length}
                 </button>
@@ -1396,6 +1410,7 @@ function Workbench() {
                     <PermissionNotice
                       snapshot={snapshot}
                       task={root}
+                      onLocate={openApproval}
                       onInspect={() => setRail('process')}
                     />
                   )}
@@ -1491,57 +1506,18 @@ function Workbench() {
                                     <button onClick={() => setRail('files')}>查看文件改动</button>
                                   </div>
                                 ) : (
-                                  <div key={a.id}>
-                                    <strong>成员请求执行操作</strong>
-                                    <dl>
-                                      <dt>来自任务</dt>
-                                      <dd>
-                                        {snapshot?.tasks.find((task) => task.id === a.taskId)
-                                          ?.title ?? a.taskId}
-                                      </dd>
-                                      <dt>工具</dt>
-                                      <dd>{a.acp?.review.tool ?? '未提供'}</dd>
-                                      <dt>操作</dt>
-                                      <dd>{a.acp?.review.action ?? a.action}</dd>
-                                      <dt>目标</dt>
-                                      <dd>{a.acp?.review.target ?? '未提供'}</dd>
-                                    </dl>
-                                    <PermissionEditPreview resource={a.resource} />
-                                    <p>
-                                      {a.decisionEligibility.canApprove
-                                        ? '请查看请求内容，确认后再继续。'
-                                        : '请求信息不完整或已失效，暂不能允许。可以拒绝该操作，让 Agent 继续处理。'}
-                                    </p>
-                                    <details>
-                                      <summary>查看请求详情</summary>
-                                      <pre>{JSON.stringify(a.resource, null, 2)}</pre>
-                                    </details>
-                                    <small>
-                                      执行边界：{a.boundary ?? '未提供'} · {a.enforcementMode}
-                                    </small>
-                                    <button
-                                      disabled={sending || !a.decisionEligibility.canReject}
-                                      onClick={() =>
-                                        void action(() => decideApproval(a.id, 'reject'))
-                                      }
-                                    >
-                                      拒绝
-                                    </button>
-                                    <button
-                                      disabled={
-                                        sending ||
-                                        !a.decisionEligibility.canApprove ||
-                                        Date.now() >
-                                          Date.parse(a.decisionEligibility.checkedAt) +
-                                            a.decisionEligibility.validForMs
-                                      }
-                                      onClick={() =>
-                                        void action(() => decideApproval(a.id, 'approve'))
-                                      }
-                                    >
-                                      允许本次
-                                    </button>
-                                  </div>
+                                  <ApprovalCard
+                                    key={a.id}
+                                    approval={a}
+                                    taskTitle={
+                                      snapshot?.tasks.find((t) => t.id === a.taskId)?.title ??
+                                      '当前任务'
+                                    }
+                                    busy={sending}
+                                    onDecide={(id, decision) =>
+                                      void action(() => decideApproval(id, decision))
+                                    }
+                                  />
                                 ),
                               )}
                             </div>
@@ -1667,6 +1643,20 @@ function Workbench() {
       <footer className={s.bottom}>
         Hermes 工作台 · 任务和对话保存在本机 <span>执行引擎：Multi-Agent Control Plane · ACP</span>
       </footer>
+      {approvalTarget && snapshot && (
+        <ApprovalDialog
+          error={actionError}
+          approval={snapshot.approvals.find((a) => a.id === approvalTarget)}
+          taskTitle={
+            snapshot.tasks.find(
+              (t) => t.id === snapshot.approvals.find((a) => a.id === approvalTarget)?.taskId,
+            )?.title ?? '当前任务'
+          }
+          busy={sending}
+          onDecide={(id, decision) => void action(() => decideApproval(id, decision))}
+          onClose={() => setApprovalTarget(undefined)}
+        />
+      )}
       {connectionsOpen && (
         <AgentConnections
           initialMemberId={connectionTarget}

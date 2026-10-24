@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { taskFamily, type SnapshotData, type TaskData } from './adapter';
 import s from './workbench.module.css';
+import { approvalSummary } from './approval-summary';
 
 const Expiration = z.object({ review: z.object({ expiresAt: z.string().datetime() }) });
 
@@ -9,10 +10,12 @@ export function PermissionNotice({
   snapshot,
   task,
   onInspect,
+  onLocate,
 }: {
   snapshot: SnapshotData;
   task: TaskData;
   onInspect: () => void;
+  onLocate: (id: string) => void;
 }) {
   const ids = new Set(taskFamily(snapshot, task).map((member) => member.id));
   const requests = snapshot.approvals.filter(
@@ -29,25 +32,25 @@ export function PermissionNotice({
           {pending.map((item) => {
             const expiry = Expiration.safeParse(item.resource);
             return (
-              <p key={item.id}>
-                {item.acp?.review.target?.split(/[\\/]/).at(-1) ??
-                  item.acp?.review.tool ??
-                  '成员操作'}
-                {expiry.success &&
-                  ` · 请在 ${new Date(expiry.data.review.expiresAt).toLocaleTimeString('zh-CN', { hour12: false })} 前处理`}
-              </p>
+              <div key={item.id} className={s.pendingOperation}>
+                <span>
+                  <strong>{approvalSummary(item.resource).title}</strong>
+                  <code>
+                    {approvalSummary(item.resource).command ??
+                      item.acp?.review.target?.split(/[\\/]/).at(-1) ??
+                      item.acp?.review.tool ??
+                      '成员操作'}
+                  </code>
+                  {expiry.success &&
+                    ` · 请在 ${new Date(expiry.data.review.expiresAt).toLocaleTimeString('zh-CN', { hour12: false })} 前处理`}
+                </span>
+                <button type="button" onClick={() => onLocate(item.id)}>
+                  查看并确认
+                </button>
+              </div>
             );
           })}
-          <p>每次“允许本次”只批准当前请求。后续文件会分别显示；合入源项目仍需审阅。</p>
-          <button
-            onClick={() => {
-              const card = document.getElementById('task-permission-requests');
-              card?.scrollIntoView({ block: 'center' });
-              card?.focus({ preventScroll: true });
-            }}
-          >
-            查看并确认
-          </button>
+          <p>每项操作单独确认；允许本次不会改变自动审批设置。合入源项目仍需审阅。</p>
         </article>
       ) : (
         <article>

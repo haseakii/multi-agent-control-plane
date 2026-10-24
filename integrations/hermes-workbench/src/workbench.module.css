@@ -356,6 +356,12 @@
   flex-shrink: 0;
   white-space: nowrap;
 }
+.taskHeader .pendingShortcut {
+  border-color: #dca64c88;
+  border-radius: 8px;
+  background: #e6b34c15;
+  font-weight: 650;
+}
 .projectContext {
   display: flex;
   flex-wrap: wrap;
@@ -448,6 +454,41 @@
   margin-top: 12px;
   padding-top: 12px;
   border-top: 1px solid var(--h-line);
+}
+.taskFeedback .pendingOperation {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  margin-top: 8px;
+  border: 1px solid var(--h-line);
+  border-radius: 10px;
+  background: var(--h-bg-pane);
+}
+.pendingOperation > span {
+  min-width: 0;
+  flex: 1;
+  font-size: 11px;
+  color: var(--h-text-3);
+}
+.pendingOperation strong {
+  display: block;
+  color: var(--h-text);
+  font-size: 12px;
+}
+.pendingOperation code {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--h-text-2);
+  max-width: 100%;
+}
+.pendingOperation button {
+  flex-shrink: 0;
+  border-radius: 7px;
+  min-height: 36px;
 }
 .taskFeedback p {
   margin: 4px 0;
