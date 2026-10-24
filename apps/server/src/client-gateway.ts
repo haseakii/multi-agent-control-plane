@@ -14,7 +14,6 @@ import {
 import type { SqliteStorage } from '@control-plane/storage';
 import type { ControlPlaneRuntime } from './runtime-composition.js';
 import { TaskControlError } from './task-control.js';
-import { diagnoseTaskRecovery } from './task-recovery.js';
 
 export type ClientGatewayOptions = {
   storage: SqliteStorage;
@@ -235,16 +234,6 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
           const following = followups
             .filter((e) => e.payload.sourceTaskId === task.id)
             .at(-1)?.taskId;
-          let latestTaskId = task.id;
-          const visited = new Set<string>();
-          while (!visited.has(latestTaskId)) {
-            visited.add(latestTaskId);
-            const next = followups
-              .filter((e) => e.payload.sourceTaskId === latestTaskId)
-              .at(-1)?.taskId;
-            if (!next || visited.has(next) || !tasks.some((t) => t.id === next)) break;
-            latestTaskId = next;
-          }
           const latestAttempt = repo.executionAttempts
             .list()
             .filter((a) => a.taskId === task.id)
@@ -261,15 +250,7 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
             .listPending(task.projectId)
             .filter((a) => a.taskId && tree.has(a.taskId))
             .map((a) => ({ id: a.id, taskId: a.taskId, action: a.action }));
-          const diagnostic = diagnoseTaskRecovery({
-            task: current,
-            latestTaskId,
-            executionActive,
-            ...(latestAttempt ? { latestAttempt } : {}),
-            pendingApprovalCount: pendingApprovals.length,
-            events,
-            now: Date.now(),
-          });
+          const { latestTaskId, diagnostic } = runtime.taskRecovery(task.id);
           result = {
             task: card(current),
             executionActive,

@@ -132,6 +132,48 @@ it('returns read-only diagnostics without refreshing activity', async () => {
   }
 });
 
+it.each(['running', 'failed', 'completed'] as const)(
+  'returns the same web and MCP diagnosis for %s with pending code review',
+  async (state) => {
+    const f = fixture();
+    try {
+      f.task('task', state);
+      const original = f.approval('task');
+      f.storage.repositories.approvals.upsert({ ...original, action: 'git.merge' });
+      vi.spyOn(f.runtime, 'taskExecutionActive').mockReturnValue(state === 'running');
+      const mcp = (await f.call('task')).json().result.recovery;
+      const response = await f.app.inject({ method: 'GET', url: '/api/tasks/task/recovery' });
+      expect(response.statusCode).toBe(200);
+      const web = response.json();
+      for (const key of [
+        'reason',
+        'title',
+        'message',
+        'pendingApprovals',
+        'nextAction',
+        'actionOwner',
+        'executionActive',
+        'automaticRetryAllowed',
+        'lastActivityAt',
+      ])
+        expect(web.diagnostic[key]).toEqual(mcp.diagnostic[key]);
+      expect(web.latestTaskId).toBe(mcp.latestTaskId);
+      expect(web.diagnostic.reason).toBe(
+        state === 'running'
+          ? 'executing'
+          : state === 'failed'
+            ? 'execution_failed'
+            : 'execution_completed',
+      );
+      expect(web.diagnostic.pendingApprovals).toEqual({ execution: 0, review: 1, push: 0 });
+      expect(f.storage.repositories.approvals.get(original.id)?.state).toBe('pending');
+      expect(f.storage.repositories.executionAttempts.list()).toHaveLength(0);
+    } finally {
+      await f.close();
+    }
+  },
+);
+
 it('reports only same-project subtree approvals without deciding them', async () => {
   const f = fixture();
   try {

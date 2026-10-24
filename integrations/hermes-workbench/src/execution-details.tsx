@@ -6,6 +6,7 @@ import s from './execution-details.module.css';
 import { ExecutionObservations } from './execution-observations';
 import { failureSummary } from './failure-presentation';
 import { SnapshotRefresh } from './snapshot-refresh';
+import { TaskRecovery } from './task-recovery';
 import {
   executionRecordUrl,
   executionTaskScope,
@@ -453,6 +454,12 @@ export function ExecutionDetails({ taskIds, onClose }: { taskIds: string[]; onCl
             </p>
             <section aria-label="执行状态">
               <h3>执行状态</h3>
+              {(viewingRound || taskIds.at(-1)) && (
+                <TaskRecovery
+                  key={viewingRound || taskIds.at(-1)}
+                  taskId={viewingRound || taskIds.at(-1)!}
+                />
+              )}
               {tasks.length ? (
                 tasks.map((task) => {
                   const history = attempts

@@ -37,6 +37,41 @@ function state(value: RecoveryObservation['task']['state']) {
 }
 
 describe('read-only recovery diagnostics', () => {
+  it.each(['running', 'failed', 'completed', 'cancelled'] as const)(
+    'keeps review and push approvals separate from %s execution',
+    (taskState) => {
+      const result = diagnoseTaskRecovery(
+        observation({
+          task: state(taskState),
+          executionActive: taskState === 'running',
+          pendingApprovalCount: 2,
+          pendingApprovals: { execution: 0, review: 1, push: 1 },
+        }),
+      );
+      expect(result.reason).toBe(
+        taskState === 'running'
+          ? 'executing'
+          : taskState === 'failed'
+            ? 'execution_failed'
+            : taskState === 'completed'
+              ? 'execution_completed'
+              : 'cancelled',
+      );
+      expect(result.pendingApprovals).toEqual({ execution: 0, review: 1, push: 1 });
+      expect(result.automaticRetryAllowed).toBe(false);
+    },
+  );
+  it('keeps real execution authorization visible alongside review approvals', () => {
+    expect(
+      diagnoseTaskRecovery(
+        observation({
+          executionActive: true,
+          pendingApprovalCount: 3,
+          pendingApprovals: { execution: 1, review: 1, push: 1 },
+        }),
+      ),
+    ).toMatchObject({ reason: 'waiting_approval', actionOwner: 'operator' });
+  });
   it.each<[RecoveryObservation['task']['state'], RecoveryReason]>([
     ['draft', 'awaiting_dispatch'],
     ['planning', 'awaiting_dispatch'],

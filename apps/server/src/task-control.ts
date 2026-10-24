@@ -95,6 +95,14 @@ export function registerTaskControlRoutes(
   service: ControlPlaneRuntime,
 ): void {
   registerProjectEventStream(app, (projectId) => service.projectEvents(projectId));
+  app.get('/api/tasks/:id/recovery', async (request, reply) => {
+    try {
+      const { id } = z.object({ id: z.string().min(1).max(128) }).parse(request.params);
+      return service.taskRecovery(id);
+    } catch (error) {
+      return sendError(reply, error);
+    }
+  });
   app.post('/api/projects/:id/tasks', async (request, reply) => {
     try {
       return reply
