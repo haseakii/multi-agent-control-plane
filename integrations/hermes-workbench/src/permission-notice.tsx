@@ -68,19 +68,17 @@ export function PermissionNotice({
         </article>
       )}
       {!pending.length && approvedCommands.length > 0 && (
-        <article>
-          <strong>本轮有 {approvedCommands.length} 项命令授权已批准</strong>
-          <p>执行状态和退出结果在“过程”中单独记录。合入源项目仍需你审阅。</p>
+        <article className={s.approvedFeedback}>
+          <strong>本轮命令已授权 · {approvedCommands.length} 项</strong>
           {approvedCommands.map((item) => (
-            <div key={item.id} className={s.pendingOperation}>
-              <span>
-                <strong>命令授权 · 已批准</strong>
-                <code>{approvalSummary(item.resource).command ?? '查看完整请求'}</code>
-              </span>
-              <button type="button" onClick={() => onLocate(item.id)}>
-                查看授权记录
-              </button>
-            </div>
+            <button
+              key={item.id}
+              type="button"
+              title={approvalSummary(item.resource).command}
+              onClick={() => onLocate(item.id)}
+            >
+              查看授权记录
+            </button>
           ))}
           <button onClick={onInspect}>查看执行记录</button>
         </article>
