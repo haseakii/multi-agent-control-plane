@@ -1,0 +1,66 @@
+Control Plane 本机使用与恢复说明（Windows x64，2026-10-22）
+
+启动与停止
+1. 保留完整交付目录，放在可写的私有位置，双击 start.cmd。内置 Node、前后端和依赖，无需 IDE、pnpm 或系统 Node。
+2. 出现 Control Plane ready 后，在浏览器地址栏输入显示的地址。端口以 config.json 和 DELIVERY.txt 为准；默认数据位于运行目录的 data 子目录。
+3. 在启动窗口按 Ctrl+C，等待 Node 退出后再备份或重新启动。自动化关闭已验证应用 SIGINT 处理；物理 Ctrl+C 尚未实测。
+4. 本机 Codex MCP 可按需启动隐藏后台引擎，不需要保留启动窗口。后台停机使用 start.cmd stop --config ABSOLUTE_CONFIG_PATH，等待正常退出；下次 MCP 调用会重新启动。个人日用入口为根目录“启动工作台.cmd / 停止工作台.cmd”。
+
+日常操作
+- 可先创建项目和保存目标草稿；草稿不要求连接 Agent，也不会消耗模型额度。
+- 在设置中注册本机 ACP 入口，由 Agent 自身完成登录，明确配置协作权限并选择 Boss。
+- 直接提交目标，或编辑已有草稿后确认启动。执行前核对工作区、Boss 和模型预算；已有目录需要确认范围。
+- Boss 可发现、委派并等待 Worker；任务、消息、结果产物及执行历史由控制平面保存。Agent 与角色独立。
+- 正在执行的任务可接收“任务补充”，在安全的下一轮送达。审批仍需单独处理；补充不会自动重启已结束的任务。
+- 已保存回复、已完成投递与完成用户要求是不同状态。通过协作消息中的接收任务入口查看执行和结果。
+- 任务事件通过 SSE 同步，断线后补收通知；不可用时定时刷新。查看记录、订阅事件和重连都不会启动 Agent。
+- 未执行且未被引用的草稿可以确认删除；已执行任务保留目标和历史，可修改显示标题。
+- 任务失败时按操作台提供的资格取消或恢复；恢复创建新执行尝试，不是文件回滚。
+
+工作区与 Git
+- 新空项目默认使用独立任务目录；关联已有已提交仓库可使用 Git worktree，也可显式选择共享目录。
+- 任务结束后可查看产物、生成变更审阅并批准具体快照，再确认本地合并。
+- 推送需项目策略允许请求、明确审批并确认具体提交和目标；不会因合并而自动推送。
+- 工作区清理有独立预览和确认。保留任务、审阅和产物历史；未保存内容、忽略文件及非空普通目录可能阻止清理，独立提交历史与未合并引用保留。
+- LocalRunner 和 Git worktree 不是操作系统安全沙箱。策略只保证控制平面中介操作；不声称拦截 Agent 自有工具。
+
+配置与数据
+start.cmd 可选参数：--config 配置文件绝对路径。
+config.json 支持 version=1、port、dataDir、logLevel；dataDir 相对配置文件目录解析，只监听 127.0.0.1。
+新数据目录按包内迁移初始化 SQLite；迁移数量和运行时版本见 release-manifest.json。相同迁移数量不代表跨版本兼容。
+data 包含 control-plane.sqlite、artifacts、workspaces、logs/server.log。外部 ACP 安装与登录由 Agent 管理，不包含在交付包中。
+Hermes 工作台使用同一入口、数据布局和备份命令。双击 start.cmd 后打开显示的地址，新任务选择负责人、输入目标发送；执行中补充，完成后可继续追问。没有“三轮日常配额”。界面版本来自包内 workbench.json；Hermes 私有本机评估包需保留上游 LICENSE-HERMES.txt，打包不授予商业或再分发许可。
+正式包不会读取开发目录的 Agent 种子、验收账本或私有登录 profile，也不会启动后自动探测或登录成员。新目录通过已有“连接成员”入口连接本机 ACP；恢复的成员仍须核对原启动路径和由 Agent 管理的登录状态。不会复制凭据。
+项目记忆提案需人工采纳；已采纳内容进入后续执行上下文。知识检索覆盖已采纳记忆与文本产物；大产物只索引有界内容并显示范围。
+
+停机备份与恢复
+确认实例已退出后，使用实际配置路径和全新的输出目录：
+  start.cmd backup --config "C:\private\run\config.json" --output "C:\private\new-backup"
+  start.cmd restore --backup "C:\private\new-backup" --output "C:\private\new-restored"
+  start.cmd --config "C:\private\new-restored\config.json"
+不覆盖原数据库，不把运行中的 WAL 直接当作备份，不自动重放旧任务。
+旧 Hermes 数据首次交接（仅维护人员，在另行授权的统一验收阶段操作）：
+先停止并禁用再次打开所有旧启动入口，确认原 Node 和成员进程退出，保留整个旧目录。旧无锁入口的停机依赖维护人员配合；工具只检查 server.json 中的 PID 已不存在，并持有新实例数据锁，不能阻止旧版无锁程序重新启动。PID 仍存活、权限不明、元数据缺失或锁遗留时拒绝交接。
+  start.cmd backup-legacy-hermes --legacy-run "C:\private\old-hermes-run" --output "C:\private\legacy-backup"
+  start.cmd restore --backup "C:\private\legacy-backup" --output "C:\private\standard-restored"
+  start.cmd --config "C:\private\standard-restored\config.json"
+legacy-run 必须直接包含 server.json 和 data/state.sqlite。只在私有暂存副本读取 SQLite/WAL，核验原迁移哈希和引用产物，生成同一标准备份格式；保留源库、旧账本和旧程序。恢复到新目录后使用 data/control-plane.sqlite，默认新端口 3000；如占用可修改新 config.json，不终止占用服务。
+工作区文件、外部 ACP 程序和登录 profile 不随备份迁移；原任务路径可能仍指向旧位置。保留原目录，核对路径及成员连接后再显式执行。失败保留原数据和不可运行的 partial 目录；不自动回退数据库。此入口不更名原库，不自动迁移，不适用于混有两种库名的数据目录。
+备份包含一致 SQLite、数据库引用的产物以及必要配置和校验信息；不含工作区源文件、日志、凭据/profile 或外部 ACP 安装与登录。
+任务内容、路径和元数据可能私密；备份不是加密或脱敏包，应放在私有目录。
+升级时保留旧程序、旧数据和停机一致备份，在新目录准备目标版本；恢复工具检查迁移哈希兼容性。不要直接覆盖现有运行目录或假定可以回退。禁止旧包直接打开新版本数据库；不保证任意跨版本恢复。
+
+故障处理
+- 端口占用：保留原服务，修改本次配置的 port 后重试；程序不终止占用进程。
+- CP_RUNTIME_MISSING / CP_ENTRY_MISSING：重新复制完整交付目录，保留 STARTUP-HELP.zh-CN.txt；不会自动下载或安装。
+- 目录不可写或锁定：改用新的可写私有 dataDir，保留原数据；不要关闭安全保护或修改 ACL 绕过问题。
+- 已有 instance.lock：复用活跃实例。异常退出后，仅在 Windows 确认进程已退出且文件身份、UUID 完整时自动恢复；身份不明或无法检查时保留原件，不删除锁或覆盖数据库。
+- 正常停止使用 Windows 按文件句柄删除锁，并复核文件身份。系统策略限制原语时保留锁并显示 INSTANCE_LOCK_RETAINED，不绕过策略。
+- 锁原语不可用时，可使用新空目录开始新工作；恢复历史需用已有停机一致备份恢复到新目录。没有备份时保留旧目录等待明确迁移，不能声称自动恢复。
+- 双击失败后窗口保留原因；自动化前台调用可设置 CONTROL_PLANE_NO_PAUSE=1 跳过按键等待。退出码保留，临时字符页在退出前恢复。
+
+验收范围
+具体版本的检查结果见 DELIVERY.txt、DELIVERY.json 和随包基线报告；历史测试数量不代表当前版本重跑结果。
+已有一条真实 Codex + Antigravity 协作记录：发现、委派、独立 Worker 结果 323、Boss 恢复汇总和重启持久化，共使用明确授权的 3+1 个 ACP 提示轮次。
+该记录不等于所有适配器能力、权限交互或真实 Worker 间通信都已验收；本机合成 ACP 测试不调用模型。发起新的真实任务需遵守剩余额度。
+控制平面不会复制提供商凭据到任务载荷，也不会自动批准危险权限请求。

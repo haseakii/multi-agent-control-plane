@@ -65,6 +65,7 @@ export type ApprovalServiceOptions = {
   now: () => string;
   idFactory: () => string;
   pollIntervalMs?: number | undefined;
+  beforeResolve?: (approval: Approval, state: 'approved' | 'rejected') => void;
 };
 
 export type ApprovalWaitOptions = {

@@ -1,0 +1,4 @@
+启动失败：随包运行时或程序入口缺失。
+CP_RUNTIME_MISSING 对应 runtime/node.exe；CP_ENTRY_MISSING 对应 apps/server/dist/release-main.js。
+请重新复制完整候选包到新的可写私有目录，不要只复制 start.cmd。无需安装系统 Node、IDE 或 pnpm。
+原数据和旧包请保留；本程序不自动安装、下载或删除文件。

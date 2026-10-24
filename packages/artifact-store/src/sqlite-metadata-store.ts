@@ -1,6 +1,7 @@
 import { ArtifactSchema } from '@control-plane/core';
 import type { Artifact } from '@control-plane/core';
 import type { SqliteStorage } from '@control-plane/storage';
+import { SqliteContextSearch } from '@control-plane/storage';
 import { ArtifactLinkSchema, type ArtifactLink, type ArtifactMetadataStore } from './types.js';
 
 export class SqliteArtifactMetadataStore implements ArtifactMetadataStore {
@@ -12,6 +13,10 @@ export class SqliteArtifactMetadataStore implements ArtifactMetadataStore {
 
   saveArtifact(artifact: Artifact): Artifact {
     return this.storage.repositories.artifacts.upsert(artifact);
+  }
+
+  indexText(artifact: Artifact, content: Uint8Array): void {
+    new SqliteContextSearch(this.storage.sqlite).indexArtifact(artifact, content);
   }
 
   getArtifact(id: string): Artifact | undefined {

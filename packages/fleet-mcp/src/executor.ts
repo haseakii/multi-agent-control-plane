@@ -1,4 +1,10 @@
+import {
+  fleetToolInputSchemas as schemas,
+  isFleetToolName as isToolName,
+  type FleetToolName,
+} from './tool-input.js';
 import { z } from 'zod';
+import { fleetServiceFailure, type FleetServiceFailure } from './service-error.js';
 import type { BridgeScope } from '@control-plane/core';
 import { fleetToolDefinitions } from './server.js';
 import type {
@@ -16,93 +22,8 @@ export type FleetToolExecutionRequest = Pick<FleetMcpServerOptions, 'identity' |
 
 export type FleetToolExecutionResult =
   | { ok: true; result: unknown }
-  | { ok: false; error: string; statusCode: number };
-
-const schemas = {
-  control_discover_agents: z
-    .object({
-      exact: z.array(z.string().min(1).max(128)).optional(),
-      prefixes: z.array(z.string().min(1).max(128)).optional(),
-      custom: z.string().min(1).max(256).optional(),
-      limit: z.number().int().positive().max(100).optional(),
-    })
-    .strict(),
-  control_get_agent: z.object({ agentId: z.string().min(1).max(128) }).strict(),
-  control_create_task: z
-    .object({
-      title: z.string().min(1),
-      objective: z.string().min(1),
-      parentTaskId: z.string().min(1).optional(),
-      dependencyIds: z.array(z.string().min(1)).optional(),
-      contextRefs: z.array(z.string().min(1)).optional(),
-    })
-    .strict(),
-  control_delegate_task: z
-    .object({
-      taskId: z.string().min(1),
-      agentId: z.string().min(1),
-      objective: z.string().min(1).optional(),
-      role: z
-        .object({
-          name: z.string().min(1),
-          description: z.string().optional(),
-        })
-        .strict()
-        .optional(),
-    })
-    .strict(),
-  control_get_task: z.object({ taskId: z.string().min(1) }).strict(),
-  control_wait_task: z
-    .object({
-      taskId: z.string().min(1),
-      timeoutMs: z.number().int().positive().max(300_000).optional(),
-    })
-    .strict(),
-  control_send_message: z
-    .object({
-      targetAgentId: z.string().min(1),
-      taskId: z.string().min(1).optional(),
-      type: z.enum(['request', 'response', 'message', 'handoff', 'event', 'status']),
-      content: z.string().optional(),
-      artifactRefs: z.array(z.string().min(1)).optional(),
-    })
-    .strict(),
-  control_publish_artifact: z
-    .object({
-      taskId: z.string().min(1).optional(),
-      kind: z.enum([
-        'plan',
-        'report',
-        'patch',
-        'diff',
-        'log',
-        'image',
-        'test-report',
-        'file',
-        'directory-manifest',
-        'json',
-        'text',
-      ]),
-      mimeType: z.string().min(1),
-      content: z.string().max(1_000_000),
-    })
-    .strict(),
-  control_get_artifact: z.object({ artifactId: z.string().min(1) }).strict(),
-  control_request_approval: z
-    .object({
-      taskId: z.string().min(1).optional(),
-      action: z.string().min(1),
-      resource: z.record(z.string(), z.unknown()),
-    })
-    .strict(),
-  control_cancel_task: z.object({ taskId: z.string().min(1) }).strict(),
-} as const;
-
-type FleetToolName = keyof typeof schemas;
-
-function isToolName(name: string): name is FleetToolName {
-  return Object.prototype.hasOwnProperty.call(schemas, name);
-}
+  | { ok: false; error: string; statusCode: number }
+  | FleetServiceFailure;
 
 function toolDefinition(name: FleetToolName) {
   const definition = fleetToolDefinitions.find((candidate) => candidate.name === name);
@@ -123,7 +44,11 @@ function validateExecutionIdentity(
   if (identity.agentId !== agent.id) {
     return { ok: false, error: 'Fleet bridge identity mismatch.', statusCode: 403 };
   }
-  if (!agent.enabled || !agent.orchestration.canBeBoss || agent.controlBridge.transport !== 'mcp') {
+  if (
+    !agent.enabled ||
+    agent.controlBridge.transport !== 'mcp' ||
+    (agent.controlBridge.scopes.includes('boss.orchestration') && !agent.orchestration.canBeBoss)
+  ) {
     return { ok: false, error: 'Fleet bridge agent is not eligible.', statusCode: 403 };
   }
   return undefined;
@@ -188,6 +113,10 @@ async function dispatch(
   context: FleetCallContext,
 ): Promise<unknown> {
   switch (name) {
+    case 'control_search_knowledge':
+      return services.searchKnowledge(schemas.control_search_knowledge.parse(input), context);
+    case 'control_propose_memory':
+      return services.proposeMemory(schemas.control_propose_memory.parse(input), context);
     case 'control_discover_agents':
       return services.discoverAgents(schemas.control_discover_agents.parse(input), context);
     case 'control_get_agent':
@@ -275,14 +204,20 @@ export function createFleetToolExecutor(options: FleetToolExecutorOptions) {
       const result = await dispatch(request.toolName, parsed.data, options.services, context);
       await options.hooks.audit({ ...context, input: safeInput, outcome: 'succeeded' });
       return { ok: true, result };
-    } catch {
+    } catch (error) {
       await options.hooks.audit({
         ...context,
         input: safeInput,
         outcome: 'failed',
         reason: 'service_error',
       });
-      return { ok: false, error: 'Fleet tool service failed.', statusCode: 500 };
+      return (
+        fleetServiceFailure(error) ?? {
+          ok: false,
+          error: 'Fleet tool service failed.',
+          statusCode: 500,
+        }
+      );
     }
   };
 }

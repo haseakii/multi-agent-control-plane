@@ -6,6 +6,8 @@ import {
   ArtifactLinkTargetSchema,
   ArtifactStoreError,
   PublishArtifactInputSchema,
+  PublishArtifactOptionsSchema,
+  type PublishArtifactOptions,
   type ArtifactBlobStore,
   type ArtifactLink,
   type ArtifactLinkTarget,
@@ -43,8 +45,12 @@ export class ArtifactStore {
     private readonly options: ArtifactStoreOptions,
   ) {}
 
-  async publish(input: PublishArtifactInput): Promise<PublishedArtifact> {
+  async publish(
+    input: PublishArtifactInput,
+    options: PublishArtifactOptions = {},
+  ): Promise<PublishedArtifact> {
     const parsed = PublishArtifactInputSchema.parse(input);
+    const { beforeCommit } = PublishArtifactOptionsSchema.parse(options);
     if (shouldScanForSecrets(parsed.kind, parsed.mimeType)) {
       assertNoPotentialSecrets(new TextDecoder('utf-8', { fatal: false }).decode(parsed.content));
     }
@@ -65,7 +71,12 @@ export class ArtifactStore {
     });
 
     const links = this.metadata.transaction(() => {
+      // Blob IO can outlive cancellation or attempt replacement. Revalidate at
+      // this durable boundary; rejected bytes are an unassociated, reusable blob.
+      if (beforeCommit?.() !== undefined)
+        throw new TypeError('Artifact commit guard must be synchronous and return void.');
       const saved = this.metadata.saveArtifact(artifact);
+      this.metadata.indexText(saved, parsed.content);
       return parsed.links.map((target) => this.persistLink(saved, target, now));
     });
 

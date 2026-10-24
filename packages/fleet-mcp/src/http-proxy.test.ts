@@ -1,6 +1,7 @@
 import { AgentDefinitionSchema, AgentIdSchema } from '@control-plane/core';
 import { describe, expect, it, vi } from 'vitest';
 import { FleetBridgeHttpProxy } from './http-proxy.js';
+import { fleetServiceFailure } from './service-error.js';
 
 function manifest() {
   return {
@@ -66,6 +67,41 @@ describe('FleetBridgeHttpProxy', () => {
         headers: { authorization: 'Bearer bridge-grant' },
       }),
     );
+  });
+
+  it.each([
+    { status: 403, error: 'Fleet tool policy denied.', code: 'POLICY_DENIED', retryable: false },
+    {
+      status: 409,
+      error: 'Bridge grant is not bound to an ACP session yet.',
+      code: 'SESSION_UNBOUND',
+      retryable: true,
+    },
+  ])('retains canonical $code protocol errors', async ({ status, error, code, retryable }) => {
+    const proxy = new FleetBridgeHttpProxy({
+      baseUrl: 'http://127.0.0.1:3000',
+      grant: 'test-grant',
+      fetchImpl: async () => new Response(JSON.stringify({ ok: false, error }), { status }),
+    });
+    try {
+      await proxy.services().getTask(
+        { taskId: 'task-1' },
+        {
+          identity: manifest().identity,
+          agent: manifest().agent,
+          toolName: 'control_get_task',
+          operation: 'tasks.read',
+        },
+      );
+      throw new Error('Expected failure');
+    } catch (caught) {
+      expect(fleetServiceFailure(caught)).toMatchObject({
+        code,
+        statusCode: status,
+        retryable,
+        error,
+      });
+    }
   });
 
   it('surfaces gateway failures without echoing the grant token', async () => {

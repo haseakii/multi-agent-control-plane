@@ -152,9 +152,33 @@ export class SqliteMessageRouterStore implements MessageRouterStore {
     });
   }
 
-  markDelivered(id: string, deliveredAt: string): MessageDelivery {
+  renewClaim(
+    id: string,
+    expectedAttemptCount: number,
+    now: string,
+    leaseUntil: string,
+  ): MessageDelivery {
     return this.transaction(() => {
       const current = this.requireDelivery(id);
+      this.assertClaimGeneration(current, expectedAttemptCount);
+      // ACK may have committed while its asynchronous audit is still in flight.
+      if (current.state === 'delivered') return current;
+      if (current.state !== 'delivering' || !current.leaseUntil || current.leaseUntil <= now) {
+        throw new MessageRouterError(
+          'STALE_DELIVERY_CLAIM',
+          'Cannot renew an expired or released claim.',
+        );
+      }
+      const next = MessageDeliverySchema.parse({ ...current, leaseUntil });
+      this.updateDelivery(next);
+      return next;
+    });
+  }
+
+  markDelivered(id: string, expectedAttemptCount: number, deliveredAt: string): MessageDelivery {
+    return this.transaction(() => {
+      const current = this.requireDelivery(id);
+      this.assertClaimGeneration(current, expectedAttemptCount);
       if (current.state === 'delivered') {
         return current;
       }
@@ -176,9 +200,15 @@ export class SqliteMessageRouterStore implements MessageRouterStore {
     });
   }
 
-  scheduleRetry(id: string, availableAt: string, error: string): MessageDelivery {
+  scheduleRetry(
+    id: string,
+    expectedAttemptCount: number,
+    availableAt: string,
+    error: string,
+  ): MessageDelivery {
     return this.transaction(() => {
       const current = this.requireDelivery(id);
+      this.assertClaimGeneration(current, expectedAttemptCount);
       if (current.state !== 'delivering') {
         throw new MessageRouterError(
           'INVALID_DELIVERY_STATE',
@@ -225,6 +255,21 @@ export class SqliteMessageRouterStore implements MessageRouterStore {
       }
     });
     return recovered;
+  }
+
+  private assertClaimGeneration(delivery: MessageDelivery, expectedAttemptCount: number): void {
+    // attemptCount is already durable and increments atomically on every claim.
+    // Fencing old consumers requires no migration or new persisted token.
+    if (
+      !Number.isSafeInteger(expectedAttemptCount) ||
+      expectedAttemptCount < 1 ||
+      delivery.attemptCount !== expectedAttemptCount
+    ) {
+      throw new MessageRouterError(
+        'STALE_DELIVERY_CLAIM',
+        `Delivery ${delivery.id} is no longer owned by claim ${expectedAttemptCount}.`,
+      );
+    }
   }
 
   private requireDelivery(id: string): MessageDelivery {

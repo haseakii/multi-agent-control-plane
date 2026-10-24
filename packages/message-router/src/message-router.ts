@@ -70,6 +70,8 @@ export class MessageRouter {
         }
       }
 
+      this.options.hooks.beforeEnqueue?.({ sender, input: parsed });
+
       const messageId = MessageIdSchema.parse(this.options.idFactory('message'));
       const recipientAgentId = AgentIdSchema.parse(parsed.toAgentId);
       let correlationId = parsed.correlationId ?? messageId;
@@ -163,8 +165,26 @@ export class MessageRouter {
     return { message, delivery };
   }
 
-  async acknowledge(deliveryId: string, deliveredAt = this.options.now()): Promise<void> {
-    const delivery = this.store.markDelivered(deliveryId, deliveredAt);
+  get claimRenewalIntervalMs(): number {
+    return Math.max(1, Math.floor(this.leaseMs / 3));
+  }
+
+  renewClaim(deliveryId: string, expectedAttemptCount: number): void {
+    const now = this.options.now();
+    this.store.renewClaim(
+      deliveryId,
+      expectedAttemptCount,
+      now,
+      addMilliseconds(now, this.leaseMs),
+    );
+  }
+
+  async acknowledge(
+    deliveryId: string,
+    expectedAttemptCount: number,
+    deliveredAt = this.options.now(),
+  ): Promise<void> {
+    const delivery = this.store.markDelivered(deliveryId, expectedAttemptCount, deliveredAt);
     await this.options.hooks.audit({
       type: 'message.delivered',
       messageId: MessageIdSchema.parse(delivery.messageId),
@@ -174,12 +194,14 @@ export class MessageRouter {
 
   async retry(
     deliveryId: string,
+    expectedAttemptCount: number,
     error: string,
     options?: { now?: string; delayMs?: number },
   ): Promise<void> {
     const now = options?.now ?? this.options.now();
     const delivery = this.store.scheduleRetry(
       deliveryId,
+      expectedAttemptCount,
       addMilliseconds(now, options?.delayMs ?? this.retryDelayMs),
       error,
     );

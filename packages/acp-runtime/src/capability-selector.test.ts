@@ -76,6 +76,13 @@ describe('CapabilitySelector', () => {
     ]);
     expect(selected[0]?.score).toBe(3);
     expect(selected.every((result) => result.readiness.runtime === 'ready')).toBe(true);
+    const initial = selector.select({});
+    expect(initial.map((result) => result.agent.id)).toEqual(['agent-b', 'agent-a']);
+    expect(initial[0]?.matchedCapabilities.map((capability) => capability.name)).toEqual([
+      'code.read',
+      'unity.test',
+      'unity.build',
+    ]);
   });
 
   it('supports custom capability queries and limits while returning deterministic metadata', () => {
@@ -121,7 +128,7 @@ describe('CapabilitySelector', () => {
     ]);
   });
 
-  it('requires a custom matcher for custom queries and rejects empty queries', () => {
+  it('requires a custom matcher and returns an empty list for an empty registry', () => {
     const registry = new InMemoryAgentRegistry();
     const selector = new CapabilitySelector(registry, {
       getReadiness: () => ready,
@@ -131,6 +138,6 @@ describe('CapabilitySelector', () => {
     expect(() => selector.select({ custom: 'anything' })).toThrow(
       'A customCapabilityMatcher is required',
     );
-    expect(() => selector.select({})).toThrow();
+    expect(selector.select({})).toEqual([]);
   });
 });

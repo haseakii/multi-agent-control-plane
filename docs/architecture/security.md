@@ -70,6 +70,23 @@ Approvals capture:
 - decision actor
 - decision timestamp
 
+## Current project configuration
+
+Project policy is stored with an optimistic revision in migration 0011. The local
+operator can allow or deny each supported Fleet tool, require approval for or deny
+local Git merges, and require enforced execution isolation. Agent bridge scopes
+remain an independent upper bound on tool access.
+
+The gateway checks current project policy and records the decision, rule, and actual
+enforcement boundary. Mediated mutation paths recheck policy before committing their
+changes; Git merge checks current policy even when its snapshot was already approved.
+Requiring OS isolation refuses new executions on the current LocalRunner; it does not
+retroactively stop an active process or intercept opaque agent-owned tools.
+
+This increment does not add resource/Agent-specific matching, queued approval for
+Fleet tool calls, or configurable rules for ACP agent-owned tools. Local operator
+administration APIs are not controlled by the Agent tool switches.
+
 ## Secret handling
 Default: provider credentials remain inside each agent's own auth mechanism.
 
@@ -82,6 +99,22 @@ When environment injection is unavoidable:
 
 ## Runner isolation
 V0 LocalRunner is intentionally less isolated than a container/VM. The UI must show this limitation and must not claim strict workspace/network enforcement. Post-V0 isolated runners may provide stronger guarantees.
+
+## ACP permission adapter semantics
+
+Generic permission review does not infer executable operations from display titles.
+An optional host adapter can describe tools attached to the current ACP session.
+Fleet descriptions reuse the execution input schemas and the scopes actually attached
+to that session; the review still requires an explicit `allow_once` decision. Fleet
+independently rechecks identity, scopes and policy when the tool executes.
+
+The observed Antigravity ACP 1.4.1 descriptor is a strict `_meta` object containing
+`mcp: { server, tool }` and `is_mcp_tool_call: true`. Only this pinned adapter identity,
+the exact attached server, and an available Fleet tool may supply inspectable metadata.
+Conflicting explicit names/titles, additional metadata fields, unknown versions and
+sensitive values remain unavailable for approval. Other opaque metadata stays withheld.
+Wire/SDK mismatch, truncation, expiry and session ownership checks remain authoritative.
+This is cooperative ACP review, not interception of all Agent-owned tools.
 
 ## Prompt injection
 The framework cannot eliminate prompt injection. It limits blast radius through:

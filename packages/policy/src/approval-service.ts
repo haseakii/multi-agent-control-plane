@@ -1,5 +1,5 @@
 import { ApprovalIdSchema, ApprovalSchema } from '@control-plane/core';
-import type { Approval } from '@control-plane/core';
+import type { AcpApprovalBinding, Approval } from '@control-plane/core';
 import type { SqliteStorage } from '@control-plane/storage';
 import {
   ApprovalNotFoundError,
@@ -62,7 +62,11 @@ export class ApprovalService {
     this.pollIntervalMs = options.pollIntervalMs ?? 100;
   }
 
-  request(request: ParsedPolicyRequest, decision: PolicyDecision): Approval {
+  request(
+    request: ParsedPolicyRequest,
+    decision: PolicyDecision,
+    acp?: AcpApprovalBinding,
+  ): Approval {
     if (decision.effect !== 'ask') {
       throw new TypeError('Only ask decisions create approvals.');
     }
@@ -80,12 +84,14 @@ export class ApprovalService {
         boundary: request.boundary,
         state: 'pending',
         requestedAt: this.options.now(),
+        ...(acp ? { acp } : {}),
       }),
     );
   }
 
   resolve(id: string, state: 'approved' | 'rejected', actor: string): Approval {
     const approval = this.require(id);
+    this.options.beforeResolve?.(approval, state);
     if (approval.state !== 'pending') {
       return approval;
     }
@@ -108,6 +114,7 @@ export class ApprovalService {
       ApprovalSchema.parse({
         ...approval,
         state: 'expired',
+        expiryReason: actor,
         decidedAt: this.options.now(),
         decisionActor: actor,
       }),
@@ -126,6 +133,12 @@ export class ApprovalService {
     const interval = options.pollIntervalMs ?? this.pollIntervalMs;
     for (;;) {
       const approval = this.require(id);
+      if (
+        approval.state === 'pending' &&
+        approval.acp &&
+        Date.parse(approval.acp.expiresAt) <= Date.parse(this.options.now())
+      )
+        return this.expire(id, 'permission-timeout');
       if (approval.state !== 'pending') {
         return approval;
       }

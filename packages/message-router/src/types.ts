@@ -84,6 +84,8 @@ export type MessageRouterAuditEvent =
 export type MessageRouterHooks = {
   authorize(request: MessageAuthorizationRequest): Promise<MessageAuthorizationDecision>;
   audit(event: MessageRouterAuditEvent): Promise<void>;
+  /** Synchronous application guard, evaluated inside the enqueue transaction after authorization. */
+  beforeEnqueue?(request: MessageAuthorizationRequest): void;
 };
 
 export type MessageRouterIdFactory = (kind: 'message' | 'delivery') => string;
@@ -121,8 +123,19 @@ export interface MessageRouterStore {
     leaseUntil: string;
     mailboxKey?: string | undefined;
   }): MessageDelivery | undefined;
-  markDelivered(id: string, deliveredAt: string): MessageDelivery;
-  scheduleRetry(id: string, availableAt: string, error: string): MessageDelivery;
+  renewClaim(
+    id: string,
+    expectedAttemptCount: number,
+    now: string,
+    leaseUntil: string,
+  ): MessageDelivery;
+  markDelivered(id: string, expectedAttemptCount: number, deliveredAt: string): MessageDelivery;
+  scheduleRetry(
+    id: string,
+    expectedAttemptCount: number,
+    availableAt: string,
+    error: string,
+  ): MessageDelivery;
   recoverExpired(now: string): number;
 }
 
@@ -132,6 +145,7 @@ export class MessageRouterError extends Error {
       | 'POLICY_DENIED'
       | 'MESSAGE_NOT_FOUND'
       | 'DELIVERY_NOT_FOUND'
+      | 'STALE_DELIVERY_CLAIM'
       | 'INVALID_DELIVERY_STATE'
       | 'INVALID_REPLY_CHAIN',
     message: string,

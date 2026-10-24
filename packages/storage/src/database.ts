@@ -48,9 +48,14 @@ export function openSqliteStorage(options: SqliteStorageOptions): SqliteStorage 
   sqlite.pragma('busy_timeout = 5000');
 
   const storage = new SqliteStorage(sqlite);
-  migrate(storage.db, {
-    migrationsFolder: options.migrationsFolder ?? defaultMigrationsFolder(),
-  });
+  try {
+    migrate(storage.db, {
+      migrationsFolder: options.migrationsFolder ?? defaultMigrationsFolder(),
+    });
+  } catch (error) {
+    sqlite.close();
+    throw error;
+  }
 
   return storage;
 }
