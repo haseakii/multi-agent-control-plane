@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -45,7 +45,7 @@ async function fixture() {
     rmSync(directory, { recursive: true, force: true });
   });
   runtime.setBridgeBaseUrl(await app.listen({ host: '127.0.0.1', port: 0 }));
-  return { app, runtime, storage, runner, handles };
+  return { app, runtime, storage, runner, handles, directory };
 }
 
 function agentDefinition(boss: boolean) {
@@ -161,6 +161,21 @@ describe('production V0 runtime with real ACP processes', () => {
     const child = storage.repositories.tasks.list().find((item) => item.parentTaskId === rootId)!;
     expect(child.state).toBe('completed');
     expect(child.resultArtifactRefs).toHaveLength(1);
+    const progress = storage.repositories.events
+      .listByProject('runtime-project')
+      .filter((e) => e.type === 'agent.progress');
+    expect(progress.some((e) => e.taskId === root.id && e.payload.state === 'complete')).toBe(true);
+    expect(progress.some((e) => e.taskId === child.id && e.payload.state === 'complete')).toBe(
+      true,
+    );
+    for (const event of progress.filter((e) => typeof e.payload.artifactId === 'string')) {
+      const transcript = await app.inject({
+        method: 'GET',
+        url: `/api/artifacts/${event.payload.artifactId}/content`,
+      });
+      expect(transcript.statusCode).toBe(200);
+      expect(transcript.body).toContain(String(event.payload.text));
+    }
     expect(
       storage.repositories.assignments
         .list()
@@ -206,7 +221,7 @@ describe('production V0 runtime with real ACP processes', () => {
   it.each(['idle', 'active'])(
     'routes worker A to %s worker B with messaging-only grants and rejects escalation',
     async (receiverState) => {
-      const { app, runtime, storage, runner, handles } = await fixture();
+      const { app, runtime, storage, runner, handles, directory } = await fixture();
       runtime.createProject({ id: 'messaging-project', name: 'Scoped worker messaging' });
       for (const role of ['boss', 'a', 'b']) {
         const boss = role === 'boss';
@@ -221,6 +236,7 @@ describe('production V0 runtime with real ACP processes', () => {
               fileURLToPath(new URL('../fixtures/messaging-agent.mjs', import.meta.url)),
               role,
               receiverState,
+              join(directory, 'request-queued'),
             ],
           },
           capabilities: [
@@ -327,7 +343,7 @@ describe('production V0 runtime with real ACP processes', () => {
       const failure =
         failureStage === 'artifact'
           ? vi.spyOn(runtime.artifacts, 'publish').mockImplementation(async (input) => {
-              if (input.producerAgentId === 'runtime-boss')
+              if (input.producerAgentId === 'runtime-boss' && input.kind === 'report')
                 throw new Error('Injected artifact failure after ACK.');
               return publish(input);
             })
@@ -476,3 +492,60 @@ describe('production V0 runtime with real ACP processes', () => {
     expect(storage.repositories.executionAttempts.list()).toHaveLength(0);
   });
 });
+
+it('C6 persists an HTTP operator input and delivers it sequentially to a real inert ACP child process', async () => {
+  const { runtime, storage, app } = await fixture();
+  runtime.createProject({ id: 'instruction-process', name: 'Synthetic operator input' });
+  runtime.agentControl.create({
+    ...agentDefinition(true),
+    id: 'instruction-agent',
+    runtime: {
+      type: 'acp-stdio',
+      command: process.execPath,
+      args: [fileURLToPath(new URL('../fixtures/instruction-agent.mjs', import.meta.url))],
+    },
+  });
+  runtime.agentControl.selectBoss('instruction-process', 'instruction-agent');
+  const submitted = runtime.submitGoal('instruction-process', {
+    objective: 'Synthetic operator input process proof',
+  });
+  const taskId = submitted.task.id;
+  await expect
+    .poll(() => storage.repositories.assignmentWorkspaces.get(submitted.assignment.id), {
+      timeout: 5000,
+      interval: 25,
+    })
+    .toBeDefined();
+  const cwd = storage.repositories.workspaces.get(
+    storage.repositories.assignmentWorkspaces.get(submitted.assignment.id)!.workspaceId,
+  )!.rootPath;
+  await expect
+    .poll(() => existsSync(join(cwd, 'instruction-round-1.entered')), {
+      timeout: 5000,
+      interval: 25,
+    })
+    .toBe(true);
+  const input = await app.inject({
+    method: 'POST',
+    url: `/api/tasks/${taskId}/instructions`,
+    payload: { content: '请保留验证证据（合成补充）', idempotencyKey: 'process-once' },
+  });
+  expect(input.statusCode).toBe(202);
+  expect(runtime.readTaskInstructions(taskId).instructions[0]?.state).toBe('queued');
+  writeFileSync(join(cwd, 'instruction-round-1.release'), 'release only this synthetic test');
+  await expect
+    .poll(() => runtime.getTask(taskId).state, { timeout: 5000, interval: 25 })
+    .toBe('completed');
+  expect(runtime.readTaskInstructions(taskId)).toMatchObject({
+    canSubmit: false,
+    instructions: [{ state: 'delivered' }],
+  });
+  const artifact = await runtime.loadArtifact(runtime.getTask(taskId).resultArtifactRefs[0]!);
+  expect(new TextDecoder().decode(artifact.content)).toBe(
+    'Synthetic ACP received: 请保留验证证据（合成补充）',
+  );
+  expect(
+    storage.repositories.executionAttempts.list().filter((row) => row.taskId === taskId),
+  ).toHaveLength(1);
+  expect(storage.repositories.approvals.list()).toHaveLength(0);
+}, 15000);

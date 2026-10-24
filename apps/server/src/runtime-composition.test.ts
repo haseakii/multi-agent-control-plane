@@ -110,7 +110,7 @@ describe('production runtime application routes', () => {
   it('does not treat cancellation, truncation, refusal, or unknown ACP stop reasons as success', () => {
     expect(() => requireCompletedAcpTurn('end_turn')).not.toThrow();
     for (const reason of ['cancelled', 'max_tokens', 'max_turn_requests', 'refusal', 'unknown']) {
-      expect(() => requireCompletedAcpTurn(reason)).toThrow('did not end successfully');
+      expect(() => requireCompletedAcpTurn(reason)).toThrow('本轮未完成');
     }
   });
   it('creates durable projects/workspaces and validates goal prerequisites without starting a process', async () => {
@@ -185,11 +185,11 @@ describe('production runtime application routes', () => {
       ApprovalSchema.parse({
         id: 'approval',
         projectId: 'project',
-        action: 'acp.tool',
+        action: 'workspace.read',
         resource: {},
         state: 'pending',
         enforcementMode: 'cooperative',
-        boundary: 'acp-permission',
+        boundary: 'control-plane-test',
         requestedAt: new Date().toISOString(),
       }),
     );

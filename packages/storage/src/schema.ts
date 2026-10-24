@@ -1,9 +1,58 @@
 import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import { sql } from 'drizzle-orm';
 
 const payload = () => text('payload').notNull();
 
+export const workspaceCleanups = sqliteTable(
+  'workspace_cleanups',
+  {
+    id: text('id')
+      .primaryKey()
+      .notNull()
+      .references(() => workspaces.id),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => projects.id),
+    taskId: text('task_id')
+      .notNull()
+      .references(() => tasks.id),
+    state: text('state').notNull(),
+    payload: payload(),
+  },
+  (table) => [index('workspace_cleanups_task_idx').on(table.taskId)],
+);
+
+export const workspacePushes = sqliteTable(
+  'workspace_pushes',
+  {
+    id: text('id').primaryKey().notNull(),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => projects.id),
+    taskId: text('task_id')
+      .notNull()
+      .references(() => tasks.id),
+    reviewId: text('review_id')
+      .notNull()
+      .references(() => workspaceReviews.id),
+    approvalId: text('approval_id')
+      .notNull()
+      .references(() => approvals.id),
+    state: text('state').notNull(),
+    payload: payload(),
+  },
+  (table) => [index('workspace_pushes_task_idx').on(table.taskId)],
+);
+
 export const projects = sqliteTable('projects', {
   id: text('id').primaryKey(),
+  payload: payload(),
+});
+export const projectPolicies = sqliteTable('project_policies', {
+  id: text('id')
+    .primaryKey()
+    .notNull()
+    .references(() => projects.id),
   payload: payload(),
 });
 
@@ -38,6 +87,26 @@ export const workspaces = sqliteTable(
   (table) => [
     index('workspaces_project_idx').on(table.projectId),
     index('workspaces_project_branch_idx').on(table.projectId, table.branchName),
+  ],
+);
+
+export const workspaceDirectoryBindings = sqliteTable(
+  'workspace_directory_bindings',
+  {
+    id: text('id')
+      .primaryKey()
+      .references(() => workspaces.id),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => projects.id),
+    pathKey: text('path_key').notNull(),
+    deviceId: text('device_id').notNull(),
+    fileId: text('file_id').notNull(),
+    payload: payload(),
+  },
+  (table) => [
+    uniqueIndex('workspace_binding_path_idx').on(table.pathKey),
+    uniqueIndex('workspace_binding_identity_idx').on(table.deviceId, table.fileId),
   ],
 );
 
@@ -87,6 +156,39 @@ export const executionAttempts = sqliteTable(
     index('execution_attempts_assignment_number_idx').on(table.assignmentId, table.number),
     index('execution_attempts_state_idx').on(table.state),
   ],
+);
+
+export const projectWorkspaceConfigs = sqliteTable('project_workspace_configs', {
+  id: text('id')
+    .primaryKey()
+    .references(() => projects.id),
+  sourceWorkspaceId: text('source_workspace_id')
+    .notNull()
+    .references(() => workspaces.id),
+  payload: payload(),
+});
+
+export const assignmentWorkspaces = sqliteTable(
+  'assignment_workspaces',
+  {
+    id: text('id')
+      .primaryKey()
+      .references(() => assignments.id),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => projects.id),
+    taskId: text('task_id')
+      .notNull()
+      .references(() => tasks.id),
+    workspaceId: text('workspace_id')
+      .notNull()
+      .references(() => workspaces.id),
+    sourceWorkspaceId: text('source_workspace_id')
+      .notNull()
+      .references(() => workspaces.id),
+    payload: payload(),
+  },
+  (table) => [index('assignment_workspaces_task_idx').on(table.taskId)],
 );
 
 export const conversations = sqliteTable(
@@ -226,5 +328,67 @@ export const events = sqliteTable(
   (table) => [
     index('events_project_time_idx').on(table.projectId, table.occurredAt),
     index('events_project_type_idx').on(table.projectId, table.type),
+    index('events_project_task_time_idx').on(
+      table.projectId,
+      sql`json_extract(${table.payload}, '$.taskId')`,
+      table.occurredAt,
+    ),
   ],
+);
+
+export const taskInstructions = sqliteTable(
+  'task_instructions',
+  {
+    id: text('id').primaryKey().notNull(),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => projects.id),
+    taskId: text('task_id')
+      .notNull()
+      .references(() => tasks.id),
+    state: text('state').notNull(),
+    ownerAttemptId: text('owner_attempt_id').references(() => executionAttempts.id),
+    createdAt: text('created_at').notNull(),
+    updatedAt: text('updated_at').notNull(),
+    payload: payload(),
+  },
+  (table) => [index('task_instructions_task_state_idx').on(table.taskId, table.state)],
+);
+
+export const projectMemory = sqliteTable(
+  'project_memory',
+  {
+    id: text('id').primaryKey().notNull(),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => projects.id),
+    status: text('status').notNull(),
+    payload: payload(),
+  },
+  (table) => [index('project_memory_project_status_idx').on(table.projectId, table.status)],
+);
+
+export const workspaceReviews = sqliteTable(
+  'workspace_reviews',
+  {
+    id: text('id').primaryKey().notNull(),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => projects.id),
+    taskId: text('task_id')
+      .notNull()
+      .references(() => tasks.id),
+    assignmentId: text('assignment_id')
+      .notNull()
+      .references(() => assignments.id),
+    workspaceId: text('workspace_id')
+      .notNull()
+      .references(() => workspaces.id),
+    approvalId: text('approval_id')
+      .notNull()
+      .references(() => approvals.id),
+    state: text('state').notNull(),
+    payload: payload(),
+  },
+  (table) => [index('workspace_reviews_task_idx').on(table.taskId)],
 );

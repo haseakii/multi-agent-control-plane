@@ -1,4 +1,12 @@
-import type { AgentDefinition, AgentId, Artifact, BridgeScope, Task } from '@control-plane/core';
+import type {
+  AgentDefinition,
+  AgentId,
+  Artifact,
+  BridgeScope,
+  Task,
+  AgentMemoryProposal,
+  ContextSearchQuery,
+} from '@control-plane/core';
 
 export type FleetBridgeIdentity = {
   agentId: AgentId;
@@ -17,7 +25,9 @@ export type FleetToolOperation =
   | 'tasks.cancel'
   | 'artifacts.read'
   | 'artifacts.publish'
-  | 'approvals.request';
+  | 'approvals.request'
+  | 'knowledge.read'
+  | 'memory.propose';
 
 export type FleetCallContext = {
   identity: FleetBridgeIdentity;
@@ -69,6 +79,9 @@ export type DelegateTaskInput = {
 
 export type SendMessageInput = {
   targetAgentId: string;
+  targetTaskId?: string | undefined;
+  replyTo?: string | undefined;
+  idempotencyKey?: string | undefined;
   taskId?: string | undefined;
   type: 'request' | 'response' | 'message' | 'handoff' | 'event' | 'status';
   content?: string | undefined;
@@ -100,6 +113,8 @@ export type RequestApprovalInput = {
 };
 
 export interface FleetControlServices {
+  searchKnowledge(input: ContextSearchQuery, context: FleetCallContext): Promise<unknown>;
+  proposeMemory(input: AgentMemoryProposal, context: FleetCallContext): Promise<unknown>;
   discoverAgents(input: DiscoverAgentsInput, context: FleetCallContext): Promise<unknown>;
   getAgent(
     input: { agentId: string },

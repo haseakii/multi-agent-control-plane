@@ -126,6 +126,40 @@ describe('ArtifactStore', () => {
     storage.close();
   });
 
+  it('runs publication guard inside the metadata transaction and reuses rejected blob bytes', async () => {
+    const { storage, store } = createEnvironment();
+    const input = {
+      projectId: 'project-artifacts',
+      taskId: 'task-guard',
+      kind: 'report' as const,
+      mimeType: 'text/plain',
+      content: new TextEncoder().encode('Guarded bytes'),
+      links: [{ entityType: 'task' as const, entityId: 'task-guard' }],
+    };
+    try {
+      await expect(
+        store.publish(input, {
+          beforeCommit: () => {
+            expect(storage.sqlite.inTransaction).toBe(true);
+            throw new Error('Publication revoked');
+          },
+        }),
+      ).rejects.toThrow('Publication revoked');
+      expect(storage.repositories.artifacts.list()).toEqual([]);
+      expect(storage.sqlite.prepare('SELECT COUNT(*) AS count FROM artifact_links').get()).toEqual({
+        count: 0,
+      });
+      const published = await store.publish(input);
+      expect(published.deduplicated).toBe(true);
+      expect(published.links).toHaveLength(1);
+      expect(new TextDecoder().decode((await store.load(published.artifact.id)).content)).toBe(
+        'Guarded bytes',
+      );
+    } finally {
+      storage.close();
+    }
+  });
+
   it('lets durable tasks and messages reference published artifacts by ID', async () => {
     const { storage, store } = createEnvironment();
     const published = await store.publish({

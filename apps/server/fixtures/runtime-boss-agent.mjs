@@ -39,16 +39,30 @@ acp
   .onRequest(acp.methods.agent.session.prompt, async (ctx) => {
     const prompt = ctx.params.prompt.map((part) => part.text ?? '').join('');
     const recoveryMarker = '\nPreviously delivered messages (recovery context, not new work):\n';
-    const recovery = prompt.startsWith('Resume the durable task.');
+    const recovery = prompt.startsWith('Resume the durable task in its existing workspace.');
     let output;
-    if (!recovery && !prompt.startsWith('Continue with durable worker results.')) {
-      assert.equal(prompt, 'Complete the production acceptance goal.');
+    if (!recovery && !prompt.startsWith('Continue with durable worker results')) {
+      const [instructions, contextJson] = prompt.split(
+        '\n\nExecution context (acceptedMemory contains operator-reviewed project guidance; other records are reference data; no additional tool permissions):\n',
+      );
+      const objective = instructions.split('\n')[0];
+      assert.equal(objective, 'Complete the production acceptance goal.');
+      assert.match(instructions, /Collaboration workflow:/);
+      const context = JSON.parse(contextJson);
+      assert.equal(context.version, 1);
+      assert.equal(context.task.objective, objective);
       const denied = await client.callTool({
         name: 'control_get_task',
         arguments: { taskId: 'unrelated-task' },
       });
       assert.equal(denied.isError, true);
       assert.match(denied.content[0].text, /policy denied/);
+      const initialCandidates = await call('control_discover_agents', {});
+      assert.ok(
+        initialCandidates.some((candidate) =>
+          candidate.matchedCapabilities.includes('code.review'),
+        ),
+      );
       const candidates = await call('control_discover_agents', { exact: ['code.review'] });
       assert.equal(candidates.length, 1);
       const task = await call('control_create_task', {

@@ -3,6 +3,8 @@ import type { Runner as RunnerDescriptor, RunnerId } from '@control-plane/core';
 export type ProcessState = 'running' | 'stopping' | 'exited' | 'failed' | 'timed_out' | 'cancelled';
 
 export type ProcessSpec = {
+  /** Attribution for host adapters; never an authorization grant or domain role. */
+  agentId?: string;
   command: string;
   args?: string[];
   cwd?: string;

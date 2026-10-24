@@ -34,6 +34,8 @@ function grants(): FleetBridgeGrantResolver {
 
 function services(): FleetControlServices {
   return {
+    searchKnowledge: vi.fn(async () => ({ hits: [] })),
+    proposeMemory: vi.fn(async () => ({ status: 'proposed' })),
     discoverAgents: vi.fn(async () => []),
     getAgent: vi.fn(async ({ agentId }) => ({ id: agentId })),
     createTask: vi.fn(async (input) => ({ id: 'task-new', ...input })),

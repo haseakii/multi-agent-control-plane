@@ -5,12 +5,23 @@ import type { GitExecutor } from './types.js';
 const execFileAsync = promisify(execFile);
 
 export class NodeGitExecutor implements GitExecutor {
-  async run(cwd: string, args: string[]): Promise<string> {
+  async run(
+    cwd: string,
+    args: string[],
+    options?: {
+      env?: Record<string, string>;
+      trim?: boolean;
+      maxBuffer?: number;
+      timeoutMs?: number;
+    },
+  ): Promise<string> {
     const result = await execFileAsync('git', args, {
       cwd,
       windowsHide: true,
-      maxBuffer: 4 * 1024 * 1024,
+      ...(options?.timeoutMs ? { timeout: options.timeoutMs } : {}),
+      maxBuffer: options?.maxBuffer ?? 4 * 1024 * 1024,
+      ...(options?.env ? { env: { ...process.env, ...options.env } } : {}),
     });
-    return result.stdout.trim();
+    return options?.trim === false ? result.stdout : result.stdout.trim();
   }
 }

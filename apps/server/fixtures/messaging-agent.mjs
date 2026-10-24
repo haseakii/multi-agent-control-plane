@@ -57,11 +57,11 @@ acp
   })
   .onRequest(acp.methods.agent.session.prompt, async (ctx) => {
     const prompt = ctx.params.prompt.map((part) => part.text ?? '').join('');
-    const continuing = prompt.startsWith('Continue with durable worker results.');
+    const continuing = prompt.startsWith('Continue with durable worker results');
     let output;
     if (role === 'boss') {
       if (!continuing) {
-        assert.equal(prompt, 'Prove mediated worker-to-worker messaging.');
+        assert.equal(prompt.split('\n')[0], 'Prove mediated worker-to-worker messaging.');
         if (activeReceiver) {
           const receiver = await call('control_create_task', {
             title: 'Receive an active peer request',
@@ -97,7 +97,7 @@ acp
       }
     } else if (role === 'a') {
       if (!continuing) {
-        assert.equal(prompt, 'Ask messenger-b for a direct response.');
+        assert.equal(prompt.split('\n')[0], 'Ask messenger-b for a direct response.');
         // Hidden tools must also be rejected by the authoritative parent boundary,
         // not just omitted from the worker's MCP tool list.
         const escalation = await fetch(
@@ -131,7 +131,7 @@ acp
           content: 'Please acknowledge the mediated request.',
         });
         assert.equal(sent.message.fromAgentId, 'messenger-a');
-        if (activeReceiver) await writeFile(join(cwd, 'request-queued'), '');
+        if (activeReceiver) await writeFile(process.argv[4] ?? join(cwd, 'request-queued'), '');
         output = 'Awaiting B through the control-plane router.';
       } else {
         const messages = messagesFrom(prompt, '\n');
@@ -154,7 +154,7 @@ acp
         // Test-only scheduling barrier: business content still travels via Fleet.
         for (;;) {
           try {
-            await access(join(cwd, 'request-queued'));
+            await access(process.argv[4] ?? join(cwd, 'request-queued'));
             break;
           } catch {
             await delay(10);

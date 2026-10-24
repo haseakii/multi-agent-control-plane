@@ -19,3 +19,16 @@ playwright-report/
 .DS_Store
 .idea/
 .vscode/
+
+release/
+/.run/collaboration-integration-*/
+/.run/hermes-integration/
+/.run/**/mcp-connection*.json
+/.run/**/client-access*.json
+
+# Local deployments, task worktrees, agent profiles and generated evidence.
+/.run/
+/.codex/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal

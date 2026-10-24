@@ -5,6 +5,14 @@ export type {
   AcpStdioRuntimeDefinition,
 } from '@control-plane/core';
 
+export type AgentNegotiation = {
+  protocolVersion: number;
+  agentInfo: Record<string, unknown> | null;
+  agentCapabilities: Record<string, unknown>;
+  authMethods: unknown[];
+  note: string;
+};
+
 export type RuntimeHealth = 'unknown' | 'ready' | 'error';
 export type AuthReadiness = 'unknown' | 'needs_login' | 'ready' | 'not_reported';
 
@@ -23,6 +31,9 @@ export type PermissionRequest = {
     kind?: string;
   }>;
   subject: unknown;
+  review?: import('@control-plane/core').AcpPermissionReview;
+  requestId?: string;
+  signal?: AbortSignal;
 };
 
 export type PermissionDecision =
@@ -65,6 +76,7 @@ export type AgentEvent =
       type: 'completed';
       sessionId: string;
       stopReason: string;
+      usage?: import('./usage.js').PromptUsage;
     };
 
 export type AgentEventSink = (event: AgentEvent) => void | Promise<void>;

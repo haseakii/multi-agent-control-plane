@@ -2,6 +2,7 @@ import { AgentDefinitionSchema, AgentIdSchema } from '@control-plane/core';
 import type { BridgeScope } from '@control-plane/core';
 import { describe, expect, it, vi } from 'vitest';
 import { createFleetToolExecutor } from './executor.js';
+import { FleetRecipientUnavailableError } from './service-error.js';
 import type { FleetBridgeHooks, FleetControlServices } from './types.js';
 
 function agent(scopes: readonly BridgeScope[] = ['boss.orchestration']) {
@@ -28,6 +29,8 @@ function worker(scopes: readonly BridgeScope[] = ['agent.messaging']) {
 
 function services(): FleetControlServices {
   return {
+    searchKnowledge: vi.fn(async () => ({ hits: [] })),
+    proposeMemory: vi.fn(async () => ({ status: 'proposed' })),
     discoverAgents: vi.fn(async (input) => ({ input })),
     getAgent: vi.fn(async ({ agentId }) => ({ id: agentId })),
     createTask: vi.fn(async (input) => ({ id: 'task-new', ...input })),
@@ -307,6 +310,27 @@ describe('createFleetToolExecutor', () => {
 
     expect(shared.createTask).not.toHaveBeenCalled();
     expect(shared.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('serializes only canonical retryable details from a controlled service error', async () => {
+    const shared = services();
+    const conflict = new FleetRecipientUnavailableError();
+    conflict.message = 'private backend detail';
+    vi.mocked(shared.sendMessage).mockRejectedValueOnce(conflict);
+    const execute = createFleetToolExecutor({ services: shared, hooks: hooks() });
+    const result = await execute({
+      identity: identity(),
+      agent: agent(['agent.messaging']),
+      toolName: 'control_send_message',
+      input: { targetAgentId: 'peer', type: 'message' },
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      statusCode: 409,
+      code: 'RECIPIENT_UNAVAILABLE',
+      retryable: true,
+    });
+    expect(JSON.stringify(result)).not.toContain('private backend detail');
   });
 
   it('passes sensitive content to policy/services but redacts it from audits and service failures', async () => {

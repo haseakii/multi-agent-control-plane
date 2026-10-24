@@ -1,0 +1,277 @@
+diff --git a/start-hermes.cmd b/start-hermes.cmd
+--- a/start-hermes.cmd
++++ b/start-hermes.cmd
+@@ -1,3 +1,58 @@
+ @echo off
++setlocal
++for /f "tokens=2 delims=:" %%a in ('chcp') do set "_CP_CODEPAGE=%%a"
++chcp 65001 >nul
++if "%~1"=="" goto menu
++if /i "%~1"=="start" goto start
++if /i "%~1"=="stop" goto stop
++if /i "%~1"=="help" goto help
++echo 未知操作。请使用 start-hermes.cmd start、stop 或 help。
++set "_CP_EXIT=2"
++goto finish
++
++:menu
++set "_CP_MENU=1"
++echo Hermes 协作工作台
++echo [1] 启动或打开工作台
++echo [2] 停止工作台
++echo [3] 查看使用说明
++echo [4] 退出
++choice /c 1234 /n /m "请选择 [1-4]: "
++if errorlevel 4 (
++  set "_CP_EXIT=0"
++  goto finish
++)
++if errorlevel 3 goto help
++if errorlevel 2 goto stop
++if errorlevel 1 goto start
++set "_CP_EXIT=2"
++goto finish
++
++:start
+ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0integrations\hermes-workbench\start.ps1" -Real
++set "_CP_EXIT=%errorlevel%"
++goto finish
++
++:stop
++powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0integrations\hermes-workbench\stop.ps1" -Real
++set "_CP_EXIT=%errorlevel%"
++goto finish
++
++:help
++echo 启动：start-hermes.cmd start
++echo 停止：start-hermes.cmd stop
++echo 地址：http://127.0.0.1:8047/
++echo 打开后点击“新任务”，输入目标并发送；同一会话底部可以补充和追问。
++echo 这里是开发工作台入口，依赖现有构建和本机 ACP 适配器。
++echo 使用说明："%~dp0integrations\hermes-workbench\README.md"
++echo 部署及备份边界："%~dp0docs\guides\hermes-local-delivery.md"
++set "_CP_EXIT=0"
++
++:finish
++if defined _CP_MENU (
++  if not defined CONTROL_PLANE_NO_PAUSE pause
++) else (
++  if not "%_CP_EXIT%"=="0" if not defined CONTROL_PLANE_NO_PAUSE pause
++)
++if defined _CP_CODEPAGE chcp %_CP_CODEPAGE% >nul
++exit /b %_CP_EXIT%
+-if errorlevel 1 pause
+diff --git a/integrations/hermes-workbench/start.ps1 b/integrations/hermes-workbench/start.ps1
+--- a/integrations/hermes-workbench/start.ps1
++++ b/integrations/hermes-workbench/start.ps1
+@@ -1,41 +1,98 @@
+ ﻿param([switch]$NoOpen, [switch]$Real)
+ $ErrorActionPreference = 'Stop'
+ $projectRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
++$baseRoot = Join-Path $projectRoot '.run\hermes-integration'
++$runRoot = if ($Real) { Join-Path $baseRoot 'real-20261023' } else { $baseRoot }
+-$runRoot = Join-Path $projectRoot '.run\hermes-integration'
+-if (-not (Test-Path -LiteralPath (Join-Path $runRoot 'web-dist\index.html'))) { throw '请先完成隔离依赖准备和 build.mjs 构建。此启动器不会自动安装依赖。' }
+-if ($Real) { $runRoot = Join-Path $runRoot 'real-20261023' }
+-New-Item -ItemType Directory -Path $runRoot -Force | Out-Null
+ $serverInfo = Join-Path $runRoot 'server.json'
++$outputLog = Join-Path $runRoot 'server.log'
++$errorLog = Join-Path $runRoot 'server-error.log'
++
++function Open-Workbench([string]$Url) {
++  Write-Output $Url
++  if (-not $NoOpen) {
++    try { Start-Process $Url }
++    catch { Write-Warning "工作台已就绪，但未能打开浏览器。请手动访问 $Url" }
++  }
+-if (Test-Path -LiteralPath $serverInfo) {
+-  $known = Get-Content -LiteralPath $serverInfo -Raw | ConvertFrom-Json
+-  try {
+-    $health = Invoke-RestMethod -Uri ($known.url + '/health') -TimeoutSec 2
+-    $process = Get-Process -Id $known.pid -ErrorAction Stop
+-    if ($health.service -eq 'multi-agent-control-plane' -and $process.ProcessName -eq 'node') {
+-      Write-Output $known.url
+-      if (-not $NoOpen) { Start-Process $known.url }
+-      exit 0
+-    }
+-  } catch { }
+ }
++
++try {
++  $port = if ($Real) { 8047 } elseif ($env:HERMES_POC_PORT) { [int]$env:HERMES_POC_PORT } else { 8046 }
++  if ($port -lt 1 -or $port -gt 65535) { throw '模拟端口必须在 1–65535 之间。' }
++  $expectedUrl = "http://127.0.0.1:$port"
+-$nodeCandidates = @(
+-  (Join-Path $projectRoot '.run\collaboration-integration-20261022\delivery-r6-1\Control-Plane-V0-Progress-R6.1-20261022\runtime\node.exe'),
+-  'D:\workspace\multi-agent-control-plane-c5-20261022-r1\candidate\Control-Plane-Collaboration-C5-R1\runtime\node.exe'
+-)
+-$nodePath = $nodeCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+-if (-not $nodePath) { $nodePath = (Get-Command node -ErrorAction Stop).Source }
+-$entry = if ($Real) { 'integrations/hermes-workbench/serve-real.mjs' } else { 'integrations/hermes-workbench/serve.mjs' }
+-$started = Start-Process -FilePath $nodePath -ArgumentList $entry -WorkingDirectory $projectRoot -WindowStyle Hidden -RedirectStandardOutput (Join-Path $runRoot 'server.log') -RedirectStandardError (Join-Path $runRoot 'server-error.log') -PassThru
+-for ($index = 0; $index -lt 240; $index++) {
+-  Start-Sleep -Milliseconds 250
+-  if ($started.HasExited) { throw (Get-Content -LiteralPath (Join-Path $runRoot 'server-error.log') -Raw) }
+   if (Test-Path -LiteralPath $serverInfo) {
++    $known = Get-Content -LiteralPath $serverInfo -Raw | ConvertFrom-Json
++    $recordedId = 0
++    $recordedAt = [datetimeoffset]::MinValue
++    if ($known.url -cne $expectedUrl -or
++        -not [int]::TryParse([string]$known.pid, [ref]$recordedId) -or $recordedId -le 0 -or
++        -not [datetimeoffset]::TryParse([string]$known.startedAt, [ref]$recordedAt)) {
++      throw "实例记录无效或与当前模式不符：$serverInfo。请保留记录并交由维护人员核对，不会自动接管实例。"
++    }
++    $process = Get-Process -Id $recordedId -ErrorAction SilentlyContinue
++    if ($process) {
++      if ($process.ProcessName -ne 'node' -or $process.StartTime.ToUniversalTime() -gt $recordedAt.UtcDateTime) {
++        throw "记录中的进程身份已改变，未复用或停止该进程。请核对：$serverInfo"
++      }
++      if (Test-Path -LiteralPath (Join-Path $runRoot 'stop')) {
++        throw '工作台已收到停止请求，但记录的进程仍在。请等待停止完成，再启动。'
++      }
++      try { $health = Invoke-RestMethod -Uri "$expectedUrl/health" -TimeoutSec 2 }
++      catch { throw '记录的工作台进程仍在，但暂时没有响应。未重复启动；请查看日志或使用停止入口。' }
++      if ($health.service -ne 'multi-agent-control-plane' -or $health.status -ne 'ok') {
++        throw '记录的工作台进程仍在，但健康状态不符。未重复启动，请先核对日志。'
++      }
++      Write-Host '工作台已在运行。'
++      Open-Workbench $expectedUrl
+-    $current = Get-Content -LiteralPath $serverInfo -Raw | ConvertFrom-Json
+-    if ($current.pid -eq $started.Id) {
+-      Write-Output $current.url
+-      if (-not $NoOpen) { Start-Process $current.url }
+       exit 0
+     }
+   }
++
++  foreach ($relativePath in @(
++    '.run\hermes-integration\web-dist\index.html',
++    'apps\server\dist\server.js',
++    'apps\server\dist\runtime-composition.js',
++    'packages\runner\dist\index.js',
++    'packages\storage\dist\index.js',
++    'packages\core\dist\index.js'
++  )) {
++    if (-not (Test-Path -LiteralPath (Join-Path $projectRoot $relativePath) -PathType Leaf)) {
++      throw "缺少现有构建：$relativePath。请由维护人员按部署说明准备；启动器不会自动安装或构建。"
++    }
++  }
++  $nodeCandidates = @(
++    (Join-Path $projectRoot 'runtime\node.exe'),
++    (Join-Path $projectRoot '.run\collaboration-integration-20261022\delivery-r6-1\Control-Plane-V0-Progress-R6.1-20261022\runtime\node.exe')
++  )
++  $nodePath = $nodeCandidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
++  if (-not $nodePath) {
++    $nodeCommand = Get-Command node.exe -CommandType Application -ErrorAction SilentlyContinue
++    if (-not $nodeCommand) { throw '未找到现有 Node 运行时。请由维护人员准备 runtime\node.exe（含许可）或已有 Node；不会自动安装。' }
++    $nodePath = $nodeCommand.Source
++  }
++  New-Item -ItemType Directory -Path $runRoot -Force | Out-Null
++  $entry = if ($Real) { 'integrations/hermes-workbench/serve-real.mjs' } else { 'integrations/hermes-workbench/serve.mjs' }
++  $started = Start-Process -FilePath $nodePath -ArgumentList $entry -WorkingDirectory $projectRoot -WindowStyle Hidden -RedirectStandardOutput $outputLog -RedirectStandardError $errorLog -PassThru
++  for ($index = 0; $index -lt 240; $index++) {
++    Start-Sleep -Milliseconds 250
++    $started.Refresh()
++    if ($started.HasExited) { throw "工作台进程提前退出，退出码 $($started.ExitCode)。请查看错误日志。" }
++    if (Test-Path -LiteralPath $serverInfo) {
++      # The server writes this small file after listening; a concurrent read may see a partial write.
++      try { $current = Get-Content -LiteralPath $serverInfo -Raw | ConvertFrom-Json } catch { continue }
++      if ($current.pid -eq $started.Id -and $current.url -ceq $expectedUrl) {
++        try { $health = Invoke-RestMethod -Uri "$expectedUrl/health" -TimeoutSec 1 } catch { continue }
++        if ($health.service -eq 'multi-agent-control-plane' -and $health.status -eq 'ok') {
++          Write-Host '工作台已启动。成员连接检查在后台继续，可以先输入草稿。'
++          Open-Workbench $expectedUrl
++          exit 0
++        }
++      }
++    }
++  }
++  throw '尚未确认启动完成，进程可能仍在运行。未自动重启或强制结束；请查看日志，或使用停止入口确认退出。'
++} catch {
++  [Console]::Error.WriteLine("启动未完成：$($_.Exception.Message)")
++  [Console]::Error.WriteLine("运行日志：$outputLog")
++  [Console]::Error.WriteLine("错误日志：$errorLog")
++  exit 1
+ }
+-throw '启动尚未完成，请查看 .run/hermes-integration/server-error.log。'
+diff --git a/integrations/hermes-workbench/stop.ps1 b/integrations/hermes-workbench/stop.ps1
+--- a/integrations/hermes-workbench/stop.ps1
++++ b/integrations/hermes-workbench/stop.ps1
+@@ -1,4 +1,42 @@
++﻿param([switch]$Real)
++$ErrorActionPreference = 'Stop'
+-param([switch]$Real)
+ $projectRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
+ $folder = if ($Real) { '.run\hermes-integration\real-20261023' } else { '.run\hermes-integration' }
++$runRoot = Join-Path $projectRoot $folder
++$serverInfo = Join-Path $runRoot 'server.json'
++
++try {
++  if (-not (Test-Path -LiteralPath $serverInfo -PathType Leaf)) {
++    throw "没有可核对的实例记录：$serverInfo。无法确认是否有启动中的实例；未写停止标记，也未操作其他进程。"
++  }
++  $known = Get-Content -LiteralPath $serverInfo -Raw | ConvertFrom-Json
++  $port = if ($Real) { 8047 } elseif ($env:HERMES_POC_PORT) { [int]$env:HERMES_POC_PORT } else { 8046 }
++  $recordedId = 0
++  $recordedAt = [datetimeoffset]::MinValue
++  if ($port -lt 1 -or $port -gt 65535 -or $known.url -cne "http://127.0.0.1:$port" -or
++      -not [int]::TryParse([string]$known.pid, [ref]$recordedId) -or $recordedId -le 0 -or
++      -not [datetimeoffset]::TryParse([string]$known.startedAt, [ref]$recordedAt)) {
++    throw "实例记录无效或与当前模式不符：$serverInfo。未发送停止请求。"
++  }
++  $process = Get-Process -Id $recordedId -ErrorAction SilentlyContinue
++  if (-not $process) {
++    Write-Host '记录的工作台进程已经退出；未操作其他服务。'
++    exit 0
++  }
++  # Metadata is written after startup. A newer process with the same PID is not this instance.
++  if ($process.ProcessName -ne 'node' -or $process.StartTime.ToUniversalTime() -gt $recordedAt.UtcDateTime) {
++    throw '记录中的进程身份已改变。未写停止标记，也未强制结束进程。'
++  }
++  $null = $process.Handle
++  Set-Content -LiteralPath (Join-Path $runRoot 'stop') -Value 'stop'
++  Write-Host '已请求正常停止，正在等待记录的工作台进程退出（最多 30 秒）…'
++  if (-not $process.WaitForExit(30000)) {
++    throw '停止请求已发送，但尚未确认进程退出。请稍后再次使用停止入口并核对日志；此时不要备份、恢复或覆盖数据。'
++  }
++  Write-Host '记录的工作台进程已退出。历史数据保留。'
++  exit 0
++} catch {
++  [Console]::Error.WriteLine("停止未确认：$($_.Exception.Message)")
++  [Console]::Error.WriteLine("错误日志：$(Join-Path $runRoot 'server-error.log')")
++  exit 1
++}
+-Set-Content -LiteralPath (Join-Path $projectRoot (Join-Path $folder 'stop')) -Value 'stop'
+diff --git a/integrations/hermes-workbench/README.md b/integrations/hermes-workbench/README.md
+--- a/integrations/hermes-workbench/README.md
++++ b/integrations/hermes-workbench/README.md
+@@ -1,5 +1,7 @@
+ # Hermes 协作工作台
+ 
++当前开发变更处于静态审核阶段，尚未重新编译、构建或运行验收。下文的通过记录属于各次历史验证，不能证明当前源码已进入正在运行的页面，也不表示封存的 C6 包已更新。部署范围、候选输入和统一验收清单见 [本地交付说明](../../docs/guides/hermes-local-delivery.md)。
++
+ 验证结论：Hermes CN Desktop 的工作台组件可以通过适配层接到现有协作引擎。已在浏览器提交任务，完成负责人选择、ACP 委派、Worker 产物落库、完成消息投递、负责人读取产物并汇总；服务重启和页面刷新后任务与产物保留。
+ 
+ 工作台复用 **Hermes Web 组件**，任务与成员管理接入本项目协作引擎。当前运行于本机浏览器，未修改用户已安装的 Hermes 桌面程序，也未接入上游 Python 核心或 Tauri 运行时。
+@@ -10,7 +12,7 @@
+ 
+ ### 日常使用
+ 
++1. 双击项目根目录的 `start-hermes.cmd`，选择 **1 启动或打开工作台**，打开 `http://127.0.0.1:8047/`。命令行也可使用 `start-hermes.cmd start`；本目录的 `start.cmd` / `start-real.cmd` 保留为直接启动的兼容入口。
+-1. 双击项目根目录的 `start-hermes.cmd`，或本目录的 `start.cmd` / `start-real.cmd`，打开 `http://127.0.0.1:8047/`。
+ 2. 点击“新任务”，选择负责人、输入目标并发送。默认使用新建空目录；处理已有文件时，展开“工作目录”选择已有项目或关联本机目录，检查并确认目录后发送。负责人会处理要求，需要协作时发现并委派其他 Agent。
+ 3. 任务页底部始终保留输入框。执行中可发送补充要求，完成后可直接追问或要求修改，前文和结果自动带入。
+    左侧会话旁的铅笔可直接重命名，保存时检查记录版本；历史目标与产物保留。
+@@ -18,7 +20,11 @@
+ 
+ 之前的 **3 轮是单次验收限制，日常工作台不再受其限制**。旧 `prompt-budget.json` 保留为验收证据；日常调用独立记录到 `daily-prompt-usage.json`，不会重置或修改旧账本。发送任务及追问会调用真实 Agent，查看历史不会触发调用。
+ 
++启动器只复用本机已有适配器及 Agent 自己管理的认证配置，不安装软件、不复制登录凭据。真实验证数据单独保存在 `.run/hermes-integration/real-20261023/`。
++
++停止时再次打开根目录 `start-hermes.cmd`，选择 **2 停止工作台**，或运行 `start-hermes.cmd stop`。停止入口发送正常退出请求，并等待记录的进程退出；超时会明确提示尚未确认，此时不要覆盖、备份或恢复数据。停止可能中断正在执行的任务，请先查看任务状态。关闭浏览器标签不会停止服务。原 `powershell -File integrations/hermes-workbench/stop.ps1 -Real` 入口仍可使用。
++
++启动或停止失败会显示实际日志绝对路径，真实模式的错误日志位于 `.run/hermes-integration/real-20261023/server-error.log`。启动器复用已响应的实例；记录的进程仍在但无响应时，不重复启动。启动器不自动更新已运行的服务，源码修改需要重新构建并在维护窗口停止、启动后才能进入运行版本。
+-启动器只复用本机已有适配器及 Agent 自己管理的认证配置，不安装软件、不复制登录凭据。真实验证数据单独保存在 `.run/hermes-integration/real-20261023/`。停止：`powershell -File integrations/hermes-workbench/stop.ps1 -Real`。
+ 
+ 历史预置定义缺失时，工作台仍加载数据库中已有的成员；首次空库只导入可读取的预置定义，也可在界面自行注册。已删除的成员不会在重启后重新创建。认证配置仍按已确认的完整启动入口匹配，无法匹配时使用成员自身默认登录环境并在界面检查状态。
+ 

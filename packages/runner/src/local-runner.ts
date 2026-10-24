@@ -5,6 +5,7 @@ import { isAbsolute, resolve } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import {
   RunnerIdSchema,
+  AgentIdSchema,
   RunnerSchema,
   type Runner as RunnerDescriptor,
   type RunnerId,
@@ -400,6 +401,7 @@ export class LocalRunner implements Runner {
     timeoutMs?: number;
     stopGracePeriodMs: number;
   } {
+    if (spec.agentId !== undefined) AgentIdSchema.parse(spec.agentId);
     if (spec.command.trim().length === 0) {
       throw new TypeError('Process command must not be empty.');
     }
@@ -528,16 +530,20 @@ export class LocalRunner implements Runner {
     }
 
     if (process.platform === 'win32') {
-      if (force) {
-        const killer = spawn('taskkill', ['/PID', String(record.handle.pid), '/T', '/F'], {
-          stdio: 'ignore',
-          windowsHide: true,
-          shell: false,
+      // Windows kill() ends the launcher before /T can discover its descendants.
+      // Terminate the owned tree while the root PID still exists, including on first stop.
+      const killer = spawn('taskkill', ['/PID', String(record.handle.pid), '/T', '/F'], {
+        stdio: 'ignore',
+        windowsHide: true,
+        shell: false,
+      });
+      killer.on('error', () => {
+        this.publish(record, {
+          type: 'process.error',
+          message: 'Unable to terminate the owned Windows process tree.',
         });
-        killer.unref();
-      } else {
-        record.child.kill();
-      }
+      });
+      killer.unref();
       return;
     }
 

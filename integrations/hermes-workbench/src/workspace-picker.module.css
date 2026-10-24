@@ -1,0 +1,127 @@
+.picker {
+  margin: 12px 0;
+  color: var(--h-text-2);
+  font-size: 13px;
+}
+.picker summary {
+  cursor: pointer;
+  padding: 6px 0;
+}
+.picker summary span {
+  margin-left: 10px;
+  color: var(--h-text);
+  overflow-wrap: anywhere;
+}
+.body {
+  display: grid;
+  gap: 12px;
+  margin: 8px 0;
+  padding: 16px;
+  border: 1px solid var(--h-line);
+  border-radius: 10px;
+}
+.body label {
+  display: grid;
+  gap: 6px;
+}
+.body select,
+.body input {
+  min-width: 0;
+  width: 100%;
+  border: 1px solid var(--h-line);
+  border-radius: 6px;
+  padding: 8px;
+  color: inherit;
+  background: var(--h-bg-pane);
+  font: inherit;
+}
+.body button,
+.dialog button {
+  border: 1px solid var(--h-line);
+  border-radius: 6px;
+  padding: 8px 12px;
+  color: var(--h-text);
+  background: var(--h-bg-pane);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.body button:disabled,
+.dialog button:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+.pathInput {
+  display: flex;
+  gap: 8px;
+}
+.body small,
+.dialog small {
+  line-height: 1.6;
+}
+.body code,
+.dialog code {
+  display: block;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  margin-top: 5px;
+}
+.validated {
+  color: var(--success-color, #08725f);
+}
+.error {
+  color: var(--error-color, #c33737);
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+}
+.dialog {
+  position: fixed;
+  margin: auto;
+  max-width: 540px;
+  width: calc(100% - 40px);
+  max-height: 90vh;
+  overflow: auto;
+  border: 1px solid var(--h-line);
+  border-radius: 14px;
+  padding: 24px;
+  background: var(--h-bg-pane);
+  color: var(--h-text);
+  box-shadow: 0 20px 80px #0003;
+}
+.dialog::backdrop {
+  background: rgb(0 0 0 / 40%);
+}
+.dialog h2 {
+  margin: 0 0 16px;
+  font-size: 20px;
+}
+.dialog p {
+  line-height: 1.6;
+}
+.dialog footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 24px;
+}
+.dialog button.primary {
+  color: #fff;
+  background: #222;
+  border-color: #222;
+}
+@media (max-width: 600px) {
+  .pathInput {
+    flex-direction: column;
+  }
+  .body {
+    padding: 12px;
+  }
+}

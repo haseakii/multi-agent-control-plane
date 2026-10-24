@@ -1,0 +1,74 @@
+.dialog {
+  width: min(680px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  padding: 0;
+  border: 1px solid var(--h-line);
+  border-radius: 12px;
+  background: var(--h-bg-pane);
+  color: var(--h-text);
+  font: 14px/1.6 var(--h-font-sans, sans-serif);
+}
+.dialog::backdrop {
+  background: rgb(0 0 0 / 35%);
+}
+.dialog header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--h-line);
+  position: sticky;
+  top: 0;
+  background: var(--h-bg-pane);
+}
+.dialog h2 {
+  margin: 0;
+  font-size: 18px;
+}
+.dialog button {
+  color: inherit;
+  font: inherit;
+  border: 1px solid var(--h-line);
+  border-radius: 6px;
+  padding: 6px 12px;
+  background: var(--h-bg);
+  cursor: pointer;
+}
+.body {
+  padding: 16px 24px 24px;
+}
+.body > p:first-child {
+  margin-top: 0;
+}
+.body ol {
+  padding-left: 22px;
+}
+.body li {
+  margin-bottom: 20px;
+  padding-left: 4px;
+}
+.body p {
+  margin: 6px 0 10px;
+}
+.body details {
+  border-top: 1px solid var(--h-line);
+  padding: 14px 0;
+}
+.body summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.body blockquote {
+  margin: 12px 0;
+  padding: 12px;
+  background: var(--h-bg);
+  border-left: 3px solid var(--h-line);
+}
+.body .primary {
+  margin-bottom: 16px;
+}
+.body .note {
+  color: var(--h-text-3);
+  font-size: 12px;
+  margin-bottom: 0;
+}

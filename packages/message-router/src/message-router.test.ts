@@ -197,6 +197,32 @@ describe('MessageRouter', () => {
     }
   });
 
+  it('renews only a live generation, then recovers after renewal stops', async () => {
+    let current = '2026-10-20T01:10:00.000Z';
+    const { storage, router } = createRouter(':memory:', () => current);
+    try {
+      await router.send(sender, { toAgentId: 'agent-b', type: 'message', content: 'long work' });
+      const first = (await router.claimNext('agent-b'))!;
+      for (let tick = 1; tick <= 5; tick++) {
+        current = new Date(Date.parse('2026-10-20T01:10:00.000Z') + tick * 500).toISOString();
+        router.renewClaim(first.delivery.id, first.delivery.attemptCount);
+        expect(router.recoverExpired()).toBe(0);
+      }
+      current = '2026-10-20T01:10:04.000Z';
+      // Even if recovery has not run yet, an expired owner cannot revive itself.
+      expect(() => router.renewClaim(first.delivery.id, first.delivery.attemptCount)).toThrow();
+      expect(router.recoverExpired()).toBe(1);
+      const next = (await router.claimNext('agent-b'))!;
+      expect(() => router.renewClaim(first.delivery.id, first.delivery.attemptCount)).toThrowError(
+        expect.objectContaining({ code: 'STALE_DELIVERY_CLAIM' }),
+      );
+      router.renewClaim(next.delivery.id, next.delivery.attemptCount);
+      await router.acknowledge(next.delivery.id, next.delivery.attemptCount);
+    } finally {
+      storage.close();
+    }
+  });
+
   it('preserves correlation and reply chains without routing through a Boss', async () => {
     const filename = databasePath();
     const now = () => '2026-10-20T01:03:00.000Z';

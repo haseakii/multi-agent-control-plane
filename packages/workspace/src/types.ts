@@ -4,6 +4,7 @@ import {
   TaskIdSchema,
   WorkspaceAccessSchema,
   WorkspaceIdSchema,
+  GitObjectIdSchema,
 } from '@control-plane/core';
 import { z } from 'zod';
 
@@ -29,6 +30,7 @@ export const GitWorktreeCreateInputSchema = z
     repositoryPath: z.string().min(1),
     worktreeRoot: z.string().min(1),
     baseRef: z.string().min(1).max(512),
+    reviewBaseRevision: GitObjectIdSchema.optional(),
     branchName: z.string().min(1).max(512),
     requiresEnforcedBoundary: z.boolean().default(false),
   })
@@ -56,7 +58,16 @@ export const GitPushInputSchema = z
 export type GitPushInput = z.input<typeof GitPushInputSchema>;
 
 export interface GitExecutor {
-  run(cwd: string, args: string[]): Promise<string>;
+  run(
+    cwd: string,
+    args: string[],
+    options?: {
+      env?: Record<string, string>;
+      trim?: boolean;
+      maxBuffer?: number;
+      timeoutMs?: number;
+    },
+  ): Promise<string>;
 }
 
 export type WorkspaceIdFactory = () => string;

@@ -73,6 +73,8 @@ export const BridgeScopeSchema = z.enum([
   'artifact.read',
   'artifact.publish',
   'task.status',
+  'knowledge.read',
+  'memory.propose',
 ]);
 export type BridgeScope = z.infer<typeof BridgeScopeSchema>;
 
@@ -333,6 +335,65 @@ export type Artifact = z.infer<typeof ArtifactSchema>;
 export const EnforcementModeSchema = z.enum(['enforced', 'cooperative', 'unavailable']);
 export const ApprovalStateSchema = z.enum(['pending', 'approved', 'rejected', 'expired']);
 
+export const AcpPermissionReviewSchema = z
+  .object({
+    version: z.literal(1),
+    status: z.enum(['complete', 'missing', 'invalid', 'truncated', 'expired']),
+    tool: z.string().max(1024).nullable(),
+    action: z.string().max(1024).nullable(),
+    target: z.string().max(1024).nullable(),
+    parameters: JsonValueSchema,
+    provenance: z.record(z.string().max(64), z.enum(['request', 'history', 'unknown'])),
+    presence: z.record(
+      z.string().max(64),
+      z.object({ wire: z.string().max(64), sdk: z.string().max(64) }).strict(),
+    ),
+    reasons: z
+      .array(
+        z.enum([
+          'missing_tool',
+          'missing_action',
+          'missing_target',
+          'sdk_filtered',
+          'wire_unavailable',
+          'truncated',
+          'history_expired',
+          'invalid_identity',
+          'sensitive_redacted',
+        ]),
+      )
+      .max(16),
+    historyUsed: z.boolean(),
+    observedAt: TimestampSchema,
+    expiresAt: TimestampSchema,
+  })
+  .strict()
+  .refine(
+    (value) => new TextEncoder().encode(JSON.stringify(value)).length <= 16384,
+    'Permission review exceeds budget',
+  )
+  .refine(
+    (value) =>
+      value.status !== 'complete' ||
+      (value.reasons.length === 0 && !!value.tool && !!value.action && !!value.target),
+    'A complete permission review requires explicit tool, action and target',
+  );
+export type AcpPermissionReview = z.infer<typeof AcpPermissionReviewSchema>;
+
+export const AcpApprovalBindingSchema = z
+  .object({
+    version: z.literal(1),
+    attemptId: ExecutionAttemptIdSchema,
+    attemptNumber: z.number().int().positive(),
+    sessionId: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+    toolCallId: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+    requestId: z.string().uuid(),
+    expiresAt: TimestampSchema,
+    review: AcpPermissionReviewSchema,
+  })
+  .strict();
+export type AcpApprovalBinding = z.infer<typeof AcpApprovalBindingSchema>;
+
 export const ApprovalSchema = z
   .object({
     id: ApprovalIdSchema,
@@ -347,11 +408,63 @@ export const ApprovalSchema = z
     boundary: z.string().min(1).optional(),
     state: ApprovalStateSchema,
     requestedAt: TimestampSchema,
+    acp: AcpApprovalBindingSchema.optional(),
+    expiryReason: z.string().min(1).max(128).optional(),
     decidedAt: TimestampSchema.optional(),
     decisionActor: z.string().min(1).optional(),
   })
   .strict();
 export type Approval = z.infer<typeof ApprovalSchema>;
+
+export const ApprovalReadDiagnosticsSchema = z
+  .object({
+    code: z.literal('APPROVAL_SENSITIVE_RECORDS_ISOLATED'),
+    count: z.number().int().nonnegative(),
+  })
+  .strict();
+export type ApprovalReadDiagnostics = z.infer<typeof ApprovalReadDiagnosticsSchema>;
+export const ApprovalReadResultSchema = z
+  .object({
+    approvals: z.array(ApprovalSchema),
+    diagnostics: ApprovalReadDiagnosticsSchema,
+  })
+  .strict();
+export type ApprovalReadResult = z.infer<typeof ApprovalReadResultSchema>;
+
+export const ApprovalDecisionEligibilitySchema = z
+  .object({
+    canApprove: z.boolean(),
+    canReject: z.boolean(),
+    reason: z.enum([
+      'current_complete',
+      'details_missing',
+      'details_truncated',
+      'details_redacted',
+      'details_invalid',
+      'history_expired',
+      'deadline_expired',
+      'legacy_binding_missing',
+      'execution_changed',
+      'approval_expired',
+      'already_decided',
+      'unsupported_boundary',
+      'runtime_unavailable',
+    ]),
+    checkedAt: TimestampSchema,
+    validForMs: z.number().int().min(0).max(3000),
+  })
+  .strict()
+  .refine(
+    (value) =>
+      !value.canApprove ||
+      (value.canReject && value.reason === 'current_complete' && value.validForMs > 0),
+    'Only a current complete request may be approvable',
+  );
+export type ApprovalDecisionEligibility = z.infer<typeof ApprovalDecisionEligibilitySchema>;
+export const ApprovalViewSchema = ApprovalSchema.extend({
+  decisionEligibility: ApprovalDecisionEligibilitySchema,
+});
+export type ApprovalView = z.infer<typeof ApprovalViewSchema>;
 
 export const RunnerStatusSchema = z.enum(['unknown', 'ready', 'busy', 'offline', 'error']);
 
@@ -383,6 +496,20 @@ export const WorkspaceSchema = z
   })
   .strict();
 export type Workspace = z.infer<typeof WorkspaceSchema>;
+
+// Only explicitly confirmed external bindings have this record; legacy workspaces stay unchanged.
+export const WorkspaceDirectoryBindingSchema = z
+  .object({
+    id: WorkspaceIdSchema,
+    projectId: ProjectIdSchema,
+    rootPath: z.string().min(1).max(4096),
+    pathKey: z.string().min(1).max(4096),
+    deviceId: z.string().min(1).max(40),
+    fileId: z.string().min(1).max(40),
+    createdAt: TimestampSchema,
+  })
+  .strict();
+export type WorkspaceDirectoryBinding = z.infer<typeof WorkspaceDirectoryBindingSchema>;
 
 export const AuditActorSchema = z
   .object({

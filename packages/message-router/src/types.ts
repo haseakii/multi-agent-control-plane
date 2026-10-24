@@ -84,6 +84,8 @@ export type MessageRouterAuditEvent =
 export type MessageRouterHooks = {
   authorize(request: MessageAuthorizationRequest): Promise<MessageAuthorizationDecision>;
   audit(event: MessageRouterAuditEvent): Promise<void>;
+  /** Synchronous application guard, evaluated inside the enqueue transaction after authorization. */
+  beforeEnqueue?(request: MessageAuthorizationRequest): void;
 };
 
 export type MessageRouterIdFactory = (kind: 'message' | 'delivery') => string;
@@ -121,6 +123,12 @@ export interface MessageRouterStore {
     leaseUntil: string;
     mailboxKey?: string | undefined;
   }): MessageDelivery | undefined;
+  renewClaim(
+    id: string,
+    expectedAttemptCount: number,
+    now: string,
+    leaseUntil: string,
+  ): MessageDelivery;
   markDelivered(id: string, expectedAttemptCount: number, deliveredAt: string): MessageDelivery;
   scheduleRetry(
     id: string,

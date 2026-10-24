@@ -6,12 +6,22 @@ import { windowsWrapperIssue } from './windows-command.js';
 type Issue = { code: string; message: string };
 type InspectionOptions = {
   platform?: NodeJS.Platform;
+  localOnly?: boolean;
   isFile?: (filename: string) => boolean;
+  isDirectory?: (filename: string) => boolean;
 };
 
 function isFile(filename: string): boolean {
   try {
     return statSync(filename).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function isDirectory(filename: string): boolean {
+  try {
+    return statSync(filename).isDirectory();
   } catch {
     return false;
   }
@@ -31,9 +41,15 @@ export function inspectAgentConfiguration(input: unknown, options: InspectionOpt
     const platform = options.platform ?? process.platform;
     const paths = platform === 'win32' ? win32 : posix;
     const checkFile = options.isFile ?? isFile;
+    const localPath = (path: string) => platform !== 'win32' || /^[a-z]:[\\/]/i.test(path);
     const wrapper = windowsWrapperIssue(runtime.command, platform);
     if (wrapper) issues.push({ code: 'WINDOWS_WRAPPER_UNSUPPORTED', message: wrapper });
-    if (!paths.isAbsolute(runtime.command)) {
+    if (options.localOnly && !localPath(runtime.command)) {
+      issues.push({
+        code: 'LOCAL_PATH_REQUIRED',
+        message: 'Choose a local drive path; UNC and device paths are not inspected.',
+      });
+    } else if (!paths.isAbsolute(runtime.command)) {
       issues.push({
         code: 'COMMAND_NOT_ABSOLUTE',
         message: 'Use an absolute executable path; PATH is not searched by this diagnosis.',
@@ -52,6 +68,11 @@ export function inspectAgentConfiguration(input: unknown, options: InspectionOpt
           message:
             'For this Node adapter example, args[0] must be an absolute .js/.mjs/.cjs entrypoint.',
         });
+      } else if (options.localOnly && !localPath(entry)) {
+        issues.push({
+          code: 'LOCAL_PATH_REQUIRED',
+          message: 'Choose a local Node entry; UNC and device paths are not inspected.',
+        });
       } else if (!checkFile(entry)) {
         issues.push({
           code: 'NODE_ENTRY_NOT_FILE',
@@ -59,10 +80,17 @@ export function inspectAgentConfiguration(input: unknown, options: InspectionOpt
         });
       }
     }
-    if (runtime.cwd && !paths.isAbsolute(runtime.cwd)) {
+    if (runtime.cwd && options.localOnly && !localPath(runtime.cwd)) {
+      issues.push({ code: 'LOCAL_PATH_REQUIRED', message: 'Choose a local working directory.' });
+    } else if (runtime.cwd && !paths.isAbsolute(runtime.cwd)) {
       issues.push({
         code: 'CWD_NOT_ABSOLUTE',
         message: 'Use an absolute cwd, or omit it to use the project workspace.',
+      });
+    } else if (runtime.cwd && !(options.isDirectory ?? isDirectory)(runtime.cwd)) {
+      issues.push({
+        code: 'CWD_NOT_DIRECTORY',
+        message: 'Working directory is missing or is not a directory.',
       });
     }
   }

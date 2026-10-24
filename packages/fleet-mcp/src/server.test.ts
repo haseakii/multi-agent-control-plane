@@ -13,6 +13,8 @@ function boss(
     | 'artifact.read'
     | 'artifact.publish'
     | 'task.status'
+    | 'knowledge.read'
+    | 'memory.propose'
   )[] = ['boss.orchestration', 'agent.messaging', 'artifact.read', 'artifact.publish'],
 ) {
   return AgentDefinitionSchema.parse({
@@ -38,6 +40,8 @@ function worker(scopes: readonly BridgeScope[] = ['agent.messaging']) {
 
 function services(): FleetControlServices {
   return {
+    searchKnowledge: vi.fn(async () => ({ hits: [] })),
+    proposeMemory: vi.fn(async () => ({ status: 'proposed' })),
     discoverAgents: vi.fn(async (input) => ({ input, agents: ['agent-worker'] })),
     getAgent: vi.fn(async ({ agentId }) => ({ id: agentId })),
     createTask: vi.fn(async (input) => ({ id: 'task-created', ...input })),
@@ -80,6 +84,8 @@ async function connected(options?: {
     | 'artifact.read'
     | 'artifact.publish'
     | 'task.status'
+    | 'knowledge.read'
+    | 'memory.propose'
   )[];
   allow?: boolean;
 }) {
@@ -294,6 +300,7 @@ describe('Fleet MCP bridge', () => {
       arguments: { taskId: 'task-1' },
     });
     expect(failed.isError).toBe(true);
+    expect(JSON.stringify(failed)).not.toContain('provider token leaked in service error');
 
     const serializedAudit = JSON.stringify(vi.mocked(bridgeHooks.audit).mock.calls);
     expect(serializedAudit).not.toContain('provider-token-secret');

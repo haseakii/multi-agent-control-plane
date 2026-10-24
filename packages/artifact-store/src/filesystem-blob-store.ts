@@ -1,5 +1,5 @@
-import { createHash } from 'node:crypto';
-import { mkdir, open, readFile, unlink } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import { link, mkdir, open, readFile, unlink } from 'node:fs/promises';
 import { dirname, resolve, sep } from 'node:path';
 import type { ArtifactBlobStore, BlobWriteResult } from './types.js';
 import { ArtifactStoreError } from './types.js';
@@ -25,44 +25,40 @@ export class FilesystemArtifactBlobStore implements ArtifactBlobStore {
     const target = this.resolveStorageKey(storageKey);
     await mkdir(dirname(target), { recursive: true });
 
+    // Stage on the same filesystem. Only a fully written, synced and closed
+    // inode may become visible at the content address. Hard-link installation is
+    // atomic and does not replace an existing target on Windows or POSIX.
+    const staging = target + '.' + randomUUID() + '.tmp';
     let handle;
+    let created = false;
     try {
-      handle = await open(target, 'wx');
+      handle = await open(staging, 'wx');
+      created = true;
       await handle.writeFile(content);
       await handle.sync();
-      return {
-        sha256: digest,
-        sizeBytes: content.byteLength,
-        storageKey,
-        deduplicated: false,
-      };
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code !== 'EEXIST') {
-        if (handle) {
-          await handle.close().catch(() => undefined);
-          await unlink(target).catch(() => undefined);
-        }
-        throw error;
-      }
+      await handle.close();
+      handle = undefined;
 
-      const existing = new Uint8Array(await readFile(target));
-      if (existing.byteLength !== content.byteLength || !bytesEqualHash(existing, digest)) {
-        throw new ArtifactStoreError(
-          'BLOB_INTEGRITY',
-          `Existing artifact blob does not match its content address: ${storageKey}`,
-        );
+      let deduplicated = false;
+      try {
+        await link(staging, target);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+        const existing = new Uint8Array(await readFile(target));
+        if (existing.byteLength !== content.byteLength || !bytesEqualHash(existing, digest)) {
+          throw new ArtifactStoreError(
+            'BLOB_INTEGRITY',
+            'Existing artifact blob does not match its content address: ' + storageKey,
+          );
+        }
+        deduplicated = true;
       }
-      return {
-        sha256: digest,
-        sizeBytes: content.byteLength,
-        storageKey,
-        deduplicated: true,
-      };
+      return { sha256: digest, sizeBytes: content.byteLength, storageKey, deduplicated };
     } finally {
-      if (handle) {
-        await handle.close().catch(() => undefined);
-      }
+      if (handle) await handle.close().catch(() => undefined);
+      // A process crash can leave a private .tmp file; retries ignore it. Never
+      // remove an existing final address or another concurrent writer's file.
+      if (created) await unlink(staging).catch(() => undefined);
     }
   }
 

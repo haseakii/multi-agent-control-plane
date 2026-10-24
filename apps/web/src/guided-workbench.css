@@ -1,0 +1,324 @@
+.guided-shell {
+  grid-template-columns: 240px minmax(0, 1fr);
+  background: #191d24;
+}
+.guided-shell .workspace-main {
+  min-height: 100vh;
+}
+.guided-shell .workspace-header {
+  padding: 22px 36px;
+  background: #191d24;
+}
+.guided-shell .workspace-header h1 {
+  font-size: 1.16rem;
+  letter-spacing: 0;
+}
+.guided-shell .workspace-content {
+  max-width: 1060px;
+  padding: 32px 44px 60px;
+}
+.guided-shell .project-rail {
+  padding: 28px 18px;
+  background: #12161d;
+}
+.guided-shell .rail-brand {
+  margin-bottom: 36px;
+}
+.guided-shell .rail-new-project {
+  margin: 12px 0 24px;
+  background: transparent;
+  border-color: #3c4657;
+}
+.guided-shell .primary-button {
+  background: #9ae0ce;
+  color: #102d29;
+  border: 1px solid #9ae0ce;
+  font-weight: 650;
+  padding: 12px 20px;
+}
+.guided-shell .primary-button:hover:not(:disabled) {
+  background: #bbf1e2;
+}
+.guided-shell .primary-button:disabled {
+  opacity: 0.4;
+}
+.guided-shell .settings-toggle {
+  margin-top: auto;
+}
+.guided-shell .task-nav {
+  margin-bottom: 28px;
+}
+.welcome-panel {
+  max-width: 800px;
+  margin: 5vh auto 0;
+}
+.welcome-panel .kicker {
+  color: #9ae0ce;
+  letter-spacing: 0.08em;
+  margin-bottom: 20px;
+}
+.welcome-panel h2 {
+  font-size: clamp(2rem, 3.8vw, 3.4rem);
+  line-height: 1.35;
+  font-weight: 600;
+  letter-spacing: -0.04em;
+}
+.welcome-panel > p:not(.kicker) {
+  max-width: 590px;
+  color: #adb8c9;
+  font-size: 1rem;
+  line-height: 1.9;
+  margin: 24px 0;
+}
+.welcome-steps {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 18px;
+  list-style: none;
+  padding: 0;
+  margin: 34px 0;
+}
+.welcome-steps li {
+  display: grid;
+  gap: 10px;
+  padding: 22px 18px;
+  border: 1px solid #3b4553;
+  border-radius: 12px;
+  background: #202630;
+}
+.welcome-steps span,
+.step-number {
+  color: #9ae0ce;
+  font-size: 0.8rem;
+}
+.welcome-steps strong {
+  font-size: 0.95rem;
+  font-weight: 550;
+}
+.welcome-steps small {
+  color: #aab7c9;
+  line-height: 1.5;
+}
+.welcome-footnote {
+  display: block;
+  margin-top: 18px;
+  color: #9ba9bc;
+}
+.next-step {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 18px 20px;
+  border: 1px solid #496b68;
+  border-radius: 12px;
+  background: #203332;
+  margin-bottom: 24px;
+}
+.next-step .step-number {
+  border: 1px solid #6eaaa0;
+  border-radius: 50%;
+  width: 29px;
+  height: 29px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+}
+.next-step > div {
+  flex: 1;
+}
+.next-step strong {
+  font-size: 0.9rem;
+}
+.next-step p {
+  margin: 6px 0 0;
+  font-size: 0.8rem;
+  line-height: 1.7;
+  color: #c3d5d1;
+}
+.next-step button {
+  flex: 0 0 auto;
+  background: #284843;
+  border-color: #628d83;
+}
+.guided-shell .new-goal {
+  margin: 0 0 30px;
+  border: 1px solid #495566;
+  border-radius: 14px;
+  padding: 24px;
+  background: #222832;
+}
+.guided-shell .new-goal > summary {
+  font-size: 1.3rem;
+  font-weight: 550;
+}
+.guided-shell .new-goal .section-note {
+  font-size: 0.85rem;
+  margin-top: 12px;
+  line-height: 1.7;
+}
+.guided-shell .goal-form {
+  margin-top: 18px;
+  border: 0;
+  padding: 0;
+}
+.guided-shell .goal-form textarea {
+  background: #181e27;
+  min-height: 140px;
+  padding: 16px;
+  font-size: 0.95rem;
+  line-height: 1.8;
+  border-radius: 10px;
+}
+.example-prompts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: #aebbd0;
+  font-size: 0.78rem;
+}
+.example-prompts button {
+  padding: 5px 10px;
+  font-size: 0.78rem;
+  border-radius: 20px;
+  background: transparent;
+}
+.composer-options {
+  margin-top: 6px;
+  font-size: 0.8rem;
+  color: #afbdd1;
+}
+.composer-options label {
+  margin-top: 12px;
+}
+.guided-shell .form-actions {
+  align-items: center;
+}
+.guided-shell .form-actions small {
+  width: 100%;
+}
+.guided-shell .settings-view {
+  max-width: 1060px;
+  margin: auto;
+  padding: 28px 44px;
+}
+.settings-tabs {
+  display: flex;
+  gap: 10px;
+  border-bottom: 1px solid #3c4657;
+  padding-bottom: 16px;
+  margin-bottom: 28px;
+}
+.settings-tabs button {
+  background: transparent;
+  border-color: transparent;
+}
+.settings-tabs button[aria-current='page'] {
+  color: #baf2e3;
+  border-color: #62887d;
+  background: #253b35;
+}
+.catalog-disclosure,
+.runtime-disclosure {
+  margin: 20px 0;
+  color: #acbbcf;
+  font-size: 0.85rem;
+}
+.catalog-disclosure > summary,
+.runtime-disclosure > summary {
+  cursor: pointer;
+  padding: 10px 0;
+}
+.registration-advanced {
+  border-top: 1px solid #3f495b;
+  padding-top: 14px;
+}
+.registration-advanced > summary {
+  cursor: pointer;
+  color: #aebbd0;
+  font-size: 0.8rem;
+  margin-bottom: 14px;
+}
+.project-create-dialog {
+  width: min(620px, calc(100vw - 32px));
+}
+.guided-project-form {
+  display: grid;
+  gap: 20px;
+}
+.guided-project-form label {
+  display: grid;
+  gap: 9px;
+}
+.guided-project-form input {
+  width: 100%;
+  padding: 12px;
+  background: #161e2b;
+  color: #eef3fc;
+  border: 1px solid #52617a;
+  border-radius: 8px;
+}
+.guided-project-form button[type='submit'] {
+  background: #9ae0ce;
+  color: #102d29;
+  padding: 12px;
+}
+.guided-shell .context-toggle {
+  display: block;
+}
+.guided-shell .context-dialog {
+  width: min(680px, calc(100vw - 24px));
+  max-height: 90vh;
+}
+@media (max-width: 800px) {
+  .guided-shell {
+    grid-template-columns: 190px minmax(0, 1fr);
+  }
+  .guided-shell .workspace-content,
+  .guided-shell .settings-view {
+    padding: 20px;
+  }
+  .guided-shell .workspace-header {
+    padding: 16px 20px;
+    flex-wrap: wrap;
+  }
+  .welcome-steps {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+  .welcome-panel {
+    margin-top: 10px;
+  }
+  .next-step {
+    flex-wrap: wrap;
+  }
+  .guided-shell .settings-view .agent-form {
+    grid-template-columns: 1fr;
+  }
+  .guided-shell .settings-view .span-form-2 {
+    grid-column: auto;
+  }
+}
+@media (max-width: 560px) {
+  .guided-shell {
+    display: block;
+  }
+  .guided-shell .project-rail {
+    position: static;
+    height: auto;
+    padding: 16px;
+  }
+  .guided-shell .rail-brand {
+    margin-bottom: 16px;
+  }
+  .guided-shell .task-nav {
+    max-height: 180px;
+    overflow: auto;
+  }
+  .guided-shell .rail-new-project {
+    margin-bottom: 12px;
+  }
+  .guided-shell .new-goal {
+    padding: 16px;
+  }
+}

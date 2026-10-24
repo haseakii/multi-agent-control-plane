@@ -1,3 +1,4 @@
+import { AgentCatalogService, FileCatalogCache } from './agent-catalog.js';
 import { dirname, join, resolve } from 'node:path';
 import { openSqliteStorage } from '@control-plane/storage';
 import { readControlCenterSnapshot, seedDemoState } from './control-center.js';
@@ -25,9 +26,19 @@ if (process.env.CONTROL_PLANE_DEMO === '1') {
 const app = buildServer({
   fastify: { logger: true },
   agentControl: runtime.agentControl,
+  agentCatalog: new AgentCatalogService(
+    new FileCatalogCache(join(dirname(filename), 'cache/agent-catalog.json')),
+  ),
   taskControl: runtime,
   fleetGateway: runtime.fleetGateway,
-  controlCenter: () => readControlCenterSnapshot(storage, (id) => runtime.agentControl.state(id)),
+  controlCenter: (options) =>
+    readControlCenterSnapshot(
+      storage,
+      (id) => runtime.agentControl.state(id),
+      (id) => runtime.directoryBindings.confirmationVersion(id),
+      (approval) => runtime.approvalDecisionEligibility(approval),
+      options,
+    ),
 });
 
 app.addHook('preClose', async () => {

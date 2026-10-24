@@ -124,3 +124,41 @@ describe('offline agent preparation', () => {
     expect(existsSync(marker)).toBe(false);
   });
 });
+
+it('local-only metadata checks do not query UNC or device command/Node-entry paths', () => {
+  const isFile = vi.fn(() => true);
+  for (const runtime of [
+    { command: '\\\\server\\share\\agent.exe', args: [] },
+    { command: '\\\\?\\C:\\agent.exe', args: [] },
+    { command: 'C:\\node.exe', args: ['\\\\server\\share\\entry.mjs'] },
+  ]) {
+    const result = inspectAgentConfiguration(
+      { ...example, runtime: { ...example.runtime, ...runtime } },
+      { platform: 'win32', localOnly: true, isFile },
+    );
+    expect(result.offlineChecksPassed).toBe(false);
+    expect(result.issues.some((issue) => issue.code === 'LOCAL_PATH_REQUIRED')).toBe(true);
+  }
+  expect(isFile.mock.calls.every(([filename]) => /^[a-z]:/i.test(filename))).toBe(true);
+});
+
+it.each(['missing', 'file'])('rejects %s cwd using actual filesystem metadata', (kind) => {
+  const dir = mkdtempSync(join(tmpdir(), 'a0-cwd-'));
+  directories.push(dir);
+  const cwd = join(dir, kind);
+  if (kind === 'file') writeFileSync(cwd, 'not directory');
+  const value = inspectAgentConfiguration(
+    {
+      ...example,
+      runtime: {
+        ...example.runtime,
+        command: process.execPath,
+        args: [join(dir, 'adapter.mjs')],
+        cwd,
+      },
+    },
+    { isFile: () => true },
+  );
+  expect(value.offlineChecksPassed).toBe(false);
+  expect(value.issues).toContainEqual(expect.objectContaining({ code: 'CWD_NOT_DIRECTORY' }));
+});

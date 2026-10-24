@@ -1,0 +1,1463 @@
+diff --git a/integrations/hermes-workbench/src/main.tsx b/integrations/hermes-workbench/src/main.tsx
+--- a/integrations/hermes-workbench/src/main.tsx
++++ b/integrations/hermes-workbench/src/main.tsx
+@@ -59,7 +59,7 @@
+ import { WorkspaceReviewPanel } from './workspace-review';
+ import { WorkspacePicker, useWorkspaceConfirmation } from './workspace-picker';
+ import { pendingTaskApprovals } from './conversation-scope';
++import { ArtifactPreviewLoader } from './artifact-previews';
+-import { loadArtifactPreviews } from './artifact-previews';
+ import { resolveWorkspaceProject, type WorkspaceSelection } from './workspace-api';
+ declare const __HERMES_BUILD_ID__: string;
+ 
+@@ -269,16 +269,41 @@
+   const [nonce, setNonce] = useState(0);
+   const [dark, setDark] = useState(false);
+   const submission = useRef<Submission | undefined>(undefined);
++  const previewLoader = useRef<ArtifactPreviewLoader | null>(null);
++  if (!previewLoader.current)
++    previewLoader.current = new ArtifactPreviewLoader(readArtifact, (next) => {
++      setContent(next.content);
++      setPreviewErrors(next.errors);
++    });
+-  const contentRef = useRef<Record<string, string>>({});
+-  const previewErrorsRef = useRef<Record<string, string>>({});
+   const activeRef = useRef(activeId);
+   activeRef.current = activeId;
++  const mounted = useRef(true);
++  const synchronizePreviews = useCallback((data: SnapshotData, selection: string | null) => {
++    const root = data.tasks.find((task) => task.id === selection);
++    if (!root) {
++      previewLoader.current!.synchronize(null, []);
++      return;
++    }
++    const rounds = conversationRounds(data, root.id);
++    const ids = new Set(
++      rounds.flatMap((round) => taskFamily(data, round)).flatMap((task) => task.resultArtifactRefs),
++    );
++    const sources = data.artifacts.filter((artifact) =>
++      ids.has(artifact.id) &&
++      (artifact.mimeType.startsWith('text/') || artifact.mimeType === 'application/json'),
++    );
++    previewLoader.current!.synchronize(rounds[0]?.id ?? root.id, sources);
++  }, []);
+   const pending = useRef(false);
+   const refresh = useCallback(async () => {
+     if (pending.current) return;
+     pending.current = true;
+     try {
+       const [data, info] = await Promise.all([readSnapshot(), readWorkbench()]);
++      if (!mounted.current) return;
++      // Synchronous bookkeeping only: requests run independently, never await previews here.
++      // Invalidate old scope/hash tokens before presenting this newer snapshot.
++      synchronizePreviews(data, activeRef.current);
+       setSnapshot(data);
+       setWorkbench(info);
+       setError('');
+@@ -291,41 +316,30 @@
+       if (root) {
+         const rounds = conversationRounds(data, root.id);
+         const instructionLists = await Promise.all(rounds.map((t) => readInstructions(t.id)));
++        if (mounted.current && activeRef.current === root.id)
++          setInstructions(instructionLists.flatMap((i) => i.instructions));
+-        setInstructions(instructionLists.flatMap((i) => i.instructions));
+-        const ids = rounds.flatMap((r) => taskFamily(data, r)).flatMap((t) => t.resultArtifactRefs);
+-        const previews = ids.filter((id) => {
+-          if (contentRef.current[id] === undefined && previewErrorsRef.current[id] === undefined) {
+-            const artifact = data.artifacts.find((a) => a.id === id);
+-            return (
+-              !!artifact &&
+-              (artifact.mimeType.startsWith('text/') || artifact.mimeType === 'application/json')
+-            );
+-          }
+-          return false;
+-        });
+-        const loaded = await loadArtifactPreviews(previews, readArtifact);
+-        if (Object.keys(loaded.content).length) {
+-          Object.assign(contentRef.current, loaded.content);
+-          setContent({ ...contentRef.current });
+-        }
+-        if (Object.keys(loaded.errors).length) {
+-          Object.assign(previewErrorsRef.current, loaded.errors);
+-          setPreviewErrors({ ...previewErrorsRef.current });
+-        }
+       }
+     } catch (e) {
++      if (mounted.current) setError(e instanceof Error ? e.message : String(e));
+-      setError(e instanceof Error ? e.message : String(e));
+     } finally {
+       pending.current = false;
+     }
++  }, [synchronizePreviews]);
+-  }, []);
+   useEffect(() => {
++    mounted.current = true;
+     void refresh();
+     const timer = setInterval(() => void refresh(), 750);
++    return () => {
++      mounted.current = false;
++      clearInterval(timer);
++      previewLoader.current?.dispose();
++    };
+-    return () => clearInterval(timer);
+   }, [refresh]);
+   const select = (id: string | null) => {
+     if (id === null) setDraft(sessionStorage.getItem('control-plane-draft') ?? '');
++    // Navigation invalidates old callbacks immediately, before React commits a new view.
++    if (snapshot) synchronizePreviews(snapshot, id);
++    else previewLoader.current!.synchronize(null, []);
+     setActiveId(id);
+     activeRef.current = id;
+     history.replaceState(null, '', id ? `/?task=${encodeURIComponent(id)}` : '/');
+@@ -352,9 +366,7 @@
+     [];
+   const failedPreviews = artifacts.filter((artifact) => previewErrors[artifact.id] !== undefined);
+   const retryPreview = (id: string) => {
++    previewLoader.current?.retry(id);
+-    delete previewErrorsRef.current[id];
+-    setPreviewErrors({ ...previewErrorsRef.current });
+-    void refresh();
+   };
+   const approvals = pendingTaskApprovals(snapshot?.approvals ?? [], snapshot?.tasks ?? [], root);
+   const action = async (fn: () => Promise<unknown>) => {
+diff --git a/integrations/hermes-workbench/src/adapter.ts b/integrations/hermes-workbench/src/adapter.ts
+--- a/integrations/hermes-workbench/src/adapter.ts
++++ b/integrations/hermes-workbench/src/adapter.ts
+@@ -76,6 +76,7 @@
+       assignmentId: z.string().optional(),
+       producerAgentId: z.string().optional(),
+       kind: z.string().optional(),
++      sha256: z.string().regex(/^[a-f0-9]{64}$/),
+       mimeType: z.string(),
+       name: z.string().optional(),
+     }),
+@@ -280,7 +281,8 @@
+     .sort((a, b) => a.createdAt - b.createdAt);
+ }
+ export const artifactUrl = (id: string) => `/api/artifacts/${encodeURIComponent(id)}/content`;
++export const readArtifact = (id: string, signal?: AbortSignal) =>
++  fetchExternalText(artifactUrl(id), { signal });
+-export const readArtifact = (id: string) => fetchExternalText(artifactUrl(id));
+ export function taskAgentName(snapshot: SnapshotData, task: TaskData) {
+   const id =
+     task.ownerAgentId ??
+diff --git a/integrations/hermes-workbench/serve-real.mjs b/integrations/hermes-workbench/serve-real.mjs
+--- a/integrations/hermes-workbench/serve-real.mjs
++++ b/integrations/hermes-workbench/serve-real.mjs
+@@ -5,6 +5,7 @@
+ import { uiBuildId } from './ui-build.mjs';
+ import { homedir } from 'node:os';
+ import { observePermissions } from './permission-diagnostics.mjs';
++import { runWorkbenchInstance } from './instance-lifecycle.mjs';
+ 
+ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+ const base = path.join(root, '.run/hermes-integration');
+@@ -17,180 +18,178 @@
+ const { readControlCenterSnapshot } = await load('apps/server/dist/control-center.js');
+ const { buildServer } = await load('apps/server/dist/server.js');
+ const { AgentDefinitionSchema } = await load('packages/core/dist/index.js');
++const { acquireInstanceLock } = await load('apps/server/dist/release-config.js');
++const { closeHttpServer } = await load('apps/server/dist/http-shutdown.js');
++await runWorkbenchInstance({
++  run, data: path.join(run, 'data'), url: 'http://127.0.0.1:8047', acquireLock: acquireInstanceLock,
++}, async (instance) => {
++  // The 3-turn acceptance ledger is historical evidence, not the daily product quota.
++  // Daily calls are recorded independently, without silently resetting that ledger.
++  const usage = createPromptBudget(path.join(run, 'daily-prompt-usage.json'), null);
++  const native = new LocalRunner({ id: 'hermes-real', inheritedEnvironmentKeys: [] });
++  const actors = new Map();
++  const handles = [];
++  let closing = false;
++  const definitionsPath = path.join(root, '.run/collaboration-integration-20261022/real-pair');
++  const runtimeKey = (definition) =>
++    JSON.stringify([path.normalize(definition.command).toLowerCase(), definition.args ?? []]);
++  // Local adapter profiles are keyed by the approved launch entry, not a domain role.
++  // Additional agents use their own inherited home and explicit environment allowlist.
++  const bootstrapDefinitions = [];
++  const profiles = new Map();
++  for (const [id, profile] of [
++    [
++      'codex-acceptance',
++      {
++        env: { CODEX_HOME: path.join(root, '.data/codex-acp-preflight/agent-profile/codex') },
++        authMethod: 'chat-gpt',
+-// The 3-turn acceptance ledger is historical evidence, not the daily product quota.
+-// Daily calls are recorded independently, without silently resetting that ledger.
+-const usage = createPromptBudget(path.join(run, 'daily-prompt-usage.json'), null);
+-const native = new LocalRunner({ id: 'hermes-real', inheritedEnvironmentKeys: [] });
+-const actors = new Map();
+-const handles = [];
+-let closing = false;
+-const definitionsPath = path.join(root, '.run/collaboration-integration-20261022/real-pair');
+-const runtimeKey = (definition) =>
+-  JSON.stringify([path.normalize(definition.command).toLowerCase(), definition.args ?? []]);
+-// Local adapter profiles are keyed by the approved launch entry, not a domain role.
+-// Additional agents use their own inherited home and explicit environment allowlist.
+-const bootstrapDefinitions = [];
+-const profiles = new Map();
+-for (const [id, profile] of [
+-  [
+-    'codex-acceptance',
+-    {
+-      env: { CODEX_HOME: path.join(root, '.data/codex-acp-preflight/agent-profile/codex') },
+-      authMethod: 'chat-gpt',
+-    },
+-  ],
+-  ['antigravity-acceptance', { env: {}, authMethod: 'oauth-personal' }],
+-]) {
+-  try {
+-    const definition = AgentDefinitionSchema.parse(
+-      JSON.parse(fs.readFileSync(path.join(definitionsPath, `${id}.json`), 'utf8')),
+-    );
+-    if (definition.id !== id) throw new Error('Bootstrap definition identity changed.');
+-    bootstrapDefinitions.push(definition);
+-    profiles.set(runtimeKey(definition.runtime), profile);
+-  } catch {
+-    // Optional first-run seeds must not prevent saved members or an empty workbench
+-    // from starting. Do not infer an authentication profile from a member's name/ID.
+-    console.error(JSON.stringify({ agentId: id, status: 'bootstrap-unavailable' }));
+-  }
+-}
+-const userHome = process.env.USERPROFILE ?? homedir();
+-const env = {
+-  SystemRoot: process.env.SystemRoot ?? 'C:/Windows',
+-  WINDIR: process.env.WINDIR ?? 'C:/Windows',
+-  PATH: `${path.dirname(process.execPath)};${process.env.PATH ?? ''}`,
+-  USERPROFILE: userHome,
+-  HOME: userHome,
+-  APPDATA: process.env.APPDATA ?? path.join(userHome, 'AppData/Roaming'),
+-  LOCALAPPDATA: process.env.LOCALAPPDATA ?? path.join(userHome, 'AppData/Local'),
+-  TEMP: path.join(run, 'temp'),
+-  TMP: path.join(run, 'temp'),
+-};
+-const runner = {
+-  descriptor: () => native.descriptor(),
+-  async spawn(spec) {
+-    if (closing) throw new Error('Workbench is stopping.');
+-    const profile = profiles.get(runtimeKey(spec));
+-    const handle = await native.spawn({
+-      ...spec,
+-      env: {
+-        ...env,
+-        ...profile?.env,
+-        ...spec.env,
+       },
++    ],
++    ['antigravity-acceptance', { env: {}, authMethod: 'oauth-personal' }],
++  ]) {
++    try {
++      const definition = AgentDefinitionSchema.parse(
++        JSON.parse(fs.readFileSync(path.join(definitionsPath, `${id}.json`), 'utf8')),
++      );
++      if (definition.id !== id) throw new Error('Bootstrap definition identity changed.');
++      bootstrapDefinitions.push(definition);
++      profiles.set(runtimeKey(definition.runtime), profile);
++    } catch {
++      // Optional first-run seeds must not prevent saved members or an empty workbench
++      // from starting. Do not infer an authentication profile from a member's name/ID.
++      console.error(JSON.stringify({ agentId: id, status: 'bootstrap-unavailable' }));
+-    });
+-    if (closing) {
+-      await native.stop(handle);
+-      throw new Error('Workbench is stopping.');
+     }
+-    actors.set(handle.id, spec.agentId ?? 'unattributed');
+-    handles.push(handle);
+-    fs.writeFileSync(path.join(run, 'owned-processes.json'), JSON.stringify(handles, null, 2));
+-    return handle;
+-  },
+-  transport(handle) {
+-    const transport = native.transport(handle);
+-    return {
+-      readable:
+-        process.env.HERMES_PERMISSION_DIAGNOSTICS === '1'
+-          ? observePermissions(
+-              transport.readable,
+-              path.join(run, 'permission-diagnostics.jsonl'),
+-              actors.get(handle.id),
+-            )
+-          : transport.readable,
+-      writable: usage.wrap(transport.writable, actors.get(handle.id)),
+-    };
+-  },
+-  stop: (...a) => native.stop(...a),
+-  status: (...a) => native.status(...a),
+-  wait: (...a) => native.wait(...a),
+-  events: (...a) => native.events(...a),
+-  writeStdin: (...a) => native.writeStdin(...a),
+-  endStdin: (...a) => native.endStdin(...a),
+-};
+-const storage = openSqliteStorage({ filename: path.join(run, 'data/state.sqlite') });
+-const runtime = createControlPlaneRuntime({
+-  storage,
+-  runner,
+-  workspaceRoot: path.join(run, 'data/workspaces'),
+-  artifactRoot: path.join(run, 'data/artifacts'),
+-  // Daily work uses the engine's normal timeout, not the short acceptance deadline.
+-});
+-const app = buildServer({
+-  agentControl: runtime.agentControl,
+-  taskControl: runtime,
+-  fleetGateway: runtime.fleetGateway,
+-  webRoot: path.join(base, 'web-dist'),
+-  controlCenter: () =>
+-    readControlCenterSnapshot(
+-      storage,
+-      (id) => runtime.agentControl.state(id),
+-      (id) => runtime.directoryBindings.confirmationVersion(id),
+-      (a) => runtime.approvalDecisionEligibility(a),
+-    ),
+-});
+-app.get('/api/workbench', async () => ({
+-  mode: 'real',
+-  profile: 'daily',
+-  uiBuildId: uiBuildId(base),
+-  promptsUsed: usage.read().used,
+-}));
+-let memberChecks = Promise.resolve();
+-app.addHook('preClose', async () => {
+-  closing = true;
+-  await Promise.allSettled([runtime.close(), ...handles.map((handle) => native.stop(handle))]);
+-  await memberChecks;
+-});
+-app.addHook('onClose', async () => storage.close());
+-const url = await app.listen({ host: '127.0.0.1', port: 8047 });
+-runtime.setBridgeBaseUrl(url);
+-try {
+-  const seeded = path.join(run, 'agents-seeded.json');
+-  if (!fs.existsSync(seeded)) {
+-    if (storage.repositories.agentDefinitions.list().length === 0)
+-      for (const definition of bootstrapDefinitions) runtime.agentControl.create(definition);
+-    fs.writeFileSync(seeded, JSON.stringify({ initializedAt: new Date().toISOString() }));
+   }
++  const userHome = process.env.USERPROFILE ?? homedir();
++  const env = {
++    SystemRoot: process.env.SystemRoot ?? 'C:/Windows',
++    WINDIR: process.env.WINDIR ?? 'C:/Windows',
++    PATH: `${path.dirname(process.execPath)};${process.env.PATH ?? ''}`,
++    USERPROFILE: userHome,
++    HOME: userHome,
++    APPDATA: process.env.APPDATA ?? path.join(userHome, 'AppData/Roaming'),
++    LOCALAPPDATA: process.env.LOCALAPPDATA ?? path.join(userHome, 'AppData/Local'),
++    TEMP: path.join(run, 'temp'),
++    TMP: path.join(run, 'temp'),
++  };
++  const runner = {
++    descriptor: () => native.descriptor(),
++    async spawn(spec) {
++      if (closing || instance.stopping) throw new Error('Workbench is stopping.');
++      const profile = profiles.get(runtimeKey(spec));
++      const handle = await native.spawn({
++        ...spec,
++        env: {
++          ...env,
++          ...profile?.env,
++          ...spec.env,
++        },
++      });
++      if (closing || instance.stopping) {
++        await native.stop(handle);
++        throw new Error('Workbench is stopping.');
++      }
++      actors.set(handle.id, spec.agentId ?? 'unattributed');
++      handles.push(handle);
++      fs.writeFileSync(path.join(run, 'owned-processes.json'), JSON.stringify(handles, null, 2));
++      return handle;
++    },
++    transport(handle) {
++      const transport = native.transport(handle);
++      return {
++        readable:
++          process.env.HERMES_PERMISSION_DIAGNOSTICS === '1'
++            ? observePermissions(
++                transport.readable,
++                path.join(run, 'permission-diagnostics.jsonl'),
++                actors.get(handle.id),
++              )
++            : transport.readable,
++        writable: usage.wrap(transport.writable, actors.get(handle.id)),
++      };
++    },
++    stop: (...a) => native.stop(...a),
++    status: (...a) => native.status(...a),
++    wait: (...a) => native.wait(...a),
++    events: (...a) => native.events(...a),
++    writeStdin: (...a) => native.writeStdin(...a),
++    endStdin: (...a) => native.endStdin(...a),
++  };
++  instance.assertRunning();
++  const storage = instance.acquireResource(
++    () => openSqliteStorage({ filename: path.join(run, 'data/state.sqlite') }),
++    (storage) => storage.close(),
+-  fs.writeFileSync(
+-    path.join(run, 'server.json'),
+-    JSON.stringify({ url, pid: process.pid, run, startedAt: new Date().toISOString() }, null, 2),
+   );
++  const runtime = instance.acquireResource(() => createControlPlaneRuntime({
++    storage,
++    runner,
++    workspaceRoot: path.join(run, 'data/workspaces'),
++    artifactRoot: path.join(run, 'data/artifacts'),
++    // Daily work uses the engine's normal timeout, not the short acceptance deadline.
++  }), () => stopRuntime());
++  let memberChecks = Promise.resolve();
++  let runtimeShutdown;
++  const stopRuntime = () => runtimeShutdown ??= (async () => {
++    closing = true;
++    const results = await Promise.allSettled([runtime.close(), ...handles.map((handle) => native.stop(handle))]);
++    await memberChecks;
++    const failures = results.filter((result) => result.status === 'rejected').map((result) => result.reason);
++    if (failures.length) throw new AggregateError(failures, 'Runtime shutdown incomplete.');
++  })();
++  const app = instance.acquireResource(() => buildServer({
++    agentControl: runtime.agentControl,
++    taskControl: runtime,
++    fleetGateway: runtime.fleetGateway,
++    webRoot: path.join(base, 'web-dist'),
++    controlCenter: () =>
++      readControlCenterSnapshot(
++        storage,
++        (id) => runtime.agentControl.state(id),
++        (id) => runtime.directoryBindings.confirmationVersion(id),
++        (a) => runtime.approvalDecisionEligibility(a),
++      ),
++  }), (app) => closeHttpServer(app));
++  app.get('/api/workbench', async () => ({
++    mode: 'real',
++    profile: 'daily',
++    uiBuildId: uiBuildId(base),
++    promptsUsed: usage.read().used,
++  }));
++  app.addHook('preClose', stopRuntime);
++  instance.assertRunning();
++  const url = await app.listen({ host: '127.0.0.1', port: 8047 });
++  runtime.setBridgeBaseUrl(url);
++  instance.assertRunning();
++  {
++    const seeded = path.join(run, 'agents-seeded.json');
++    if (!fs.existsSync(seeded)) {
++      if (storage.repositories.agentDefinitions.list().length === 0)
++        for (const definition of bootstrapDefinitions) runtime.agentControl.create(definition);
++      fs.writeFileSync(seeded, JSON.stringify({ initializedAt: new Date().toISOString() }));
+-  console.log(`Hermes real workbench: ${url}`);
+-} catch (error) {
+-  await app.close();
+-  throw error;
+-}
+-const stop = path.join(run, 'stop');
+-if (fs.existsSync(stop)) fs.unlinkSync(stop);
+-const timer = setInterval(async () => {
+-  if (!fs.existsSync(stop)) return;
+-  clearInterval(timer);
+-  await app.close();
+-}, 300);
+-process.on('SIGINT', async () => {
+-  clearInterval(timer);
+-  await app.close();
+-});
+-// Publish the usable workbench before checking external processes. A slow login
+-// must not hold the launcher, saved conversations, or draft input hostage.
+-memberChecks = (async () => {
+-  for (const definition of storage.repositories.agentDefinitions.list()) {
+-    if (closing) break;
+-    const id = definition.id;
+-    if (!definition.enabled) continue;
+-    try {
+-      const probe = await runtime.agentControl.probe(id);
+-      if (closing) break;
+-      if (probe.readiness.runtime !== 'ready') throw Error(`Agent unavailable: ${id}`);
+-      const profile = profiles.get(runtimeKey(definition.runtime));
+-      const auth =
+-        profile && probe.readiness.auth !== 'ready'
+-          ? await runtime.agentControl.authenticate(id, profile.authMethod)
+-          : probe;
+-      if (!closing) console.log(JSON.stringify({ agentId: id, ...auth.readiness }));
+-    } catch {
+-      if (!closing) console.error(JSON.stringify({ agentId: id, status: 'needs-attention' }));
+     }
++    instance.ready({ run });
++    console.log(`Hermes real workbench: ${url}`);
+   }
++  // Publish the usable workbench before checking external processes. A slow login
++  // must not hold the launcher, saved conversations, or draft input hostage.
++  memberChecks = (async () => {
++    for (const definition of storage.repositories.agentDefinitions.list()) {
++      if (closing || instance.stopping) break;
++      const id = definition.id;
++      if (!definition.enabled) continue;
++      try {
++        const probe = await runtime.agentControl.probe(id);
++        if (closing || instance.stopping) break;
++        if (probe.readiness.runtime !== 'ready') throw Error(`Agent unavailable: ${id}`);
++        const profile = profiles.get(runtimeKey(definition.runtime));
++        const auth =
++          profile && probe.readiness.auth !== 'ready'
++            ? await runtime.agentControl.authenticate(id, profile.authMethod)
++            : probe;
++        if (!closing) console.log(JSON.stringify({ agentId: id, ...auth.readiness }));
++      } catch {
++        if (!closing) console.error(JSON.stringify({ agentId: id, status: 'needs-attention' }));
++      }
++    }
++  })();
++});
+-})();
+diff --git a/integrations/hermes-workbench/serve.mjs b/integrations/hermes-workbench/serve.mjs
+--- a/integrations/hermes-workbench/serve.mjs
++++ b/integrations/hermes-workbench/serve.mjs
+@@ -2,6 +2,7 @@
+ import path from 'node:path';
+ import { fileURLToPath, pathToFileURL } from 'node:url';
+ import { uiBuildId } from './ui-build.mjs';
++import { runWorkbenchInstance } from './instance-lifecycle.mjs';
+ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+ const run = path.join(root, '.run/hermes-integration');
+ const data = path.join(run, 'data');
+@@ -11,90 +12,85 @@
+ const { createControlPlaneRuntime } = await load('apps/server/dist/runtime-composition.js');
+ const { readControlCenterSnapshot } = await load('apps/server/dist/control-center.js');
+ const { buildServer } = await load('apps/server/dist/server.js');
++const { acquireInstanceLock } = await load('apps/server/dist/release-config.js');
++const { closeHttpServer } = await load('apps/server/dist/http-shutdown.js');
++const port = Number(process.env.HERMES_POC_PORT ?? '8046');
++await runWorkbenchInstance({
++  run, data, url: `http://127.0.0.1:${port}`, acquireLock: acquireInstanceLock,
++}, async (instance) => {
++  instance.assertRunning();
++  const storage = instance.acquireResource(
++    () => openSqliteStorage({ filename: path.join(data, 'state.sqlite') }),
++    (storage) => storage.close(),
++  );
++  const runtime = instance.acquireResource(() => createControlPlaneRuntime({
++    storage,
++    workspaceRoot: path.join(data, 'workspaces'),
++    artifactRoot: path.join(data, 'artifacts'),
++    executionTimeoutMs: 60000,
++  }), () => stopRuntime());
++  let runtimeShutdown;
++  const stopRuntime = () => runtimeShutdown ??= runtime.close();
++  const app = instance.acquireResource(() => buildServer({
++    agentControl: runtime.agentControl,
++    taskControl: runtime,
++    fleetGateway: runtime.fleetGateway,
++    webRoot: path.join(run, 'web-dist'),
++    controlCenter: () =>
++      readControlCenterSnapshot(
++        storage,
++        (id) => runtime.agentControl.state(id),
++        (id) => runtime.directoryBindings.confirmationVersion(id),
++        (a) => runtime.approvalDecisionEligibility(a),
++      ),
++  }), (app) => closeHttpServer(app));
++  app.addHook('preClose', stopRuntime);
++  app.get('/api/workbench', async () => ({ mode: 'mock', uiBuildId: uiBuildId(run) }));
++  const agents = [
++    ['mock-planner', '规划负责人（本地模拟）', true],
++    ['mock-reviewer', '审阅负责人（本地模拟）', true],
++    ['mock-worker', '协作者（本地模拟）', false],
++  ];
++  for (const [id, name, boss] of agents) {
++    instance.assertRunning();
++    if (!storage.repositories.agentDefinitions.get(id)) {
++      const response = await app.inject({
++        method: 'POST',
++        url: '/api/agents',
++        payload: {
++          id,
++          name,
++          enabled: true,
++          runtime: {
++            type: 'acp-stdio',
++            command: process.execPath,
++            args: [
++              path.join(root, 'integrations/hermes-workbench/mock-agent.mjs'),
++              ...(boss ? [] : ['--worker']),
++            ],
++          },
++          auth: { mode: 'agent-managed' },
++          capabilities: [{ name: boss ? 'planning' : 'code.review', source: 'configured' }],
++          orchestration: { canBeBoss: boss },
++          controlBridge: boss
++            ? { transport: 'mcp', scopes: ['boss.orchestration', 'artifact.read'] }
++            : { transport: 'none', scopes: [] },
+-const storage = openSqliteStorage({ filename: path.join(data, 'state.sqlite') });
+-const runtime = createControlPlaneRuntime({
+-  storage,
+-  workspaceRoot: path.join(data, 'workspaces'),
+-  artifactRoot: path.join(data, 'artifacts'),
+-  executionTimeoutMs: 60000,
+-});
+-const app = buildServer({
+-  agentControl: runtime.agentControl,
+-  taskControl: runtime,
+-  fleetGateway: runtime.fleetGateway,
+-  webRoot: path.join(run, 'web-dist'),
+-  controlCenter: () =>
+-    readControlCenterSnapshot(
+-      storage,
+-      (id) => runtime.agentControl.state(id),
+-      (id) => runtime.directoryBindings.confirmationVersion(id),
+-      (a) => runtime.approvalDecisionEligibility(a),
+-    ),
+-});
+-app.addHook('preClose', () => runtime.close());
+-app.get('/api/workbench', async () => ({ mode: 'mock', uiBuildId: uiBuildId(run) }));
+-app.addHook('onClose', async () => storage.close());
+-const agents = [
+-  ['mock-planner', '规划负责人（本地模拟）', true],
+-  ['mock-reviewer', '审阅负责人（本地模拟）', true],
+-  ['mock-worker', '协作者（本地模拟）', false],
+-];
+-for (const [id, name, boss] of agents) {
+-  if (!storage.repositories.agentDefinitions.get(id)) {
+-    const response = await app.inject({
+-      method: 'POST',
+-      url: '/api/agents',
+-      payload: {
+-        id,
+-        name,
+-        enabled: true,
+-        runtime: {
+-          type: 'acp-stdio',
+-          command: process.execPath,
+-          args: [
+-            path.join(root, 'integrations/hermes-workbench/mock-agent.mjs'),
+-            ...(boss ? [] : ['--worker']),
+-          ],
+         },
++      });
++      if (response.statusCode !== 201) throw Error(response.body);
++    }
++  }
++  // This harness must never execute a real provider registered in another instance.
++  if (storage.repositories.agentDefinitions.list().some((a) => !agents.some(([id]) => a.id === id)))
++    throw Error('Verification data contains a non-mock agent; refusing to start.');
++  instance.assertRunning();
++  const url = await app.listen({ host: '127.0.0.1', port });
++  runtime.setBridgeBaseUrl(url);
++  for (const [id] of agents) {
++    instance.assertRunning();
++    const res = await app.inject({ method: 'POST', url: `/api/agents/${id}/probe` });
++    if (res.statusCode !== 200) throw Error(res.body);
+-        auth: { mode: 'agent-managed' },
+-        capabilities: [{ name: boss ? 'planning' : 'code.review', source: 'configured' }],
+-        orchestration: { canBeBoss: boss },
+-        controlBridge: boss
+-          ? { transport: 'mcp', scopes: ['boss.orchestration', 'artifact.read'] }
+-          : { transport: 'none', scopes: [] },
+-      },
+-    });
+-    if (response.statusCode !== 201) throw Error(response.body);
+   }
++  instance.ready({ data, realAgentPrompts: 0 });
++  console.log(`Hermes workbench: ${url}`);
+-}
+-// This harness must never execute a real provider registered in another instance.
+-if (storage.repositories.agentDefinitions.list().some((a) => !agents.some(([id]) => a.id === id)))
+-  throw Error('Verification data contains a non-mock agent; refusing to start.');
+-const port = Number(process.env.HERMES_POC_PORT ?? '8046');
+-const url = await app.listen({ host: '127.0.0.1', port });
+-runtime.setBridgeBaseUrl(url);
+-for (const [id] of agents) {
+-  const res = await app.inject({ method: 'POST', url: `/api/agents/${id}/probe` });
+-  if (res.statusCode !== 200) throw Error(res.body);
+-}
+-fs.writeFileSync(
+-  path.join(run, 'server.json'),
+-  JSON.stringify(
+-    { url, pid: process.pid, data, realAgentPrompts: 0, startedAt: new Date().toISOString() },
+-    null,
+-    2,
+-  ),
+-);
+-console.log(`Hermes workbench: ${url}`);
+-const stop = path.join(run, 'stop');
+-if (fs.existsSync(stop)) fs.unlinkSync(stop);
+-const timer = setInterval(async () => {
+-  if (!fs.existsSync(stop)) return;
+-  clearInterval(timer);
+-  await app.close();
+-  console.log('Stopped');
+-}, 300);
+-process.on('SIGINT', async () => {
+-  clearInterval(timer);
+-  await app.close();
+ });
+diff --git a/integrations/hermes-workbench/start.ps1 b/integrations/hermes-workbench/start.ps1
+--- a/integrations/hermes-workbench/start.ps1
++++ b/integrations/hermes-workbench/start.ps1
+@@ -28,14 +28,27 @@
+         -not [datetimeoffset]::TryParse([string]$known.startedAt, [ref]$recordedAt)) {
+       throw "实例记录无效或与当前模式不符：$serverInfo。请保留记录并交由维护人员核对，不会自动接管实例。"
+     }
++    $hasGeneration = $known.PSObject.Properties.Name -contains 'instanceId'
++    $generation = [guid]::Empty
++    if ($hasGeneration -and
++        (-not [guid]::TryParse([string]$known.instanceId, [ref]$generation) -or
++         $generation.ToString() -cne [string]$known.instanceId -or
++         $known.phase -notin @('starting', 'ready', 'stopping'))) {
++      throw '实例代次或阶段记录无效，未接管实例。'
++    }
+     $process = Get-Process -Id $recordedId -ErrorAction SilentlyContinue
+     if ($process) {
+       if ($process.ProcessName -ne 'node' -or $process.StartTime.ToUniversalTime() -gt $recordedAt.UtcDateTime) {
+         throw "记录中的进程身份已改变，未复用或停止该进程。请核对：$serverInfo"
+       }
++      $stopName = if ($hasGeneration) { 'stop-' + $generation.ToString() } else { 'stop' }
++      if (($hasGeneration -and $known.phase -eq 'stopping') -or
++          (Test-Path -LiteralPath (Join-Path $runRoot $stopName))) {
+-      if (Test-Path -LiteralPath (Join-Path $runRoot 'stop')) {
+         throw '工作台已收到停止请求，但记录的进程仍在。请等待停止完成，再启动。'
+       }
++      if ($hasGeneration -and $known.phase -eq 'starting') {
++        throw '记录的工作台正在启动，尚未就绪；未重复启动，请稍后再次打开。'
++      }
+       try { $health = Invoke-RestMethod -Uri "$expectedUrl/health" -TimeoutSec 2 }
+       catch { throw '记录的工作台进程仍在，但暂时没有响应。未重复启动；请查看日志或使用停止入口。' }
+       if ($health.service -ne 'multi-agent-control-plane' -or $health.status -ne 'ok') {
+@@ -51,6 +64,10 @@
+     '.run\hermes-integration\web-dist\index.html',
+     'apps\server\dist\server.js',
+     'apps\server\dist\runtime-composition.js',
++    'apps\server\dist\release-config.js',
++    'apps\server\dist\http-shutdown.js',
++    'apps\server\dist\windows-lock-delete.cs',
++    'integrations\hermes-workbench\instance-lifecycle.mjs',
+     'packages\runner\dist\index.js',
+     'packages\storage\dist\index.js',
+     'packages\core\dist\index.js'
+@@ -79,7 +96,8 @@
+     if (Test-Path -LiteralPath $serverInfo) {
+       # The server writes this small file after listening; a concurrent read may see a partial write.
+       try { $current = Get-Content -LiteralPath $serverInfo -Raw | ConvertFrom-Json } catch { continue }
++      if ($current.pid -eq $started.Id -and $current.url -ceq $expectedUrl -and
++          $current.phase -eq 'ready' -and $current.instanceId -match '^[a-f0-9-]{36}$') {
+-      if ($current.pid -eq $started.Id -and $current.url -ceq $expectedUrl) {
+         try { $health = Invoke-RestMethod -Uri "$expectedUrl/health" -TimeoutSec 1 } catch { continue }
+         if ($health.service -eq 'multi-agent-control-plane' -and $health.status -eq 'ok') {
+           Write-Host '工作台已启动。成员连接检查在后台继续，可以先输入草稿。'
+diff --git a/integrations/hermes-workbench/stop.ps1 b/integrations/hermes-workbench/stop.ps1
+--- a/integrations/hermes-workbench/stop.ps1
++++ b/integrations/hermes-workbench/stop.ps1
+@@ -18,6 +18,14 @@
+       -not [datetimeoffset]::TryParse([string]$known.startedAt, [ref]$recordedAt)) {
+     throw "实例记录无效或与当前模式不符：$serverInfo。未发送停止请求。"
+   }
++  $hasGeneration = $known.PSObject.Properties.Name -contains 'instanceId'
++  $generation = [guid]::Empty
++  if ($hasGeneration -and
++      (-not [guid]::TryParse([string]$known.instanceId, [ref]$generation) -or
++       $generation.ToString() -cne [string]$known.instanceId -or
++       $known.phase -notin @('starting', 'ready', 'stopping'))) {
++    throw '实例代次或阶段记录无效，未发送停止请求。'
++  }
+   $process = Get-Process -Id $recordedId -ErrorAction SilentlyContinue
+   if (-not $process) {
+     Write-Host '记录的工作台进程已经退出；未操作其他服务。'
+@@ -28,7 +36,10 @@
+     throw '记录中的进程身份已改变。未写停止标记，也未强制结束进程。'
+   }
+   $null = $process.Handle
++  $stopName = if ($hasGeneration) { 'stop-' + $generation.ToString() } else { 'stop' }
++  $stopValue = if ($hasGeneration) { $generation.ToString() } else { 'stop' }
++  # New entry points accept only this generation; a delayed old writer cannot stop its successor.
++  [IO.File]::WriteAllText((Join-Path $runRoot $stopName), $stopValue, [Text.UTF8Encoding]::new($false))
+-  Set-Content -LiteralPath (Join-Path $runRoot 'stop') -Value 'stop'
+   Write-Host '已请求正常停止，正在等待记录的工作台进程退出（最多 30 秒）…'
+   if (-not $process.WaitForExit(30000)) {
+     throw '停止请求已发送，但尚未确认进程退出。请稍后再次使用停止入口并核对日志；此时不要备份、恢复或覆盖数据。'
+diff --git a/integrations/hermes-workbench/src/artifact-previews.ts b/integrations/hermes-workbench/src/artifact-previews.ts
+--- a/integrations/hermes-workbench/src/artifact-previews.ts
++++ b/integrations/hermes-workbench/src/artifact-previews.ts
+@@ -1,17 +1,122 @@
++export interface PreviewSource {
++  id: string;
++  sha256: string;
++}
++
++type Entry = {
++  source: PreviewSource;
++  controller: AbortController;
++  state: 'loading' | 'ready' | 'error';
++  timer?: ReturnType<typeof setTimeout>;
++  content?: string;
++  error?: string;
++};
++
++export interface PreviewSnapshot {
++  content: Record<string, string>;
++  errors: Record<string, string>;
++}
++
++/** Owns preview I/O independently of snapshot polling. Each entry is its request token. */
++export class ArtifactPreviewLoader {
++  private scope: string | null = null;
++  private entries = new Map<string, Entry>();
++  private disposed = false;
++
++  constructor(
++    private readonly read: (id: string, signal: AbortSignal) => Promise<string>,
++    private readonly changed: (snapshot: PreviewSnapshot) => void,
++    private readonly timeoutMs = 15_000,
++  ) {}
++
++  synchronize(scope: string | null, sources: readonly PreviewSource[]): void {
++    this.disposed = false;
++    if (scope !== this.scope) {
++      this.cancelAll();
++      this.scope = scope;
++    }
++    const wanted = new Map((scope === null ? [] : sources).map((source) => [source.id, source]));
++    for (const [id, entry] of this.entries) {
++      if (wanted.get(id)?.sha256 !== entry.source.sha256) {
++        this.cancel(entry);
++        this.entries.delete(id);
++      }
++    }
++    for (const source of wanted.values())
++      if (!this.entries.has(source.id)) this.start(source);
++    this.publish();
++  }
++
++  retry(id: string): void {
++    const current = this.entries.get(id);
++    if (this.disposed || !current || current.state !== 'error') return;
++    this.cancel(current);
++    this.entries.delete(id);
++    this.start(current.source);
++    this.publish();
++  }
++
++  dispose(): void {
++    this.disposed = true;
++    this.cancelAll();
++    this.scope = null;
++  }
++
++  private cancel(entry: Entry): void {
++    clearTimeout(entry.timer);
++    entry.controller.abort();
++  }
++
++  private cancelAll(): void {
++    for (const entry of this.entries.values()) this.cancel(entry);
++    this.entries.clear();
++  }
++
++  private current(entry: Entry): boolean {
++    return !this.disposed &&
++      this.entries.get(entry.source.id) === entry &&
++      entry.state === 'loading';
++  }
++
++  private start(source: PreviewSource): void {
++    const entry: Entry = { source: { ...source }, controller: new AbortController(), state: 'loading' };
++    this.entries.set(source.id, entry);
++    entry.timer = setTimeout(() => {
++      if (!this.current(entry)) return;
++      entry.state = 'error';
++      entry.error = '结果预览读取超时，请重新读取。';
++      entry.controller.abort();
++      this.publish();
++    }, this.timeoutMs);
++    void Promise.resolve().then(() => {
++      if (!this.current(entry)) return undefined;
++      return this.read(source.id, entry.controller.signal);
++    }).then(
++      (content) => {
++        if (!this.current(entry) || content === undefined) return;
++        clearTimeout(entry.timer);
++        entry.state = 'ready';
++        entry.content = content;
++        this.publish();
++      },
++      (cause: unknown) => {
++        if (!this.current(entry)) return;
++        clearTimeout(entry.timer);
++        entry.state = 'error';
++        entry.error = cause instanceof Error ? cause.message : '结果预览读取失败。';
++        this.publish();
++      },
++    );
++  }
++
++  private publish(): void {
++    if (this.disposed) return;
++    const content: Record<string, string> = {};
++    const errors: Record<string, string> = {};
++    for (const [id, entry] of this.entries) {
++      if (entry.state === 'ready') content[id] = entry.content!;
++      if (entry.state === 'error') errors[id] = entry.error!;
++    }
++    this.changed({ content, errors });
+-/** Preview failures belong to individual artifacts, not the engine connection state. */
+-export async function loadArtifactPreviews(
+-  ids: readonly string[],
+-  read: (id: string) => Promise<string>,
+-): Promise<{ content: Record<string, string>; errors: Record<string, string> }> {
+-  const unique = [...new Set(ids)];
+-  const results = await Promise.allSettled(unique.map(async (id) => read(id)));
+-  const content: Record<string, string> = {};
+-  const errors: Record<string, string> = {};
+-  for (const [index, result] of results.entries()) {
+-    const id = unique[index]!;
+-    if (result.status === 'fulfilled') content[id] = result.value;
+-    else
+-      errors[id] = result.reason instanceof Error ? result.reason.message : '结果预览读取失败。';
+   }
+-  return { content, errors };
+ }
+diff --git a/integrations/hermes-workbench/tests/artifact-previews.test.ts b/integrations/hermes-workbench/tests/artifact-previews.test.ts
+--- a/integrations/hermes-workbench/tests/artifact-previews.test.ts
++++ b/integrations/hermes-workbench/tests/artifact-previews.test.ts
+@@ -1,18 +1,99 @@
++import { afterEach, beforeEach, expect, it, vi } from 'vitest';
++import { ArtifactPreviewLoader, type PreviewSnapshot } from '../src/artifact-previews';
++
++beforeEach(() => vi.useFakeTimers());
++afterEach(() => vi.useRealTimers());
++
++function deferred() {
++  let resolve!: (value: string) => void;
++  const promise = new Promise<string>((yes) => { resolve = yes; });
++  return { promise, resolve };
++}
++const source = (id: string, sha256 = 'a'.repeat(64)) => ({ id, sha256 });
++function fixture(read: (id: string, signal: AbortSignal) => Promise<string>) {
++  let state: PreviewSnapshot = { content: {}, errors: {} };
++  const loader = new ArtifactPreviewLoader(read, (next) => { state = next; });
++  return { loader, state: () => state };
++}
++
++it('does not await a slow preview, deduplicates polls and keeps another result visible', async () => {
++  const slow = deferred();
++  const read = vi.fn(async (id: string) => id === 'slow' ? slow.promise : '协作结果');
++  const f = fixture(read);
++  expect(f.loader.synchronize('task-a', [source('slow'), source('result')])).toBeUndefined();
++  await vi.advanceTimersByTimeAsync(0);
++  f.loader.synchronize('task-a', [source('slow'), source('result')]);
++  expect(read).toHaveBeenCalledTimes(2);
++  expect(f.state().content).toEqual({ result: '协作结果' });
++  slow.resolve('稍后到达');
++  await vi.advanceTimersByTimeAsync(0);
++  expect(f.state().content.slow).toBe('稍后到达');
++  f.loader.dispose();
++});
+-import { expect, it, vi } from 'vitest';
+-import { loadArtifactPreviews } from '../src/artifact-previews';
+ 
++it('cancels the old task and ignores its late response even if the transport ignores abort', async () => {
++  const old = deferred();
++  const signals: AbortSignal[] = [];
++  const f = fixture(async (_id, signal) => {
++    signals.push(signal);
++    return signals.length === 1 ? old.promise : '新任务结果';
+-it('keeps other results visible when one preview fails and allows that preview to be retried', async () => {
+-  const read = vi.fn(async (id: string) => {
+-    if (id === 'missing') throw new Error('HTTP 404');
+-    return id === 'empty' ? '' : '协作结果';
+   });
++  f.loader.synchronize('task-a', [source('shared-id')]);
++  await vi.advanceTimersByTimeAsync(0);
++  f.loader.synchronize('task-b', [source('shared-id')]);
++  await vi.advanceTimersByTimeAsync(0);
++  expect(signals[0]!.aborted).toBe(true);
++  old.resolve('旧任务结果');
++  await vi.advanceTimersByTimeAsync(0);
++  expect(f.state().content).toEqual({ 'shared-id': '新任务结果' });
++  f.loader.dispose();
++});
++
++it('invalidates a previous content hash and never lets it replace the newer preview', async () => {
++  const old = deferred();
++  const f = fixture(vi.fn().mockReturnValueOnce(old.promise).mockResolvedValue('新版内容'));
++  f.loader.synchronize('task-a', [source('artifact')]);
++  await vi.advanceTimersByTimeAsync(0);
++  f.loader.synchronize('task-a', [source('artifact', 'b'.repeat(64))]);
++  await vi.advanceTimersByTimeAsync(0);
++  old.resolve('旧版内容');
++  await vi.advanceTimersByTimeAsync(0);
++  expect(f.state().content.artifact).toBe('新版内容');
++  f.loader.dispose();
++});
+-  const first = await loadArtifactPreviews(['missing', 'result', 'empty', 'result'], read);
+ 
++it('expires only its own preview, retries explicitly and ignores a late expired response', async () => {
++  const late = deferred();
++  const read = vi.fn().mockReturnValueOnce(late.promise).mockResolvedValue('重读成功');
++  const f = fixture(read);
++  f.loader.synchronize('task-a', [source('artifact')]);
++  await vi.advanceTimersByTimeAsync(15_000);
++  expect(f.state().errors.artifact).toContain('超时');
++  f.loader.synchronize('task-a', [source('artifact')]);
++  expect(read).toHaveBeenCalledTimes(1);
++  f.loader.retry('artifact');
++  await vi.advanceTimersByTimeAsync(0);
++  late.resolve('迟到内容');
++  await vi.advanceTimersByTimeAsync(0);
++  expect(f.state()).toEqual({ content: { artifact: '重读成功' }, errors: {} });
++  f.loader.dispose();
++});
+-  expect(first.content).toEqual({ result: '协作结果', empty: '' });
+-  expect(first.errors).toEqual({ missing: 'HTTP 404' });
+-  expect(read).toHaveBeenCalledTimes(3);
+ 
++it('keeps a per-item failure separate and discards callbacks after disposal', async () => {
++  const pending = deferred();
++  const changed = vi.fn();
++  const read = vi.fn(async (id: string) => {
++    if (id === 'missing') throw Error('HTTP 404');
++    if (id === 'pending') return pending.promise;
++    return '';
++  });
++  const loader = new ArtifactPreviewLoader(read, changed);
++  loader.synchronize('task-a', [source('missing'), source('empty'), source('pending')]);
++  await vi.advanceTimersByTimeAsync(0);
++  expect(changed).toHaveBeenLastCalledWith({ content: { empty: '' }, errors: { missing: 'HTTP 404' } });
++  loader.dispose();
++  changed.mockClear();
++  pending.resolve('不应显示');
++  await vi.advanceTimersByTimeAsync(15_000);
++  expect(changed).not.toHaveBeenCalled();
+-  const retried = await loadArtifactPreviews(['missing'], async () => '已恢复的结果');
+-  expect(retried.content).toEqual({ missing: '已恢复的结果' });
+-  expect(retried.errors).toEqual({});
+ });
+diff --git a/vitest.config.ts b/vitest.config.ts
+--- a/vitest.config.ts
++++ b/vitest.config.ts
+@@ -5,7 +5,7 @@
+     include: [
+       'apps/**/*.test.ts',
+       'packages/**/*.test.ts',
++      'integrations/hermes-workbench/tests/*.test.{ts,mjs}',
+-      'integrations/hermes-workbench/tests/*.test.ts',
+     ],
+     environment: 'node',
+     restoreMocks: true,
+diff --git a/integrations/hermes-workbench/README.md b/integrations/hermes-workbench/README.md
+--- a/integrations/hermes-workbench/README.md
++++ b/integrations/hermes-workbench/README.md
+@@ -24,13 +24,17 @@
+ 
+ 停止时再次打开根目录 `start-hermes.cmd`，选择 **2 停止工作台**，或运行 `start-hermes.cmd stop`。停止入口发送正常退出请求，并等待记录的进程退出；超时会明确提示尚未确认，此时不要覆盖、备份或恢复数据。停止可能中断正在执行的任务，请先查看任务状态。关闭浏览器标签不会停止服务。原 `powershell -File integrations/hermes-workbench/stop.ps1 -Real` 入口仍可使用。
+ 
++启动或停止失败会显示实际日志绝对路径，真实模式错误日志位于 `.run/hermes-integration/real-20261023/server-error.log`。启动器只复用 ready 且健康的实例；starting／stopping 阶段不重复启动。服务入口在打开 SQLite、创建 runtime 前复用 `acquireInstanceLock`，HTTP、runtime、数据库完整关闭后才释放；清理失败保留锁。仍存活或无法确认退出的旧记录会阻止接管。源码修改需要统一构建后在维护窗口重新启动，本批不影响当前旧服务。
++
++新实例在数据库打开前发布含实例 UUID 的 starting 记录。停止脚本向该代次的 `stop-UUID` 写入同一 UUID，ready 发布前后均检查请求，不再删除新停止请求。旧无代次标记在启动前识别并保留，新实例不接受它；旧记录仍可用旧协议并等待实际退出，不声称旧服务获得新协议保障。UUID 是代次标识，不是身份认证或系统隔离。
++
++启动前置文件包括已编译的 `release-config.js`、`http-shutdown.js` 及既有 Windows 锁删除组件 `apps/server/dist/windows-lock-delete.cs`。后者沿用原发行器的复制规则，由统一构建准备；本批未复制、生成或运行 dist 文件。
+-启动或停止失败会显示实际日志绝对路径，真实模式的错误日志位于 `.run/hermes-integration/real-20261023/server-error.log`。启动器复用已响应的实例；记录的进程仍在但无响应时，不重复启动。启动器不自动更新已运行的服务，源码修改需要重新构建并在维护窗口停止、启动后才能进入运行版本。
+ 
+ 当前静态改动还修正了失败重试：再次发送前读取原草稿及版本；目标有修改时先通过现有草稿更新 API 保存，且每次按当前选择确认负责人。已经执行的目标不会被改写；若旧目标其实已启动而当前文字不同，明确保留当前草稿并提示它尚未发送。审批卡片只显示当前执行轮及其子任务的待审批请求，并标出来源任务，不混入同项目其他会话的请求。对应回归用例已写入，尚未运行，不计入下文历史通过数量。
+ 
+ 未结束的任务在等待处理或可恢复状态下也保留“停止任务”，取消仍调用既有服务端接口。完成图标仅用于已完成状态，失败与等待状态按实际状态显示。
+ 
++结果预览由独立加载器管理，不等待预览结束才继续快照轮询。失败或超时按产物显示，可单独重新读取，保留下载入口；定时状态刷新不反复请求失败项。切换会话、产物 SHA-256 改变或卸载会取消过期请求；即使传输未响应取消，旧请求身份也不能覆盖当前预览。本批源码与回归用例尚未运行，不能计为通过。
+-结果预览的读取错误按产物单独显示，不再中断其他结果的读取或误报为引擎断连；“结果”中可重新读取失败的预览，也保留原下载入口。失败预览不会随每次状态刷新反复请求，点击重新读取后才重试。此改动及回归用例同样尚未运行。
+ 
+ 历史预置定义缺失时，工作台仍加载数据库中已有的成员；首次空库只导入可读取的预置定义，也可在界面自行注册。已删除的成员不会在重启后重新创建。认证配置仍按已确认的完整启动入口匹配，无法匹配时使用成员自身默认登录环境并在界面检查状态。
+ 
+diff --git a/docs/guides/hermes-local-delivery.md b/docs/guides/hermes-local-delivery.md
+--- a/docs/guides/hermes-local-delivery.md
++++ b/docs/guides/hermes-local-delivery.md
+@@ -1,6 +1,6 @@
+ # Hermes 本地交付：开发入口与候选边界
+ 
++状态：三项独审反馈的源码修复／静态自审，未生成候选或运行验证。基线为 `84fe6e4c887a2a3f6cb62de2cc58a58887d74f17` 加工作树改动；Git HEAD 不能复现未提交源码。本批准确输入与 SHA-256 见 `../reviews/hermes-r2-inputs-20261023.json`，交接理由见 `../reviews/hermes-review-r2-20261023.md`。先前 332 项清单 `hermes-delivery-inputs.json` 保持原样，不覆盖旧输入记录。
+-状态：源码实施／静态审核，尚未生成本次候选或执行统一运行验收。源码基线为 `84fe6e4c887a2a3f6cb62de2cc58a58887d74f17` 加当前未提交改动；只记录 Git HEAD 不能复现工作树。关键输入的 SHA-256 见同目录 `hermes-delivery-inputs.json`，完整交付还需冻结所选源文件、锁文件、迁移和构建产物。
+ 
+ ## 用户入口
+ 
+@@ -10,11 +10,11 @@
+ 
+ 失败后修改目标再发送会先核对原草稿及服务端版本，保存当前文字并按本次选择确认负责人；已执行的目标保留历史。审批卡片按当前轮任务树显示并标明来源任务，服务端审批资格仍是执行依据。未结束的任务在等待处理或可恢复状态下保留停止入口，完成图标仅用于已完成状态。上述源码改动及其回归用例均未运行，需纳入统一验收，不能引用历史通过数量作为新结论。
+ 
++预览请求独立于快照轮询，按会话、产物 ID、SHA-256 和请求身份管理在途／超时／取消；旧请求不能覆盖新内容。单项失败保留其他结果和重读／下载入口，定时状态刷新不重试失败文件。源码及定向回归用例尚未运行。
+-单个结果预览读取失败单独显示，保留其他预览及“重新读取”／下载入口；不再因此把协作引擎标为断连，也不随定时状态刷新反复读取失败文件。对应源码与回归用例待统一运行验证。
+ 
+ 启动器依赖已经准备好的 Web 与服务端构建。Node 查找顺序为仓库下 `runtime/node.exe`、当前开发工作树内原有的 R6.1 随包运行时、系统已有 `node.exe`。不再依赖另一个 C5 工作树的绝对路径；这些回退仅方便当前开发实例，不能据此宣称已完成便携发行。启动器不安装、不编译、不自动替换运行版本。
+ 
++重复启动校验模式、进程、代次、ready 阶段与本机健康响应；starting／stopping 阶段不接管。服务入口先通过原 `acquireInstanceLock` 锁住实际 data 目录，才打开 SQLite／创建 runtime；HTTP 完整关闭、runtime／数据库清理后才释放，关闭失败保留锁。旧无锁实例仍存活或无法确认退出时拒绝打开数据库。停止使用代次专属 `stop-UUID`；旧无代次标记在 ready 前识别并保留，新实例忽略它。UUID／PID／时间用于避免误操作，不构成认证或 OS 隔离；实际数据互斥由实例锁承担。无记录或停止超时均报告未确认。
+-重复启动时校验模式、记录的进程及本机健康响应后打开页面；记录进程仍在但不响应时保留现状并给出日志。停止只写入当前模式实例目录的停止标记，等待记录的进程退出，不强制结束进程。模式／PID／时间检查用于避免误操作，不构成认证、OS 隔离或跨进程互斥保证。无记录或停止超时均报告未确认。
+ 
+ 真实模式日志：`.run/hermes-integration/real-20261023/server.log` 和 `server-error.log`。模拟模式使用 `.run/hermes-integration/` 下同名日志，两者数据分开。失败提示输出实际绝对路径。缺构建时由维护人员准备，不要求普通用户排查包管理配置。
+ 
+@@ -36,9 +36,9 @@
+ | ② 输入、失败与恢复 | Hermes `draft-submission.ts`、`artifact-previews.ts`、`main.tsx`；`integrations/hermes-workbench/tests` | 已写入草稿重试、预览错误隔离与重读、等待状态取消入口；回归用例已写入，未编译、未执行，恢复仍以既有服务端资格判断为准 |
+ | ③ 单入口启停与日志 | 根 `start-hermes.cmd` 与既有 `start.ps1`／`stop.ps1` | 源码已形成启动／停止菜单、重复实例识别、明确日志、等待退出；脚本行为及编码待独审和统一运行验证 |
+ | ④ 数据布局、锁与恢复 | 现有 `release-config.ts`、`release-maintenance.ts` 与下文兼容边界 | 已核实标准链支持范围与 Hermes 不兼容之处；尚未确定正式布局／旧实例交接方案，不修改实际数据库或声称恢复可用 |
++| ⑤ 候选输入与统一验收 | `hermes-r2-inputs-20261023.json`、`docs/reviews` 的本批增量补丁、本文件验收清单 | 已提供源码哈希与交接入口；下一步由协调方交原独审检查本批改动，并就第④项作兼容决策。冻结源码归档、全新候选、构建输出哈希和运行验收均未完成 |
+-| ⑤ 候选输入与统一验收 | `hermes-delivery-inputs.json`、`docs/reviews` 的本批增量补丁、本文件验收清单 | 已提供源码哈希与交接入口；下一步由协调方交原独审检查本批改动，并就第④项作兼容决策。冻结源码归档、全新候选、构建输出哈希和运行验收均未完成 |
+ 
++原独审任务 `01a161ba-e3d9-76a3-a45f-8864444ee028` 最新完成回合 `01a166b8-6230-7185-92d0-4788dffb434a` 指出三项准入阻断：入口缺少实际数据锁、发布记录后删除 stop 的竞态、预览阻塞快照轮询。本批仅修这三项，源码和定向回归用例已形成，待原独审复核，不能写成已签收或动态通过。此前已闭合 runtime 的独审结论继续保留。
+-原独审任务为 `01a161ba-e3d9-76a3-a45f-8864444ee028`，本次只读查询中最新完成回合仍为 `01a16664-d3d0-70b0-8bdc-f7bf4f3c9a04`。该回合只签收此前核心修复；启动器与本批界面代码尚无独立签收。任务处于 idle，不是正在等待完成的审核作业，不能把反复读取旧结论算作推进。
+ 
+ ## 候选的准确输入
+ 
+@@ -50,7 +50,7 @@
+ | 数据与迁移 | `packages/storage/drizzle` 的 SQL、元数据和迁移入口；保留既有迁移顺序，不复制运行实例数据库 |
+ | 依赖 | 根 `package.json`、`pnpm-lock.yaml`、`pnpm-workspace.yaml`、各工作区包声明及对应生产依赖；原生模块须匹配目标 Node ABI |
+ | Hermes 前端 | 固定上游提交 `06e15d0e5d3c27f1fd37f09579f26f91c020036e`、上游锁文件、现有 `build.mjs` 补丁逻辑与 `integrations/hermes-workbench/src`；保留上游 LICENSE 与构建来源记录 |
++| Hermes 服务适配 | `serve-real.mjs`、`prompt-budget.mjs`、`ui-build.mjs`、`permission-diagnostics.mjs`、`instance-lifecycle.mjs` 及其实际本地依赖；不能只复制首页 assets |
+-| Hermes 服务适配 | `serve-real.mjs`、`prompt-budget.mjs`、`ui-build.mjs`、`permission-diagnostics.mjs` 及其实际本地依赖；不能只复制首页 assets |
+ | 启停与维护 | 根 `start-hermes.cmd`、本目录既有启动／停止脚本；标准发行器及 `release-main.ts`、`release-config.ts`、`release-maintenance.ts`、锁删除组件和 storage 备份实现。选择正式布局前不混装两种入口 |
+ | 运行时和通知 | 已有官方 Windows x64 Node 22.22.2、来源／签名／SHA-256、Node LICENSE、本项目 LICENSE、前端依赖清单及第三方许可。沿用现有发行器的核对规则 |
+ | 交付清单 | 源文件哈希、锁文件哈希、实际输出哈希、构建版本、入口／端口／数据路径、可兼容迁移及统一验收记录。前后端必须属于同一冻结来源 |
+@@ -61,7 +61,7 @@
+ 
+ 标准发行维护链已经实现停机私有备份、清单校验及恢复到新目录，不需要重复实现。它依赖同一实例锁，读取 `dataDir/control-plane.sqlite`，恢复后也写 `control-plane.sqlite`。标准包使用自身 `RUN.txt` 中的 `backup`／`restore` 命令；保留原包和原数据，禁止旧版本直接打开新数据库，也不承诺任意跨版本兼容。
+ 
++Hermes 数据仍为 `.run/hermes-integration/real-20261023/data/state.sqlite`。本批新入口源码已复用标准数据锁机制，但当前旧服务没有更新；且接入锁不改变标准维护命令固定读取／恢复 `control-plane.sqlite` 的事实。直接把标准命令指向 Hermes 目录仍不兼容，不能据此宣称备份覆盖。旧实例交接及正式布局仍待决定，本批不迁移、改名或复制实际数据库。
+-Hermes 当前实例使用 `.run/hermes-integration/real-20261023/data/state.sqlite`，且尚未参与标准发行的实例锁。直接把标准维护命令指向这个 data 目录既不能选中正确数据库，也不能确认排他访问。不能靠改名数据库、仅复制 SQLite 主文件或忽略 WAL 解决，更不能在旧实例仍可能运行时宣称安全备份。
+ 
+ 需要先审核一个正式布局决定：将 Hermes 服务受控接入标准发行的启动／锁／数据布局并设计旧实例停机迁移，或对现有维护接口明确增加 Hermes 布局与旧实例交接。两种路线都复用现有备份核心；当前尚未选择或实施，不增加第二套备份格式。正式升级必须在新目录准备完整新版本，确认旧实例退出和私有备份成功后才切换，失败保留原版本及数据；新版本迁移后的数据库不能直接交给旧版。
+ 
+@@ -71,7 +71,7 @@
+ 
+ 1. 从冻结源码统一类型检查、构建、必要测试与打包；核对全部源／输出哈希。独立审核本次启动脚本，特别是 Windows PowerShell 5.1 编码和 CMD 中文／空格路径／退出码。
+ 2. 准备新私有候选目录，核对 Node、原生 SQLite、生产依赖、许可、前后端版本和所选正式布局；不覆盖封存包或正在运行的实例。
++3. 用唯一入口核对首次启动、重复打开、前置文件缺失提示、正常停止；实际数据锁必须先于 SQLite／runtime，并持有至完整关闭。核对 starting／ready 交界停止请求不丢失、旧代次不影响新实例、关闭失败保留锁。确认退出后重启并检查历史保留、无自动任务重放。统一构建需将既有 `windows-lock-delete.cs` 放在对应 JS 模块同目录；本批不准备 dist。
+-3. 用唯一入口首次启动、重复打开、缺构建／运行时失败提示和正常停止；确认进程退出后重新启动，检查历史保留、无自动任务重放。只验收必要主线，不扩展边界矩阵。
+ 4. 浏览器真实输入中文任务并发送；负责人发现／委派另一成员、协作产物落库、负责人恢复并汇总；执行中补充、完成后在同一会话连续追问；刷新后草稿与历史保留。核对失败后修改目标和负责人再重试时执行的是当前目标；同项目两个会话的审批来源不混淆；单个预览失败不遮挡其他结果，能单独重读。核对页面版本，不能只读旧结果。
+ 5. 在另行授权的真实模型额度内完成双成员路径；检查权限卡片与失败／取消／恢复提示，未知或危险请求不自动批准。静态阶段模型预算冻结，旧三轮验收账本不得改写。
+ 6. 正式布局确定后，统一验证停机备份、恢复到新私有目录、完整性校验、恢复后不重放、升级失败保留原版本与数据。不能把启动器的退出提示当成备份链已达标。
+diff --git a/integrations/hermes-workbench/instance-lifecycle.mjs b/integrations/hermes-workbench/instance-lifecycle.mjs
+new file mode 100644
+--- /dev/null
++++ b/integrations/hermes-workbench/instance-lifecycle.mjs
+@@ -0,0 +1,135 @@
++import fs from 'node:fs';
++import path from 'node:path';
++import { randomUUID } from 'node:crypto';
++
++const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
++const phases = new Set(['starting', 'ready', 'stopping']);
++const stopped = Symbol('instance-stop-requested');
++
++function processExists(pid) {
++  try {
++    process.kill(pid, 0); // Existence check only; never sends a termination signal.
++    return true;
++  } catch (error) {
++    if (error.code === 'ESRCH') return false;
++    throw new Error('Cannot establish whether the recorded instance exited; refusing takeover.');
++  }
++}
++
++/** Shared entry lifecycle; callers supply the existing data-lock implementation.
++ * Resource cleanup is registered immediately after construction, in acquisition order.
++ */
++export async function runWorkbenchInstance(
++  { run, data, url, acquireLock, previousProcessExists = processExists },
++  boot,
++) {
++  const port = Number(/^http:\/\/127\.0\.0\.1:(\d+)$/.exec(url)?.[1]);
++  if (!path.isAbsolute(run) || !path.isAbsolute(data) || !Number.isInteger(port) ||
++      port < 1 || port > 65535)
++    throw new Error('Invalid local instance paths or URL.');
++  const release = acquireLock(data);
++  const cleanup = [];
++  const info = path.join(run, 'server.json');
++  let metadata;
++  let timer;
++  let stopping = false;
++  let finish;
++  const stopRequested = new Promise((resolve) => { finish = resolve; });
++  const requestStop = () => { stopping = true; finish(); };
++  const publish = (value) => {
++    const temporary = path.join(run, `server-${value.instanceId}-${randomUUID()}.tmp`);
++    fs.writeFileSync(temporary, JSON.stringify(value, null, 2), { flag: 'wx' });
++    fs.renameSync(temporary, info);
++  };
++  const checkStop = () => {
++    if (!metadata || stopping) return stopping;
++    try {
++      const value = fs.readFileSync(path.join(run, `stop-${metadata.instanceId}`), 'utf8');
++      if (value.trim() === metadata.instanceId) requestStop();
++    } catch (error) {
++      if (error.code !== 'ENOENT') {
++        console.error('Cannot read this instance stop request; stopping conservatively.');
++        requestStop();
++      }
++    }
++    return stopping;
++  };
++  const assertRunning = () => { if (checkStop()) throw stopped; };
++  try {
++    // New peers are excluded by the data lock. Older unlocked entry points are
++    // not peers: refuse their still-live (or uncertain) process before opening SQLite.
++    if (fs.existsSync(info)) {
++      const known = JSON.parse(fs.readFileSync(info, 'utf8'));
++      if (!Number.isSafeInteger(known.pid) || known.pid <= 0 ||
++          typeof known.startedAt !== 'string' || !Number.isFinite(Date.parse(known.startedAt)) ||
++          typeof known.url !== 'string' || !/^http:\/\/127\.0\.0\.1:\d+$/.test(known.url) ||
++          (known.instanceId !== undefined && (!uuid.test(known.instanceId) || !phases.has(known.phase))))
++        throw new Error('Invalid prior instance metadata; retained without takeover.');
++      if (previousProcessExists(known.pid))
++        throw new Error('Recorded instance may still be running. Confirm its exit before starting this version.');
++    }
++    if (fs.existsSync(path.join(run, 'stop')))
++      console.warn('Legacy unscoped stop marker retained; this generation only accepts its own stop token.');
++    metadata = {
++      url, pid: process.pid, instanceId: randomUUID(),
++      startedAt: new Date().toISOString(), phase: 'starting',
++    };
++    publish(metadata); // Starting identity exists before any database open or await in boot.
++    process.on('SIGINT', requestStop);
++    process.on('SIGTERM', requestStop);
++    timer = setInterval(checkStop, 300);
++    await boot({
++      assertRunning,
++      get stopping() { return checkStop(); },
++      defer(close) {
++        if (typeof close !== 'function') throw new Error('Invalid resource cleanup.');
++        cleanup.push(close);
++      },
++      acquireResource(open, close) {
++        let resource;
++        let acquired = false;
++        let failure;
++        cleanup.push(async () => {
++          if (!acquired)
++            throw new Error('Resource initialization incomplete; data lock retained.', { cause: failure });
++          await close(resource);
++        });
++        try {
++          resource = open();
++          acquired = true;
++          return resource;
++        } catch (error) {
++          failure = error;
++          throw error;
++        }
++      },
++      ready(extra = {}) {
++        assertRunning();
++        metadata = { ...extra, ...metadata, phase: 'ready' };
++        publish(metadata);
++        // A request arriving during rename remains in its generation-specific file.
++        assertRunning();
++      },
++    });
++    await stopRequested;
++  } catch (error) {
++    if (error !== stopped) throw error;
++  } finally {
++    clearInterval(timer);
++    process.off('SIGINT', requestStop);
++    process.off('SIGTERM', requestStop);
++    if (metadata) {
++      try { publish({ ...metadata, phase: 'stopping' }); }
++      catch (error) { console.error('Stopping metadata was not saved:', error.message); }
++    }
++    try {
++      // HTTP drain precedes runtime/storage cleanup. A failed drain/cleanup must
++      // retain ownership, never close SQLite beneath a still-running handler.
++      for (const close of cleanup.reverse()) await close();
++    } catch (error) {
++      console.error('Instance cleanup incomplete; data lock retained.');
++      throw error;
++    }
++    release();
++  }
++}
+diff --git a/integrations/hermes-workbench/tests/instance-lifecycle.test.mjs b/integrations/hermes-workbench/tests/instance-lifecycle.test.mjs
+new file mode 100644
+--- /dev/null
++++ b/integrations/hermes-workbench/tests/instance-lifecycle.test.mjs
+@@ -0,0 +1,144 @@
++import fs from 'node:fs';
++import path from 'node:path';
++import { tmpdir } from 'node:os';
++import { afterEach, beforeEach, expect, it, vi } from 'vitest';
++import { runWorkbenchInstance } from '../instance-lifecycle.mjs';
++
++const roots = [];
++beforeEach(() => vi.useFakeTimers());
++afterEach(() => {
++  vi.useRealTimers();
++  vi.restoreAllMocks();
++  for (const root of roots.splice(0)) {
++    if (!root.startsWith(path.resolve(tmpdir()) + path.sep)) throw Error('Unsafe fixture cleanup.');
++    fs.rmSync(root, { recursive: true, force: true });
++  }
++});
++function fixture() {
++  const run = fs.mkdtempSync(path.join(tmpdir(), 'hermes-lifecycle-'));
++  roots.push(run);
++  let locked = false;
++  const release = vi.fn(() => { locked = false; });
++  const acquireLock = vi.fn(() => {
++    if (locked) throw Error('Data directory is locked');
++    locked = true;
++    return release;
++  });
++  const options = {
++    run, data: path.join(run, 'data'), url: 'http://127.0.0.1:8047', acquireLock,
++    previousProcessExists: () => false,
++  };
++  const info = () => JSON.parse(fs.readFileSync(path.join(run, 'server.json'), 'utf8'));
++  const stop = (id = info().instanceId) => fs.writeFileSync(path.join(run, `stop-${id}`), id);
++  return { options, info, stop, release, locked: () => locked };
++}
++function deferred() {
++  let resolve;
++  const promise = new Promise((yes) => { resolve = yes; });
++  return { promise, resolve };
++}
++
++it('excludes a second boot before storage setup and retains ownership through complete HTTP drain', async () => {
++  const f = fixture(), entered = deferred(), drain = deferred(), order = [];
++  const running = runWorkbenchInstance(f.options, async (host) => {
++    expect(f.locked()).toBe(true);
++    host.defer(() => { order.push('storage'); });
++    host.defer(() => { order.push('runtime'); });
++    host.defer(async () => { order.push('http'); await drain.promise; });
++    host.ready();
++    entered.resolve();
++  });
++  await entered.promise;
++  const secondBoot = vi.fn();
++  await expect(runWorkbenchInstance(f.options, secondBoot)).rejects.toThrow('locked');
++  expect(secondBoot).not.toHaveBeenCalled();
++  f.stop();
++  await vi.advanceTimersByTimeAsync(300);
++  expect(order).toEqual(['http']);
++  expect(f.locked()).toBe(true);
++  drain.resolve();
++  await running;
++  expect(order).toEqual(['http', 'runtime', 'storage']);
++  expect(f.release).toHaveBeenCalledTimes(1);
++});
++
++it('retains ownership and storage if HTTP cleanup cannot be confirmed', async () => {
++  const f = fixture(), storageClose = vi.fn();
++  const running = runWorkbenchInstance(f.options, async (host) => {
++    host.defer(storageClose);
++    host.defer(async () => { throw Error('HTTP drain incomplete'); });
++    f.stop();
++    host.ready();
++  });
++  await expect(running).rejects.toThrow('HTTP drain incomplete');
++  expect(storageClose).not.toHaveBeenCalled();
++  expect(f.release).not.toHaveBeenCalled();
++});
++
++it('retains ownership if a resource constructor fails before returning its close handle', async () => {
++  const f = fixture(), close = vi.fn();
++  const running = runWorkbenchInstance(f.options, async (host) => {
++    host.acquireResource(() => { throw Error('migration failed'); }, close);
++  });
++  await expect(running).rejects.toThrow('Resource initialization incomplete');
++  expect(close).not.toHaveBeenCalled();
++  expect(f.release).not.toHaveBeenCalled();
++});
++
++it('honors a stop submitted to the starting generation without publishing ready', async () => {
++  const f = fixture();
++  let afterReady = false;
++  await runWorkbenchInstance(f.options, async (host) => {
++    expect(f.info().phase).toBe('starting');
++    f.stop();
++    host.ready();
++    afterReady = true;
++  });
++  expect(afterReady).toBe(false);
++  expect(f.info().phase).toBe('stopping');
++  expect(fs.existsSync(path.join(f.options.run, `stop-${f.info().instanceId}`))).toBe(true);
++  expect(f.release).toHaveBeenCalledTimes(1);
++});
++
++it('retains a stop arriving during ready publication instead of deleting it', async () => {
++  const f = fixture(), rename = fs.renameSync;
++  vi.spyOn(fs, 'renameSync').mockImplementation((from, to) => {
++    rename(from, to);
++    if (f.info().phase === 'ready') f.stop();
++  });
++  await runWorkbenchInstance(f.options, async (host) => host.ready());
++  expect(f.info().phase).toBe('stopping');
++  expect(fs.existsSync(path.join(f.options.run, `stop-${f.info().instanceId}`))).toBe(true);
++  expect(f.release).toHaveBeenCalledTimes(1);
++});
++
++it('ignores retained legacy and prior-generation stop markers without deleting them', async () => {
++  const f = fixture(), entered = deferred();
++  const previous = '11111111-1111-4111-8111-111111111111';
++  fs.writeFileSync(path.join(f.options.run, 'stop'), 'stop');
++  f.stop(previous);
++  const running = runWorkbenchInstance(f.options, async (host) => {
++    host.ready();
++    entered.resolve();
++  });
++  await entered.promise;
++  await vi.advanceTimersByTimeAsync(300);
++  expect(f.info().phase).toBe('ready');
++  expect(f.locked()).toBe(true);
++  f.stop();
++  await vi.advanceTimersByTimeAsync(300);
++  await running;
++  expect(fs.readFileSync(path.join(f.options.run, 'stop'), 'utf8')).toBe('stop');
++  expect(fs.existsSync(path.join(f.options.run, `stop-${previous}`))).toBe(true);
++});
++
++it('refuses a still-live legacy record before entering database setup', async () => {
++  const f = fixture(), boot = vi.fn();
++  fs.writeFileSync(path.join(f.options.run, 'server.json'), JSON.stringify({
++    pid: 12345, url: f.options.url, startedAt: new Date().toISOString(),
++  }));
++  await expect(runWorkbenchInstance({ ...f.options, previousProcessExists: () => true }, boot))
++    .rejects.toThrow('may still be running');
++  expect(boot).not.toHaveBeenCalled();
++  expect(f.release).toHaveBeenCalledTimes(1);
++});
+diff --git a/docs/reviews/hermes-review-r2-20261023.md b/docs/reviews/hermes-review-r2-20261023.md
+new file mode 100644
+--- /dev/null
++++ b/docs/reviews/hermes-review-r2-20261023.md
+@@ -0,0 +1,45 @@
++# Hermes 三项准入修复：R2 静审交接
++
++基线：原独审 `01a161ba-e3d9-76a3-a45f-8864444ee028` 回合 `01a166b8-6230-7185-92d0-4788dffb434a`；先前 332 项输入清单保持原样。本批只修该回合的 1 项 P1、2 项 P2。未编译、typecheck、测试、构建、运行、探针或操作既有服务，未调用模型／审批，也未迁移数据或修改已闭合 runtime。
++
++精确源码差异见 `hermes-review-r2-20261023.patch`，文件 SHA-256 见 `hermes-r2-inputs-20261023.json`。所有判断为作者静态自审，待原独审复核，不是动态通过。
++
++## P1：打开数据库前持有实际数据锁
++
++真实与模拟入口均把数据库打开、迁移和 runtime 创建放入 `runWorkbenchInstance` 的 boot 回调。共享入口先调用既有 `acquireInstanceLock(data)`，成功后才可进入 boot；同目录的新进程在打开 SQLite 前被锁排除，端口检查不承担数据互斥。仍存活或无法确认退出的旧无锁记录会阻止进入 boot，不接管旧服务。
++
++资源在构造前登记其清理归属，成功后按逆序关闭：HTTP 完整 drain → runtime／成员检查结束 → SQLite close → release。真实入口复用同一幂等关闭 Promise，避免 Fastify preClose 与清理栈双重停止。任一关闭失败不继续关闭其下的数据库，也不释放数据锁。既有锁删除的 token／文件身份检查保持原样，没有备用路径删除或系统权限变更。
++
++资源构造本身使用先登记归属、再调用构造器的接口。如果 SQLite 迁移或 runtime 初始化在返回关闭句柄前抛错，无法证明内部句柄已清理时同样保留数据锁，错误保留原因为 cause；不提前释放互斥，也不修改通用存储实现。
++
++启动检查增加原锁机制与 HTTP 关闭模块、`windows-lock-delete.cs` 依赖。原发行器已有该 C# 复制规则；统一构建须准备与 JS 同目录的原组件，本批没有准备 dist。缺文件时给出既有缺构建提示，不自动生成或安装。
++
++## P2：停止请求绑定实例代次
++
++在数据锁内核对旧记录，然后原子发布含 `instanceId`、PID、startedAt、starting 阶段的记录，再进入 boot。停止脚本校验 UUID、阶段和进程，写 `stop-UUID` 且内容为同一 UUID；延迟写入旧代次文件不能停止新实例。
++
++旧无代次 stop 在发布 starting／ready 前识别并保留，新实例忽略它；不删除任何新停止请求。ready 发布前检查停止请求，发布后再次检查，之后持续监听同一代次文件。请求落在任何一侧都不会被“清理旧标记”吞掉。停止期间发布 stopping，待资源完整关闭后才退出。旧版本记录的停止协议仅保留兼容入口并确认进程退出，不声称旧服务具备新代次保障。
++
++## P2：预览不等待快照轮询
++
++`refresh` 只触发同步的预览状态登记，不 await 预览请求；其 pending 不再受预览 15 秒期限控制。快照呈现新内容前使旧哈希请求失效；切换会话时同步取消旧 scope，卸载取消所有请求且不再发布回调。
++
++每个产物单独登记在途 controller、期限及请求对象身份；同一会话／ID／SHA 不重复发起。超时只失败本项，失败只在明确重读时重试。scope／SHA 改变或重读时替换请求身份，即使底层忽略 AbortSignal，迟到回调也不能覆盖当前内容。读取改用快照已存在的 sha256 字段并保留 Zod 验证，无 HTTP 或数据库模型变更。
++
++## 待统一执行的定向场景
++
++以下仅编写源码，没有执行：
++
++1. 同数据目录并发启动：第二入口不能进入 SQLite／runtime 初始化；持锁至 HTTP drain、runtime、数据库均关闭，失败保留锁。
++2. starting 中停止、ready 原子发布间隙停止：请求保留且正常进入清理；旧 stop 和旧 UUID 不影响新实例。
++3. 旧无锁记录仍存活：新入口拒绝进入数据库初始化。
++4. 慢预览期间快照／审批继续刷新，其他预览照常完成，不重复发起在途项。
++5. 切换会话、SHA 改变、超时后重读、卸载：忽略迟到回调，保持单项错误隔离。
++
++对应回归源码为 `tests/instance-lifecycle.test.mjs`、`tests/artifact-previews.test.ts`。既有三轮验收账本及其他测试记录不修改，不拿旧通过记录替代本批验证。
++
++## 范围与下一步
++
++数据仍使用原 `state.sqlite`；实际 data 目录新增互斥不等于接入标准备份格式。标准维护链仍固定 `control-plane.sqlite`，Hermes 正式布局和旧实例交接仍待独立决定。本次没有实现转换，也不因此阻塞三项代码修复。
++
++下一项由协调方将本批精确 diff／hash 交原独审复核；静态闭合后再安排统一构建与运行验证。本批不触碰封存 C6、旧包或 8031／8033／8035／8047 服务。原生 goal 正文保留、不标 complete；当前工具只能更新完成／阻塞／暂停状态，不能把 blocked 原地改 active，已如实报告该能力限制。

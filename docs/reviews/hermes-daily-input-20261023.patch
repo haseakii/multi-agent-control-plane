@@ -1,0 +1,481 @@
+diff --git a/integrations/hermes-workbench/src/adapter.ts b/integrations/hermes-workbench/src/adapter.ts
+--- a/integrations/hermes-workbench/src/adapter.ts
++++ b/integrations/hermes-workbench/src/adapter.ts
+@@ -3,6 +3,7 @@
+ import type { ChatMessage } from '@/components/chat/chat-types';
+ import type { SubagentProgress } from '@/stores/subagents';
+ import type { WorkspaceConfirmation } from './workspace-api';
++import { submitDraft, type DraftSubmission } from './draft-submission';
+ 
+ const Task = z.object({
+   id: z.string(),
+@@ -289,14 +290,9 @@
+   return snapshot.agents.find((a) => a.definition.id === id)?.definition.name;
+ }
+ 
++// Reuse and reconcile the durable draft on retry. The engine fixes the execution
++// target at start and rejects starting the same durable draft twice.
++export type Submission = DraftSubmission;
+-// One project per new work item keeps the selected leader immutable for that run.
+-// Reuse a partially created draft on retry; starting the same durable draft twice
+-// is rejected by the engine instead of creating a second execution.
+-export interface Submission {
+-  projectId: string;
+-  taskId?: string;
+-  bossAssigned?: boolean;
+-}
+ export async function startTask(
+   objective: string,
+   bossId: string,
+@@ -304,33 +300,41 @@
+   workspaceConfirmation?: WorkspaceConfirmation,
+ ): Promise<TaskData> {
+   const goal = z.string().trim().min(1).max(100000).parse(objective);
++  const Record = z.object({
++    task: Task,
++    version: z.string().regex(/^[a-f0-9]{64}$/),
++    canEditObjective: z.boolean(),
++    reason: z.string(),
++  });
++  return submitDraft(goal, submission, {
++    create: (projectId, objective) =>
++      postJSON(
++        `/api/projects/${encodeURIComponent(projectId)}/tasks`,
++        { title: objective.slice(0, 70), objective },
++        Task,
++      ),
++    read: (taskId) =>
++      fetchJSON(`/api/tasks/${encodeURIComponent(taskId)}/record`, undefined, Record),
++    update: (taskId, objective, version) =>
++      fetchJSON(
++        `/api/tasks/${encodeURIComponent(taskId)}`,
++        {
++          method: 'PATCH',
++          body: JSON.stringify({ title: objective.slice(0, 70), objective, version }),
++        },
++        Record,
++      ),
++    selectBoss: (projectId) =>
++      putJSON(`/api/projects/${encodeURIComponent(projectId)}/boss`, { agentId: bossId }, z.unknown()),
++    start: async (taskId, version) => {
++      const result = await postJSON(
++        `/api/tasks/${encodeURIComponent(taskId)}/start`,
++        { version, bossAgentId: bossId, workspaceConfirmation },
++        z.object({ task: Task }),
++      );
++      return result.task;
++    },
++  });
+-  if (!submission.taskId) {
+-    const draft = await postJSON(
+-      `/api/projects/${encodeURIComponent(submission.projectId)}/tasks`,
+-      { title: goal.slice(0, 70), objective: goal },
+-      Task,
+-    );
+-    submission.taskId = draft.id;
+-  }
+-  if (!submission.bossAssigned) {
+-    await putJSON(
+-      `/api/projects/${encodeURIComponent(submission.projectId)}/boss`,
+-      { agentId: bossId },
+-      z.unknown(),
+-    );
+-    submission.bossAssigned = true;
+-  }
+-  const record = await fetchJSON(
+-    `/api/tasks/${encodeURIComponent(submission.taskId)}/record`,
+-    undefined,
+-    z.object({ version: z.string() }),
+-  );
+-  const result = await postJSON(
+-    `/api/tasks/${encodeURIComponent(submission.taskId)}/start`,
+-    { version: record.version, bossAgentId: bossId, workspaceConfirmation },
+-    z.object({ task: Task }),
+-  );
+-  return result.task;
+ }
+ export async function createWorkItem(objective: string, projectId: string) {
+   return postJSON(
+diff --git a/integrations/hermes-workbench/src/main.tsx b/integrations/hermes-workbench/src/main.tsx
+--- a/integrations/hermes-workbench/src/main.tsx
++++ b/integrations/hermes-workbench/src/main.tsx
+@@ -58,6 +58,7 @@
+ import { ExecutionDetails } from './execution-details';
+ import { WorkspaceReviewPanel } from './workspace-review';
+ import { WorkspacePicker, useWorkspaceConfirmation } from './workspace-picker';
++import { pendingTaskApprovals } from './conversation-scope';
+ import { resolveWorkspaceProject, type WorkspaceSelection } from './workspace-api';
+ declare const __HERMES_BUILD_ID__: string;
+ 
+@@ -338,9 +339,7 @@
+   const artifacts =
+     snapshot?.artifacts.filter((a) => family.some((t) => t.resultArtifactRefs.includes(a.id))) ??
+     [];
++  const approvals = pendingTaskApprovals(snapshot?.approvals ?? [], snapshot?.tasks ?? [], root);
+-  const approvals =
+-    snapshot?.approvals.filter((a) => a.state === 'pending' && a.projectId === root?.projectId) ??
+-    [];
+   const action = async (fn: () => Promise<unknown>) => {
+     setSending(true);
+     setActionError('');
+@@ -384,11 +383,22 @@
+     } catch (e) {
+       // A lost start response is reconciled against the durable task before offering a retry.
+       if (submission.current?.taskId) {
++        let data: SnapshotData;
++        try {
++          data = await readSnapshot();
++        } catch {
++          throw e;
++        }
+-        const data = await readSnapshot();
+         const task = data.tasks.find((t) => t.id === submission.current?.taskId);
+         if (task && task.state !== 'draft' && task.state !== 'created') {
++          submission.current = undefined;
++          if (task.objective !== text.trim())
++            throw new Error(
++              '上一次目标已启动，保留在左侧历史中。当前编辑尚未发送，草稿已保留；可打开原任务补充，或再次发送当前目标。',
++            );
++          setDraft('');
++          sessionStorage.removeItem('control-plane-draft');
+           select(task.id);
+-          submission.current = undefined;
+           return;
+         }
+       }
+@@ -699,8 +709,13 @@
+                         <div className={s.approvals}>
+                           {approvals.map((a) => (
+                             <div key={a.id}>
++                              <strong>成员请求执行操作</strong>
+-                              <strong>协作者请求执行操作</strong>
+                               <dl>
++                                <dt>来自任务</dt>
++                                <dd>
++                                  {snapshot?.tasks.find((task) => task.id === a.taskId)?.title ??
++                                    a.taskId}
++                                </dd>
+                                 <dt>工具</dt>
+                                 <dd>{a.acp?.review.tool ?? '未提供'}</dd>
+                                 <dt>操作</dt>
+@@ -746,19 +761,11 @@
+                   />
+                   <div className={s.taskFooter}>
+                     {busy ? (
++                      <span>任务正在执行，进度会自动更新。</span>
+-                      <>
+-                        <span>任务正在执行，进度会自动更新。</span>
+-                        <button
+-                          disabled={sending}
+-                          onClick={() => void action(() => cancelTask(root.id))}
+-                        >
+-                          停止任务
+-                        </button>
+-                      </>
+                     ) : (
+                       <>
+                         <span>
++                          {root.state === 'completed' && <CheckCircle2 size={16} />}
+-                          <CheckCircle2 size={16} />
+                           {root.state === 'completed'
+                             ? '结果已保存，刷新页面后仍可查看。'
+                             : stateLabel(root.state)}
+@@ -780,6 +787,14 @@
+                         )}
+                       </>
+                     )}
++                    {!terminal(root) && (
++                      <button
++                        disabled={sending}
++                        onClick={() => void action(() => cancelTask(root.id))}
++                      >
++                        停止任务
++                      </button>
++                    )}
+                   </div>
+                   {conversation && (
+                     <FollowUpComposer
+diff --git a/vitest.config.ts b/vitest.config.ts
+--- a/vitest.config.ts
++++ b/vitest.config.ts
+@@ -2,7 +2,11 @@
+ 
+ export default defineConfig({
+   test: {
++    include: [
++      'apps/**/*.test.ts',
++      'packages/**/*.test.ts',
++      'integrations/hermes-workbench/tests/*.test.ts',
++    ],
+-    include: ['apps/**/*.test.ts', 'packages/**/*.test.ts'],
+     environment: 'node',
+     restoreMocks: true,
+     clearMocks: true,
+diff --git a/integrations/hermes-workbench/README.md b/integrations/hermes-workbench/README.md
+--- a/integrations/hermes-workbench/README.md
++++ b/integrations/hermes-workbench/README.md
+@@ -26,6 +26,10 @@
+ 
+ 启动或停止失败会显示实际日志绝对路径，真实模式的错误日志位于 `.run/hermes-integration/real-20261023/server-error.log`。启动器复用已响应的实例；记录的进程仍在但无响应时，不重复启动。启动器不自动更新已运行的服务，源码修改需要重新构建并在维护窗口停止、启动后才能进入运行版本。
+ 
++当前静态改动还修正了失败重试：再次发送前读取原草稿及版本；目标有修改时先通过现有草稿更新 API 保存，且每次按当前选择确认负责人。已经执行的目标不会被改写；若旧目标其实已启动而当前文字不同，明确保留当前草稿并提示它尚未发送。审批卡片只显示当前执行轮及其子任务的待审批请求，并标出来源任务，不混入同项目其他会话的请求。对应回归用例已写入，尚未运行，不计入下文历史通过数量。
++
++未结束的任务在等待处理或可恢复状态下也保留“停止任务”，取消仍调用既有服务端接口。完成图标仅用于已完成状态，失败与等待状态按实际状态显示。
++
+ 历史预置定义缺失时，工作台仍加载数据库中已有的成员；首次空库只导入可读取的预置定义，也可在界面自行注册。已删除的成员不会在重启后重新创建。认证配置仍按已确认的完整启动入口匹配，无法匹配时使用成员自身默认登录环境并在界面检查状态。
+ 
+ 日常完整流程示例：<http://127.0.0.1:8047/?task=task-87da23f9-eb9e-47e5-bbd3-0e10f09e1639>。
+diff --git a/docs/guides/hermes-local-delivery.md b/docs/guides/hermes-local-delivery.md
+--- a/docs/guides/hermes-local-delivery.md
++++ b/docs/guides/hermes-local-delivery.md
+@@ -8,6 +8,8 @@
+ 
+ 工作台地址为 `http://127.0.0.1:8047/`。进入后点击“新任务”，选择负责人，输入目标并发送；默认工作目录无需配置。处理已有项目时再选择工作目录。执行中在底部补充要求，完成后继续追问；历史任务在左侧。日常服务使用独立调用记录，不读取旧的三轮验收限额。实际发送会调用已授权成员，维护和审核阶段不发送任务。
+ 
++失败后修改目标再发送会先核对原草稿及服务端版本，保存当前文字并按本次选择确认负责人；已执行的目标保留历史。审批卡片按当前轮任务树显示并标明来源任务，服务端审批资格仍是执行依据。未结束的任务在等待处理或可恢复状态下保留停止入口，完成图标仅用于已完成状态。上述源码改动及其回归用例均未运行，需纳入统一验收，不能引用历史通过数量作为新结论。
++
+ 启动器依赖已经准备好的 Web 与服务端构建。Node 查找顺序为仓库下 `runtime/node.exe`、当前开发工作树内原有的 R6.1 随包运行时、系统已有 `node.exe`。不再依赖另一个 C5 工作树的绝对路径；这些回退仅方便当前开发实例，不能据此宣称已完成便携发行。启动器不安装、不编译、不自动替换运行版本。
+ 
+ 重复启动时校验模式、记录的进程及本机健康响应后打开页面；记录进程仍在但不响应时保留现状并给出日志。停止只写入当前模式实例目录的停止标记，等待记录的进程退出，不强制结束进程。模式／PID／时间检查用于避免误操作，不构成认证、OS 隔离或跨进程互斥保证。无记录或停止超时均报告未确认。
+@@ -56,7 +58,7 @@
+ 1. 从冻结源码统一类型检查、构建、必要测试与打包；核对全部源／输出哈希。独立审核本次启动脚本，特别是 Windows PowerShell 5.1 编码和 CMD 中文／空格路径／退出码。
+ 2. 准备新私有候选目录，核对 Node、原生 SQLite、生产依赖、许可、前后端版本和所选正式布局；不覆盖封存包或正在运行的实例。
+ 3. 用唯一入口首次启动、重复打开、缺构建／运行时失败提示和正常停止；确认进程退出后重新启动，检查历史保留、无自动任务重放。只验收必要主线，不扩展边界矩阵。
++4. 浏览器真实输入中文任务并发送；负责人发现／委派另一成员、协作产物落库、负责人恢复并汇总；执行中补充、完成后在同一会话连续追问；刷新后草稿与历史保留。核对失败后修改目标和负责人再重试时执行的是当前目标；同项目两个会话的审批来源不混淆。核对页面版本，不能只读旧结果。
+-4. 浏览器真实输入中文任务并发送；负责人发现／委派另一成员、协作产物落库、负责人恢复并汇总；执行中补充、完成后在同一会话连续追问；刷新后草稿与历史保留。核对页面版本，不能只读旧结果。
+ 5. 在另行授权的真实模型额度内完成双成员路径；检查权限卡片与失败／取消／恢复提示，未知或危险请求不自动批准。静态阶段模型预算冻结，旧三轮验收账本不得改写。
+ 6. 正式布局确定后，统一验证停机备份、恢复到新私有目录、完整性校验、恢复后不重放、升级失败保留原版本与数据。不能把启动器的退出提示当成备份链已达标。
+ 
+diff --git a/integrations/hermes-workbench/src/draft-submission.ts b/integrations/hermes-workbench/src/draft-submission.ts
+new file mode 100644
+--- /dev/null
++++ b/integrations/hermes-workbench/src/draft-submission.ts
+@@ -0,0 +1,51 @@
++/** UI submission state. Durable task and optimistic version remain server-owned. */
++export interface DraftSubmission {
++  projectId: string;
++  taskId?: string;
++}
++
++interface DraftTask {
++  id: string;
++  objective: string;
++}
++
++export interface DraftRecord<T extends DraftTask> {
++  task: T;
++  version: string;
++  canEditObjective: boolean;
++  reason: string;
++}
++
++export interface DraftGateway<T extends DraftTask> {
++  create(projectId: string, objective: string): Promise<T>;
++  read(taskId: string): Promise<DraftRecord<T>>;
++  update(taskId: string, objective: string, version: string): Promise<DraftRecord<T>>;
++  selectBoss(projectId: string): Promise<unknown>;
++  start(taskId: string, version: string): Promise<T>;
++}
++
++/** Reconcile a retry with its durable draft before starting the current goal.
++ * Gateway methods validate HTTP responses; version conflicts stay visible to the user.
++ */
++export async function submitDraft<T extends DraftTask>(
++  objective: string,
++  submission: DraftSubmission,
++  gateway: DraftGateway<T>,
++): Promise<T> {
++  if (!submission.taskId) {
++    const task = await gateway.create(submission.projectId, objective);
++    submission.taskId = task.id;
++  }
++  let record = await gateway.read(submission.taskId);
++  if (!record.canEditObjective)
++    throw new Error(record.reason || '目标已进入执行流程，请在原会话中补充要求。');
++  if (record.task.objective !== objective) {
++    record = await gateway.update(submission.taskId, objective, record.version);
++    if (!record.canEditObjective || record.task.objective !== objective)
++      throw new Error('未能确认最新目标已保存，任务尚未启动。请刷新后重试。');
++  }
++  // Re-select on each explicit send. A previous failed send or another window
++  // may have changed the project's default; a cached boolean cannot confirm it.
++  await gateway.selectBoss(submission.projectId);
++  return gateway.start(submission.taskId, record.version);
++}
+diff --git a/integrations/hermes-workbench/tests/draft-submission.test.ts b/integrations/hermes-workbench/tests/draft-submission.test.ts
+new file mode 100644
+--- /dev/null
++++ b/integrations/hermes-workbench/tests/draft-submission.test.ts
+@@ -0,0 +1,83 @@
++import { describe, expect, it, vi } from 'vitest';
++import {
++  submitDraft,
++  type DraftGateway,
++  type DraftRecord,
++  type DraftSubmission,
++} from '../src/draft-submission';
++
++type Task = { id: string; objective: string };
++
++function fixture() {
++  let record: DraftRecord<Task> = {
++    task: { id: 'draft-1', objective: '旧目标' },
++    version: 'a'.repeat(64),
++    canEditObjective: true,
++    reason: '',
++  };
++  const gateway = {
++    create: vi.fn(async (_projectId: string, _objective: string) => record.task),
++    read: vi.fn(async (_taskId: string) => record),
++    update: vi.fn(async (_taskId: string, objective: string, _version: string) => {
++      record = {
++        ...record,
++        task: { ...record.task, objective },
++        version: 'b'.repeat(64),
++      };
++      return record;
++    }),
++    selectBoss: vi.fn(async (_projectId: string) => undefined),
++    start: vi.fn(async (_taskId: string, _version: string) => record.task),
++  } satisfies DraftGateway<Task>;
++  return { gateway, setRecord: (next: DraftRecord<Task>) => (record = next) };
++}
++
++describe('daily task submission', () => {
++  it('starts the edited goal in the same saved draft after a failed send', async () => {
++    const { gateway } = fixture();
++    const submission: DraftSubmission = { projectId: 'project-1' };
++    gateway.start.mockRejectedValueOnce(new Error('启动响应失败'));
++
++    await expect(submitDraft('旧目标', submission, gateway)).rejects.toThrow('启动响应失败');
++    const result = await submitDraft('修改后的目标', submission, gateway);
++
++    expect(result.objective).toBe('修改后的目标');
++    expect(gateway.create).toHaveBeenCalledTimes(1);
++    expect(gateway.update).toHaveBeenCalledWith('draft-1', '修改后的目标', 'a'.repeat(64));
++    expect(gateway.start).toHaveBeenLastCalledWith('draft-1', 'b'.repeat(64));
++    expect(gateway.selectBoss).toHaveBeenCalledTimes(2);
++    expect(submission.taskId).toBe('draft-1');
++  });
++
++  it('keeps the saved draft and does not start when its version changed', async () => {
++    const { gateway } = fixture();
++    const submission = { projectId: 'project-1', taskId: 'draft-1' };
++    gateway.update.mockRejectedValueOnce(new Error('任务已更新'));
++
++    await expect(submitDraft('修改后的目标', submission, gateway)).rejects.toThrow('任务已更新');
++
++    expect(submission.taskId).toBe('draft-1');
++    expect(gateway.create).not.toHaveBeenCalled();
++    expect(gateway.selectBoss).not.toHaveBeenCalled();
++    expect(gateway.start).not.toHaveBeenCalled();
++  });
++
++  it('does not rewrite or restart a draft that already entered execution', async () => {
++    const { gateway, setRecord } = fixture();
++    setRecord({
++      task: { id: 'draft-1', objective: '旧目标' },
++      version: 'c'.repeat(64),
++      canEditObjective: false,
++      reason: '任务已经启动，请在会话中补充。',
++    });
++
++    await expect(
++      submitDraft('修改后的目标', { projectId: 'project-1', taskId: 'draft-1' }, gateway),
++    ).rejects.toThrow('任务已经启动');
++
++    expect(gateway.create).not.toHaveBeenCalled();
++    expect(gateway.update).not.toHaveBeenCalled();
++    expect(gateway.selectBoss).not.toHaveBeenCalled();
++    expect(gateway.start).not.toHaveBeenCalled();
++  });
++});
+diff --git a/integrations/hermes-workbench/src/conversation-scope.ts b/integrations/hermes-workbench/src/conversation-scope.ts
+new file mode 100644
+--- /dev/null
++++ b/integrations/hermes-workbench/src/conversation-scope.ts
+@@ -0,0 +1,43 @@
++interface TaskScope {
++  id: string;
++  projectId: string;
++  parentTaskId?: string;
++}
++
++interface ApprovalScope {
++  projectId: string;
++  taskId?: string;
++  state: string;
++}
++
++/** Presentation scope only; the server still decides whether a request may be approved. */
++export function pendingTaskApprovals<T extends ApprovalScope>(
++  approvals: readonly T[],
++  tasks: readonly TaskScope[],
++  current: TaskScope | undefined,
++): T[] {
++  if (!current) return [];
++  const ids = new Set([current.id]);
++  let changed = true;
++  while (changed) {
++    changed = false;
++    for (const task of tasks) {
++      if (
++        task.projectId === current.projectId &&
++        task.parentTaskId &&
++        ids.has(task.parentTaskId) &&
++        !ids.has(task.id)
++      ) {
++        ids.add(task.id);
++        changed = true;
++      }
++    }
++  }
++  return approvals.filter(
++    (approval) =>
++      approval.state === 'pending' &&
++      approval.projectId === current.projectId &&
++      approval.taskId !== undefined &&
++      ids.has(approval.taskId),
++  );
++}
+diff --git a/integrations/hermes-workbench/tests/conversation-scope.test.ts b/integrations/hermes-workbench/tests/conversation-scope.test.ts
+new file mode 100644
+--- /dev/null
++++ b/integrations/hermes-workbench/tests/conversation-scope.test.ts
+@@ -0,0 +1,36 @@
++import { expect, it } from 'vitest';
++import { pendingTaskApprovals } from '../src/conversation-scope';
++
++it('shows requests from the current task and its workers without mixing other conversations', () => {
++  const current = { id: 'current', projectId: 'project-1' };
++  const tasks = [
++    current,
++    { id: 'nested', projectId: 'project-1', parentTaskId: 'worker' },
++    { id: 'worker', projectId: 'project-1', parentTaskId: 'current' },
++    { id: 'other', projectId: 'project-1' },
++    { id: 'previous-round', projectId: 'project-1' },
++  ];
++  const request = (id: string, taskId?: string, projectId = 'project-1', state = 'pending') => ({
++    id,
++    taskId,
++    projectId,
++    state,
++  });
++  const approvals = [
++    request('boss-request', 'current'),
++    request('worker-request', 'worker'),
++    request('nested-request', 'nested'),
++    request('other-conversation', 'other'),
++    request('old-round', 'previous-round'),
++    request('project-only'),
++    request('other-project', 'current', 'project-2'),
++    request('already-decided', 'current', 'project-1', 'approved'),
++  ];
++
++  expect(pendingTaskApprovals(approvals, tasks, current).map((approval) => approval.id)).toEqual([
++    'boss-request',
++    'worker-request',
++    'nested-request',
++  ]);
++  expect(pendingTaskApprovals(approvals, tasks, undefined)).toEqual([]);
++});

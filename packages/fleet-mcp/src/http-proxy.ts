@@ -1,6 +1,12 @@
 import { AgentDefinitionSchema } from '@control-plane/core';
 import type { AgentDefinition } from '@control-plane/core';
 import { createFleetMcpServer } from './server.js';
+import {
+  FleetRecipientUnavailableError,
+  FleetRetryableFailureSchema,
+  FleetPolicyDeniedError,
+  FleetSessionUnboundError,
+} from './service-error.js';
 import type { FleetBridgeIdentity, FleetControlServices, FleetMcpServerOptions } from './types.js';
 
 export type FleetBridgeProxyManifest = {
@@ -53,6 +59,8 @@ export class FleetBridgeHttpProxy {
 
   services(): FleetControlServices {
     return {
+      searchKnowledge: (input) => this.call('control_search_knowledge', input),
+      proposeMemory: (input) => this.call('control_propose_memory', input),
       discoverAgents: (input) => this.call('control_discover_agents', input),
       getAgent: (input) => this.call('control_get_agent', input),
       createTask: (input) => this.call('control_create_task', input),
@@ -78,6 +86,21 @@ export class FleetBridgeHttpProxy {
     });
     const payload = (await response.json()) as BridgeToolResponse;
     if (!response.ok || !payload.ok) {
+      if (response.status === 409 && FleetRetryableFailureSchema.safeParse(payload).success)
+        throw new FleetRecipientUnavailableError();
+      // Preserve fixed protocol failures without trusting arbitrary gateway text.
+      if (
+        payload.ok === false &&
+        response.status === 403 &&
+        payload.error === 'Fleet tool policy denied.'
+      )
+        throw new FleetPolicyDeniedError();
+      if (
+        payload.ok === false &&
+        response.status === 409 &&
+        payload.error === 'Bridge grant is not bound to an ACP session yet.'
+      )
+        throw new FleetSessionUnboundError();
       throw new Error(
         payload.error ?? `Fleet bridge tool request failed with HTTP ${response.status}.`,
       );

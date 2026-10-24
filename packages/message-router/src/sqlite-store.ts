@@ -152,6 +152,29 @@ export class SqliteMessageRouterStore implements MessageRouterStore {
     });
   }
 
+  renewClaim(
+    id: string,
+    expectedAttemptCount: number,
+    now: string,
+    leaseUntil: string,
+  ): MessageDelivery {
+    return this.transaction(() => {
+      const current = this.requireDelivery(id);
+      this.assertClaimGeneration(current, expectedAttemptCount);
+      // ACK may have committed while its asynchronous audit is still in flight.
+      if (current.state === 'delivered') return current;
+      if (current.state !== 'delivering' || !current.leaseUntil || current.leaseUntil <= now) {
+        throw new MessageRouterError(
+          'STALE_DELIVERY_CLAIM',
+          'Cannot renew an expired or released claim.',
+        );
+      }
+      const next = MessageDeliverySchema.parse({ ...current, leaseUntil });
+      this.updateDelivery(next);
+      return next;
+    });
+  }
+
   markDelivered(id: string, expectedAttemptCount: number, deliveredAt: string): MessageDelivery {
     return this.transaction(() => {
       const current = this.requireDelivery(id);

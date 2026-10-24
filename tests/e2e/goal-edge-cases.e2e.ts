@@ -89,12 +89,12 @@ test('a failed approval stays pending until an explicit successful decision', as
   const approval = page.locator('.approval-card');
   await approval.getByRole('button', { name: 'Approve', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('Approval could not be saved.');
-  await expect(approval).toContainText('pending');
+  await expect(approval.locator('.badge')).toContainText('待决定');
   await expect(approval.getByRole('button', { name: 'Approve', exact: true })).toBeEnabled();
   await page.waitForResponse('**/api/control-center');
   expect(attempts).toBe(1);
   await approval.getByRole('button', { name: 'Reject', exact: true }).click();
-  await expect(approval).toContainText('rejected');
+  await expect(approval.locator('.badge')).toContainText('已拒绝');
   await expect(approval.getByRole('button')).toHaveCount(0);
   expect(attempts).toBe(2);
 });
@@ -120,6 +120,7 @@ test('keeps project and approval controls usable on a narrow screen', async ({
   await page.route('**/api/control-center', (route) => route.fulfill({ json: state }));
   await page.goto('/');
   await expect(page.getByLabel('Active project')).toHaveValue('project-one');
+  await page.getByRole('button', { name: /Task context/ }).click();
   await expect(page.getByRole('button', { name: 'Approve', exact: true })).toBeEnabled();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,

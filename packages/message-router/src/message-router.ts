@@ -70,6 +70,8 @@ export class MessageRouter {
         }
       }
 
+      this.options.hooks.beforeEnqueue?.({ sender, input: parsed });
+
       const messageId = MessageIdSchema.parse(this.options.idFactory('message'));
       const recipientAgentId = AgentIdSchema.parse(parsed.toAgentId);
       let correlationId = parsed.correlationId ?? messageId;
@@ -161,6 +163,20 @@ export class MessageRouter {
       delivery,
     });
     return { message, delivery };
+  }
+
+  get claimRenewalIntervalMs(): number {
+    return Math.max(1, Math.floor(this.leaseMs / 3));
+  }
+
+  renewClaim(deliveryId: string, expectedAttemptCount: number): void {
+    const now = this.options.now();
+    this.store.renewClaim(
+      deliveryId,
+      expectedAttemptCount,
+      now,
+      addMilliseconds(now, this.leaseMs),
+    );
   }
 
   async acknowledge(

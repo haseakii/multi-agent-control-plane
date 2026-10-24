@@ -1,12 +1,14 @@
+import { frontendLicenseNotices } from './license-notices';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), frontendLicenseNotices()],
   server: {
+    host: '127.0.0.1',
     proxy: {
-      '/api': 'http://127.0.0.1:3000',
-      '/health': 'http://127.0.0.1:3000',
+      '/api': { target: 'http://127.0.0.1:3000', changeOrigin: false },
+      '/health': { target: 'http://127.0.0.1:3000', changeOrigin: false },
     },
   },
 });

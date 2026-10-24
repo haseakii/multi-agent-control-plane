@@ -135,7 +135,7 @@ test('creates a fresh project, selects its Boss, submits once and shows a durabl
   await expect(page.getByRole('button', { name: 'Submitting…', exact: true })).toBeDisabled();
   await expect(page.getByLabel('Goal objective')).toBeDisabled();
   releaseSubmission();
-  await expect(page.locator('.task-card')).toContainText('running');
+  await expect(page.locator('.task-card')).toContainText('执行中');
   expect(submissions).toBe(1);
   await expect(page.getByLabel('Goal objective')).toHaveValue('');
 
@@ -149,7 +149,7 @@ test('creates a fresh project, selects its Boss, submits once and shows a durabl
     mimeType: 'text/plain',
     sizeBytes: 55,
   });
-  await expect(page.locator('.task-card')).toContainText('completed');
+  await expect(page.locator('.task-card')).toContainText('已完成');
   await page.getByRole('button', { name: 'View result', exact: true }).click();
   const preview = page.getByRole('region', { name: 'Result preview' });
   await expect(preview).toContainText('Final answer incorporates the durable worker review.');
@@ -160,7 +160,7 @@ test('creates a fresh project, selects its Boss, submits once and shows a durabl
   await page.getByRole('button', { name: 'Close result', exact: true }).click();
   await expect(preview).toHaveCount(0);
   await page.reload();
-  await expect(page.locator('.task-card')).toContainText('completed');
+  await expect(page.locator('.task-card')).toContainText('已完成');
   expect(submissions).toBe(1);
 });
 
@@ -191,7 +191,7 @@ test('keeps a failed goal draft and error through polling, then allows an explic
   await expect(page.getByLabel('Goal objective')).toHaveValue('Find actionable improvements.');
   expect(submissions).toBe(1);
   await page.getByRole('button', { name: 'Submit goal', exact: true }).click();
-  await expect(page.locator('.task-card')).toContainText('running');
+  await expect(page.locator('.task-card')).toContainText('执行中');
   await expect(page.getByRole('alert')).toHaveCount(0);
   expect(submissions).toBe(2);
 });
@@ -233,10 +233,10 @@ test('only decides pending approvals after the user chooses approve or reject', 
   await expect(network.getByRole('button', { name: 'Reject', exact: true })).toBeEnabled();
   expect(decisions).toEqual([]);
   await write.getByRole('button', { name: 'Approve', exact: true }).click();
-  await expect(write).toContainText('approved');
+  await expect(write.locator('.badge')).toHaveText('已批准');
   await expect(write.getByRole('button')).toHaveCount(0);
   await network.getByRole('button', { name: 'Reject', exact: true }).click();
-  await expect(network).toContainText('rejected');
+  await expect(network.locator('.badge')).toHaveText('已拒绝');
   await expect(network.getByRole('button')).toHaveCount(0);
   expect(decisions).toEqual(['write:approve', 'network:reject']);
   await page.reload();

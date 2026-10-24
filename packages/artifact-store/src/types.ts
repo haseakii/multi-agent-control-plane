@@ -61,6 +61,14 @@ export const PublishArtifactInputSchema = z
   .strict();
 export type PublishArtifactInput = z.input<typeof PublishArtifactInputSchema>;
 
+/** Local execution guard; never part of the serializable artifact payload. */
+export const PublishArtifactOptionsSchema = z
+  .object({
+    beforeCommit: z.custom<() => void>((value) => typeof value === 'function').optional(),
+  })
+  .strict();
+export type PublishArtifactOptions = z.infer<typeof PublishArtifactOptionsSchema>;
+
 export type BlobWriteResult = {
   sha256: string;
   sizeBytes: number;
@@ -76,6 +84,7 @@ export interface ArtifactBlobStore {
 export interface ArtifactMetadataStore {
   transaction<T>(operation: () => T): T;
   saveArtifact(artifact: Artifact): Artifact;
+  indexText(artifact: Artifact, content: Uint8Array): void;
   getArtifact(id: string): Artifact | undefined;
   upsertLink(link: ArtifactLink): ArtifactLink;
   listLinks(artifactId: string): ArtifactLink[];

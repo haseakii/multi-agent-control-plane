@@ -10,7 +10,7 @@ acp
   }))
   .onRequest(acp.methods.agent.session.new, () => ({ sessionId: 'permission-session' }))
   .onRequest(acp.methods.agent.session.prompt, async (ctx) => {
-    const expected = ctx.params.prompt[0].text;
+    const expected = ctx.params.prompt[0].text.split('\n')[0];
     const result = await ctx.client.request(acp.methods.client.session.requestPermission, {
       sessionId: ctx.params.sessionId,
       toolCall: {
@@ -18,6 +18,7 @@ acp
         title: 'Read the test workspace',
         kind: 'read',
         status: 'pending',
+        rawInput: { tool: 'workspace.read', action: 'read', path: 'synthetic.txt' },
       },
       options: [
         { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
