@@ -326,6 +326,7 @@
 }
 .taskHeader {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 16px;
   border-bottom: 1px solid var(--h-line);
@@ -333,7 +334,7 @@
   min-height: 84px;
 }
 .taskHeader > div {
-  flex: 1;
+  flex: 1 1 220px;
   min-width: 0;
 }
 .taskHeader h1 {
@@ -344,8 +345,16 @@
   text-overflow: ellipsis;
 }
 .taskHeader small {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--h-text-3);
   font-size: 12px;
+}
+.taskHeader button {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 .projectContext {
   display: flex;
