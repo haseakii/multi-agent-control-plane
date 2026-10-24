@@ -31,10 +31,16 @@ export function PermissionNotice({
   const expired = requests.filter(
     (item) => item.state === 'expired' && historyIds.has(item.taskId!),
   );
-  if (!pending.length && !expired.length) return null;
+  const approvedCommands = requests.filter(
+    (item) =>
+      item.state === 'approved' &&
+      ids.has(item.taskId!) &&
+      item.acp?.review.action === 'process.execute',
+  );
+  if (!pending.length && !expired.length && !approvedCommands.length) return null;
   return (
     <section className={s.taskFeedback} aria-label="操作确认状态">
-      {pending.length ? (
+      {pending.length > 0 && (
         <article>
           <strong>有 {pending.length} 项操作等待你确认</strong>
           {pending.map((item) => {
@@ -60,26 +66,52 @@ export function PermissionNotice({
           })}
           <p>每项操作单独确认；允许本次不会改变自动审批设置。合入源项目仍需审阅。</p>
         </article>
-      ) : (
+      )}
+      {!pending.length && approvedCommands.length > 0 && (
         <article>
-          <strong>本会话有 {expired.length} 项历史操作确认已过期</strong>
-          <p>过期请求未获批准，不等于你主动拒绝。历史详情仅供查看；需要补做时，在下方继续说明。</p>
-          {expired.map((item) => {
-            const summary = approvalSummary(item.resource);
-            return (
-              <div key={item.id} className={s.pendingOperation}>
-                <span>
-                  <strong>{summary.title} · 已过期</strong>
-                  <code>{summary.command ?? summary.target ?? '成员操作'}</code>
-                </span>
-                <button type="button" onClick={() => onLocate(item.id)}>
-                  查看过期请求
-                </button>
-              </div>
-            );
-          })}
+          <strong>本轮有 {approvedCommands.length} 项命令授权已批准</strong>
+          <p>执行状态和退出结果在“过程”中单独记录。合入源项目仍需你审阅。</p>
+          {approvedCommands.map((item) => (
+            <div key={item.id} className={s.pendingOperation}>
+              <span>
+                <strong>命令授权 · 已批准</strong>
+                <code>{approvalSummary(item.resource).command ?? '查看完整请求'}</code>
+              </span>
+              <button type="button" onClick={() => onLocate(item.id)}>
+                查看授权记录
+              </button>
+            </div>
+          ))}
           <button onClick={onInspect}>查看执行记录</button>
         </article>
+      )}
+      {expired.length > 0 && (
+        <details
+          className={s.permissionHistory}
+          open={expired.some((item) => ids.has(item.taskId!))}
+        >
+          <summary>历史过期记录（{expired.length}）</summary>
+          <article>
+            <p>
+              过期请求未获批准，不等于你主动拒绝。历史详情仅供查看；需要补做时，在下方继续说明。
+            </p>
+            {expired.map((item) => {
+              const summary = approvalSummary(item.resource);
+              return (
+                <div key={item.id} className={s.pendingOperation}>
+                  <span>
+                    <strong>{summary.title} · 已过期</strong>
+                    <code>{summary.command ?? summary.target ?? '成员操作'}</code>
+                  </span>
+                  <button type="button" onClick={() => onLocate(item.id)}>
+                    查看过期请求
+                  </button>
+                </div>
+              );
+            })}
+            <button onClick={onInspect}>查看执行记录</button>
+          </article>
+        </details>
       )}
     </section>
   );

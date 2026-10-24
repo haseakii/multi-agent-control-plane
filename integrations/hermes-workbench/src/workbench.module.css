@@ -490,6 +490,14 @@
   border-radius: 7px;
   min-height: 36px;
 }
+.permissionHistory {
+  margin-top: 10px;
+}
+.permissionHistory > summary {
+  cursor: pointer;
+  padding: 4px 0;
+  color: var(--h-text-3);
+}
 .taskFeedback p {
   margin: 4px 0;
   color: var(--h-text-2);
