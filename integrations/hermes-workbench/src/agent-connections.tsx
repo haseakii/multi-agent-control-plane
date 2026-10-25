@@ -475,6 +475,26 @@ export function AgentConnections({
                   </span>
                 </div>
                 {program && <p className={s.programIdentity}>程序上报：{program}</p>}
+                <div className={s.memberSource} aria-label={`${agent.definition.name} 目录来源`}>
+                  {agent.registrationSource?.record ? (
+                    <>
+                      <span>
+                        目录来源：<strong>{agent.registrationSource.record.entryName}</strong> ·{' '}
+                        {agent.registrationSource.record.catalogVersion}
+                      </span>
+                      {agent.registrationSource.status === 'entry-changed' && (
+                        <span className={s.sourceAttention}>入口已变化，来源待重新确认</span>
+                      )}
+                      <small>这是你选择的目录关联，不代表软件签名或已登录。</small>
+                    </>
+                  ) : (
+                    <span>
+                      {agent.registrationSource?.status === 'unavailable'
+                        ? '目录来源暂不可读取；连接与登录状态仍单独保留。'
+                        : '自定义或历史入口 · 尚未关联目录产品'}
+                    </span>
+                  )}
+                </div>
                 <p className={s.role}>{leaderStatus(agent)}</p>
                 {recent && (
                   <section

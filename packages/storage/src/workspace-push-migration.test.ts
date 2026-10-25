@@ -59,7 +59,7 @@ it('upgrades twelve migrations and preserves old policy with push denied', () =>
       'auto',
     );
     expect(storage.sqlite.prepare('SELECT COUNT(*) AS n FROM __drizzle_migrations').get()).toEqual({
-      n: 16,
+      n: 18,
     });
     expect(storage.sqlite.pragma('foreign_key_check')).toEqual([]);
   } finally {

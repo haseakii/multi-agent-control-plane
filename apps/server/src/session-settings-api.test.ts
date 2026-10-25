@@ -101,8 +101,15 @@ function fixture() {
 
 it('shares advertised settings, CAS defaults and confirmed task settings across web and MCP', async () => {
   const inspect = vi
-    .spyOn(ProcessAgentRuntimeControl.prototype, 'sessionSettings')
-    .mockResolvedValue(settings);
+    .spyOn(ProcessAgentRuntimeControl.prototype, 'inspectSessionSettings')
+    .mockImplementation(async () => ({
+      settings,
+      observation: {
+        source: 'acp-session-new',
+        observedAt: new Date().toISOString(),
+        sessionIdHash: 'd'.repeat(64),
+      },
+    }));
   const f = fixture();
   try {
     const read = () =>
@@ -164,8 +171,15 @@ it('shares advertised settings, CAS defaults and confirmed task settings across 
 
 it('requires authorized project discovery before refreshing and exposes safe inspection failures', async () => {
   const inspect = vi
-    .spyOn(ProcessAgentRuntimeControl.prototype, 'sessionSettings')
-    .mockResolvedValue(settings);
+    .spyOn(ProcessAgentRuntimeControl.prototype, 'inspectSessionSettings')
+    .mockImplementation(async () => ({
+      settings,
+      observation: {
+        source: 'acp-session-new',
+        observedAt: new Date().toISOString(),
+        sessionIdHash: 'd'.repeat(64),
+      },
+    }));
   const f = fixture();
   try {
     expect(
@@ -253,6 +267,110 @@ it('passes selected settings through MCP submission and continuation without add
     expect(follow.mock.calls[0]?.[1]).toMatchObject({ sessionSettings: { model: 'test-model' } });
     expect(clientToolDefinitions.map((tool) => tool.name)).toHaveLength(9);
     expect(clientToolDefinitions.some((tool) => /approve|merge|push/.test(tool.name))).toBe(false);
+  } finally {
+    await f.close();
+  }
+});
+
+it('keeps preset listing offline and validates values before a CAS rename/archive/restore lifecycle', async () => {
+  const inspect = vi
+    .spyOn(ProcessAgentRuntimeControl.prototype, 'inspectSessionSettings')
+    .mockImplementation(async () => ({
+      settings,
+      observation: {
+        source: 'acp-session-new',
+        observedAt: new Date().toISOString(),
+        sessionIdHash: 'a'.repeat(64),
+      },
+    }));
+  const f = fixture();
+  const base = '/api/agents/agent/session-presets';
+  const id = '58ff3aa4-1348-4a9b-82da-e4d3488156b5';
+  const input = { id, name: '日常编码', values: { model: 'test-model' } };
+  try {
+    expect((await f.app.inject({ method: 'GET', url: base })).json()).toEqual({
+      agentId: 'agent',
+      presets: [],
+    });
+    expect((await f.app.inject({ method: 'POST', url: base, payload: input })).statusCode).toBe(
+      409,
+    );
+    expect(inspect).not.toHaveBeenCalled();
+    const observed = await f.app.inject({
+      method: 'POST',
+      url: '/api/agents/agent/session-settings',
+      payload: { projectId: 'p', values: input.values },
+    });
+    expect(observed.json()).toMatchObject({
+      freshness: 'fresh',
+      staleReason: null,
+      observation: {
+        source: 'acp-session-new',
+        accountIdentity: 'not-exposed',
+        sessionIdHash: 'a'.repeat(64),
+      },
+    });
+    const created = await f.app.inject({ method: 'POST', url: base, payload: input });
+    expect(created.statusCode, created.body).toBe(201);
+    const clock = vi
+      .spyOn(f.runtime.sessionSettings as unknown as { now: () => number }, 'now')
+      .mockReturnValue(Date.parse(observed.json().observation.expiresAt) + 1);
+    const repeated = await f.app.inject({ method: 'POST', url: base, payload: input });
+    expect(repeated.statusCode, repeated.body).toBe(201);
+    expect(repeated.json()).toEqual(created.json());
+    expect(inspect).toHaveBeenCalledTimes(1);
+    expect((await f.app.inject({ method: 'GET', url: `${base}/${id}` })).json()).toEqual(
+      created.json(),
+    );
+    const renamed = await f.app.inject({
+      method: 'PATCH',
+      url: `${base}/${id}`,
+      payload: { expectedRevision: 1, name: '日常前端' },
+    });
+    expect(renamed.statusCode, renamed.body).toBe(200);
+    expect(renamed.json()).toMatchObject({ revision: 2, values: input.values });
+    expect(
+      (
+        await f.app.inject({
+          method: 'PATCH',
+          url: `${base}/${id}`,
+          payload: { expectedRevision: 1, name: '旧修改' },
+        })
+      ).json(),
+    ).toMatchObject({ code: 'PRESET_REVISION_CONFLICT' });
+    const archived = await f.app.inject({
+      method: 'POST',
+      url: `${base}/${id}/archive`,
+      payload: { expectedRevision: 2 },
+    });
+    expect(archived.json()).toMatchObject({ archived: true, revision: 3 });
+    expect((await f.app.inject({ method: 'GET', url: base })).json().presets).toEqual([]);
+    expect(
+      (await f.app.inject({ method: 'GET', url: base + '?includeArchived=true' })).json().presets,
+    ).toHaveLength(1);
+    expect(
+      (
+        await f.app.inject({
+          method: 'POST',
+          url: `${base}/${id}/restore`,
+          payload: { expectedRevision: 3 },
+        })
+      ).json(),
+    ).toMatchObject({ archived: false, revision: 4 });
+    expect(
+      (await f.app.inject({ method: 'GET', url: base + '?includeArchived=invalid' })).statusCode,
+    ).toBe(400);
+    expect(
+      (
+        await f.app.inject({
+          method: 'PATCH',
+          url: `${base}/${id}`,
+          payload: { expectedRevision: 4, agentId: 'other' },
+        })
+      ).statusCode,
+    ).toBe(400);
+    expect(inspect).toHaveBeenCalledTimes(1);
+    clock.mockRestore();
   } finally {
     await f.close();
   }

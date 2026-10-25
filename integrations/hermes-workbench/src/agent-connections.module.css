@@ -332,6 +332,39 @@
   color: var(--h-text-3);
   font-size: 11px;
 }
+.productChoice .productAssociation {
+  color: var(--h-text, #292823);
+  font-weight: 500;
+}
+.productChoice .productLocalStatus {
+  font-size: 11px;
+}
+.productChoice .productLocalStatus[data-local-check='found'] {
+  color: #238269;
+}
+.productChoice .productLocalStatus[data-local-check='stale'] {
+  color: #a06a24;
+}
+.memberSource {
+  display: grid;
+  gap: 4px;
+  margin: 9px 0 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.memberSource strong {
+  font-weight: 500;
+}
+.memberSource small {
+  color: var(--h-text-3, #77736c);
+  font-size: 10px;
+}
+.sourceAttention,
+.productChoice .sourceAttention {
+  color: #a06a24;
+  font-size: 11px;
+}
 .fields {
   border: 0;
   padding: 0;

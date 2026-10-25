@@ -2,7 +2,11 @@ import { TaskInstructionError, ProjectMemoryError } from '@control-plane/task-en
 import { WorkspaceReviewError } from '@control-plane/workspace';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
-import { ExecutionWorkspaceModeSchema, SessionSettingValuesSchema } from '@control-plane/core';
+import {
+  AgentSessionPresetIdSchema,
+  ExecutionWorkspaceModeSchema,
+  SessionSettingValuesSchema,
+} from '@control-plane/core';
 import {
   PotentialSecretError,
   SensitiveApprovalReadError,
@@ -47,8 +51,13 @@ export const FollowUpTaskSchema = z
     idempotencyKey: z.string().min(1).max(128),
     workspaceConfirmation: WorkspaceConfirmationSchema.optional(),
     sessionSettings: SessionSettingValuesSchema.optional(),
+    sessionPresetId: AgentSessionPresetIdSchema.optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (input) => input.sessionSettings === undefined || input.sessionPresetId === undefined,
+    'Choose session settings or a preset, not both.',
+  );
 export const FollowUpLinkSchema = z
   .object({
     sourceTaskId: z.string().min(1),
@@ -66,15 +75,22 @@ export const SubmitGoalSchema = z
     objective: z.string().trim().min(1).max(100_000),
     workspaceConfirmation: WorkspaceConfirmationSchema.optional(),
     sessionSettings: SessionSettingValuesSchema.optional(),
+    sessionPresetId: AgentSessionPresetIdSchema.optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (input) => input.sessionSettings === undefined || input.sessionPresetId === undefined,
+    'Choose session settings or a preset, not both.',
+  );
 const ApprovalDecisionSchema = z
   .object({ actor: z.string().trim().min(1).max(128).default('local-user') })
   .strict();
 
 function sendError(reply: FastifyReply, error: unknown) {
   if (error instanceof SessionSettingsError)
-    return reply.code(error.statusCode).send({ error: error.message });
+    return reply
+      .code(error.statusCode)
+      .send({ error: error.message, ...(error.code ? { code: error.code } : {}) });
   if (error instanceof WorkspaceReviewError) return reply.code(409).send({ error: error.message });
   if (error instanceof ProjectMemoryError) return reply.code(409).send({ error: error.message });
   if (error instanceof TaskInstructionError)
@@ -151,6 +167,67 @@ export function registerTaskControlRoutes(
       return sendError(reply, error);
     }
   });
+  const presetParams = memberSettingsParams
+    .extend({ presetId: AgentSessionPresetIdSchema })
+    .strict();
+  app.get('/api/agents/:id/session-presets', async (request, reply) => {
+    try {
+      const { id } = memberSettingsParams.parse(request.params);
+      const { includeArchived } = z
+        .object({
+          includeArchived: z
+            .enum(['true', 'false'])
+            .optional()
+            .transform((value) => value === 'true'),
+        })
+        .strict()
+        .parse(request.query);
+      reply.header('cache-control', 'no-store');
+      return service.sessionSettings.listPresets(id, includeArchived);
+    } catch (error) {
+      return sendError(reply, error);
+    }
+  });
+  app.get('/api/agents/:id/session-presets/:presetId', async (request, reply) => {
+    try {
+      const { id, presetId } = presetParams.parse(request.params);
+      reply.header('cache-control', 'no-store');
+      return service.sessionSettings.getPreset(id, presetId);
+    } catch (error) {
+      return sendError(reply, error);
+    }
+  });
+  app.post('/api/agents/:id/session-presets', async (request, reply) => {
+    try {
+      const { id } = memberSettingsParams.parse(request.params);
+      return reply.code(201).send(service.sessionSettings.createPreset(id, request.body));
+    } catch (error) {
+      return sendError(reply, error);
+    }
+  });
+  app.patch('/api/agents/:id/session-presets/:presetId', async (request, reply) => {
+    try {
+      const { id, presetId } = presetParams.parse(request.params);
+      return service.sessionSettings.updatePreset(id, presetId, request.body);
+    } catch (error) {
+      return sendError(reply, error);
+    }
+  });
+  for (const action of ['archive', 'restore'] as const) {
+    app.post(`/api/agents/:id/session-presets/:presetId/${action}`, async (request, reply) => {
+      try {
+        const { id, presetId } = presetParams.parse(request.params);
+        return service.sessionSettings.archivePreset(
+          id,
+          presetId,
+          request.body,
+          action === 'restore',
+        );
+      } catch (error) {
+        return sendError(reply, error);
+      }
+    });
+  }
   app.get('/api/tasks/:id/recovery', async (request, reply) => {
     try {
       const { id } = z.object({ id: z.string().min(1).max(128) }).parse(request.params);

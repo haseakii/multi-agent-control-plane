@@ -11,16 +11,26 @@ export const ClientSubmitSchema = z
     objective: z.string().trim().min(1).max(32_000),
     idempotencyKey: Id,
     sessionSettings: SessionSettingValuesSchema.optional(),
+    sessionPresetId: z.string().uuid().optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (value) => value.sessionSettings === undefined || value.sessionPresetId === undefined,
+    'Choose sessionSettings or sessionPresetId, not both.',
+  );
 export const ClientContinueSchema = z
   .object({
     taskId: Id,
     content: z.string().trim().min(1).max(4000),
     idempotencyKey: Id,
     sessionSettings: SessionSettingValuesSchema.optional(),
+    sessionPresetId: z.string().uuid().optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (value) => value.sessionSettings === undefined || value.sessionPresetId === undefined,
+    'Choose sessionSettings or sessionPresetId, not both.',
+  );
 
 /** Shared validated contract; transport adapters do not own orchestration. */
 export const clientToolDefinitions = [
@@ -34,7 +44,7 @@ export const clientToolDefinitions = [
   {
     name: 'collaboration_list_agents',
     description:
-      'Discover registered collaboration agents, readiness, advertised model controls and saved defaults. Use projectId and agentId with refreshSettings=true to read real ACP settings without logging in or sending a prompt. Only advertised controls are selectable; permission modes remain unchanged.',
+      'Discover registered collaboration agents, readiness, advertised model controls, saved defaults and named preset IDs. Use projectId and agentId with refreshSettings=true to read real ACP settings without logging in or sending a prompt. Only advertised controls are selectable; permission modes remain unchanged.',
     schema: z
       .object({
         projectId: Id.optional(),
@@ -59,7 +69,7 @@ export const clientToolDefinitions = [
   {
     name: 'collaboration_submit_task',
     description:
-      'Delegate a real task directly to an eligible ACP agent in an authorized project. Optional sessionSettings contains only advertised model controls read with list_agents. Returns promptly with a durable task ID; use get_task to follow progress and confirmed settings. Use a new idempotencyKey per intended submission and reuse it only for retries. Source code is merged only through the existing human review workflow.',
+      'Delegate a real task directly to an eligible ACP agent in an authorized project. Choose optional sessionSettings (advertised controls) or sessionPresetId (a named preset from list_agents); accepted tasks copy the values and retain them on retry. Returns promptly with a durable task ID; use get_task to follow progress and confirmed settings. Use a new idempotencyKey per intended submission and reuse it only for retries. Source code is merged only through the existing human review workflow.',
     schema: ClientSubmitSchema,
     readOnly: false,
   },
@@ -77,7 +87,7 @@ export const clientToolDefinitions = [
   {
     name: 'collaboration_continue_task',
     description:
-      'Continue the latest task in the same durable conversation. While running, queues an instruction; after completion, creates a linked new round carrying prior context. Does not re-delegate completed work. Reuse idempotencyKey only when retrying the same input.',
+      'Continue the latest task in the same durable conversation. While running, queues an instruction; after completion, creates a linked new round carrying prior context and confirmed model settings. An explicit sessionSettings or sessionPresetId applies to the next round only. Does not re-delegate completed work. Reuse idempotencyKey only when retrying the same input.',
     schema: ClientContinueSchema,
     readOnly: false,
   },

@@ -19,13 +19,63 @@ export const SessionSettings = z.object({
 });
 export type SessionSettingsData = z.infer<typeof SessionSettings>;
 export type SessionSettingOptionData = SessionSettingsData['options'][number];
+export const CapabilityObservation = z.object({
+  source: z.literal('acp-session-new'),
+  observedAt: z.string().datetime(),
+  expiresAt: z.string().datetime(),
+  sessionIdHash: z.string(),
+  definitionFingerprint: z.string(),
+  readinessFingerprint: z.string(),
+  accountIdentity: z.literal('not-exposed'),
+  accountIdentityNote: z.string(),
+});
 export const AgentSessionSettings = z.object({
   agentId: z.string(),
   projectId: z.string().optional(),
   settings: SessionSettings.nullable(),
   defaults: z.object({ revision: z.number().int().nonnegative(), values: SessionSettingValues }),
+  freshness: z.enum(['fresh', 'stale', 'unavailable']).default('unavailable'),
+  observation: CapabilityObservation.nullable().default(null),
+  staleReason: z
+    .enum(['expired', 'definition-changed', 'readiness-changed', 'inspection-failed'])
+    .nullable()
+    .default(null),
 });
 export type AgentSessionSettingsData = z.infer<typeof AgentSessionSettings>;
+export const SessionPreset = z.object({
+  id: z.string().uuid(),
+  agentId: z.string(),
+  name: z.string().trim().min(1).max(80),
+  revision: z.number().int().min(1),
+  values: SessionSettingValues,
+  archived: z.boolean(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+export type SessionPresetData = z.infer<typeof SessionPreset>;
+export const AgentSessionPresets = z.object({
+  agentId: z.string(),
+  presets: z.array(SessionPreset).max(128),
+});
+
+export function sessionCacheFreshness(
+  data: AgentSessionSettingsData | undefined,
+  now = Date.now(),
+) {
+  if (!data || data.freshness === 'unavailable') return 'unavailable';
+  if (
+    data.freshness === 'stale' ||
+    !data.observation ||
+    Date.parse(data.observation.expiresAt) <= now
+  )
+    return 'stale';
+  return 'fresh';
+}
+
+/** Loading a named choice is local draft work and never mutates defaults or an active task. */
+export function sessionPresetDraft(preset: SessionPresetData): SessionSettingValuesData {
+  return { ...preset.values };
+}
 export const TaskSessionSettings = z.union([
   z.object({
     state: z.literal('unavailable'),

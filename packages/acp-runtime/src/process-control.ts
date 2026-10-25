@@ -1,4 +1,5 @@
 import * as acp from '@agentclientprotocol/sdk';
+import { createHash } from 'node:crypto';
 import {
   SessionSettingValuesSchema,
   type AgentDefinition,
@@ -8,6 +9,10 @@ import type { ProcessHandle, Runner } from '@control-plane/runner';
 import { AcpClientRuntime, type AcpRuntimeConnection } from './runtime.js';
 import type { AgentReadiness, AgentNegotiation } from './types.js';
 import { transientAuthenticationError } from './auth-failure.js';
+import {
+  SessionSettingsInspectionSchema,
+  type SessionSettingsInspection,
+} from './session-settings.js';
 
 export type AgentAuthMethodSummary = {
   id: string;
@@ -29,6 +34,11 @@ export interface AgentRuntimeControl {
     cwd: string,
     values?: Record<string, string>,
   ): Promise<SessionSettingsSnapshot>;
+  inspectSessionSettings?(
+    definition: AgentDefinition,
+    cwd: string,
+    values?: Record<string, string>,
+  ): Promise<SessionSettingsInspection>;
   close?(): void;
 }
 
@@ -147,12 +157,27 @@ export class ProcessAgentRuntimeControl implements AgentRuntimeControl {
     cwd: string,
     values: Record<string, string> = {},
   ): Promise<SessionSettingsSnapshot> {
+    return (await this.inspectSessionSettings(definition, cwd, values)).settings;
+  }
+
+  async inspectSessionSettings(
+    definition: AgentDefinition,
+    cwd: string,
+    values: Record<string, string> = {},
+  ): Promise<SessionSettingsInspection> {
     const settings = SessionSettingValuesSchema.parse(values);
     return this.withConnection(definition, this.probeTimeoutMs, async (connection) => {
       // This discovery/validation session has no MCP servers and no active prompt;
       // runtime permission handling therefore refuses every permission request.
       const session = await connection.newSession({ cwd, mcpServers: [] });
-      return connection.applySessionSettings(session.sessionId, settings);
+      return SessionSettingsInspectionSchema.parse({
+        settings: await connection.applySessionSettings(session.sessionId, settings),
+        observation: {
+          source: 'acp-session-new',
+          observedAt: new Date().toISOString(),
+          sessionIdHash: createHash('sha256').update(session.sessionId).digest('hex'),
+        },
+      });
     });
   }
 

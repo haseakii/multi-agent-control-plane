@@ -7,3 +7,5 @@ export * from './backup.js';
 export * from './context-search.js';
 export * from './agent-references.js';
 export * from './session-settings.js';
+export * from './session-presets.js';
+export * from './agent-catalog-sources.js';

@@ -86,6 +86,14 @@ export const TaskSessionSettingsSchema = z
     confirmed: SessionSettingsSnapshotSchema.optional(),
     error: publicText(2000).optional(),
     attemptId: ExecutionAttemptIdSchema.optional(),
+    selectedPreset: z
+      .object({
+        id: z.string().uuid(),
+        revision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+        name: publicText(80),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 export type TaskSessionSettings = z.infer<typeof TaskSessionSettingsSchema>;

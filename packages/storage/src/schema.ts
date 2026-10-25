@@ -1,7 +1,46 @@
-import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import {
+  index,
+  integer,
+  primaryKey,
+  sqliteTable,
+  text,
+  uniqueIndex,
+} from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
 
 const payload = () => text('payload').notNull();
+
+export const agentCatalogSources = sqliteTable(
+  'agent_catalog_sources',
+  {
+    agentId: text('agent_id')
+      .primaryKey()
+      .notNull()
+      .references(() => agentDefinitions.id, { onDelete: 'cascade' }),
+    entryId: text('entry_id').notNull(),
+    revision: integer('revision').notNull(),
+    payload: payload(),
+  },
+  (table) => [index('agent_catalog_sources_entry_idx').on(table.entryId)],
+);
+
+export const agentSessionPresets = sqliteTable(
+  'agent_session_presets',
+  {
+    agentId: text('agent_id').notNull(),
+    id: text('id').notNull(),
+    name: text('name').notNull(),
+    revision: integer('revision').notNull(),
+    archived: integer('archived').notNull(),
+    payload: payload(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.agentId, table.id] }),
+    uniqueIndex('agent_session_presets_active_name_idx')
+      .on(table.agentId, sql`${table.name} COLLATE NOCASE`)
+      .where(sql`${table.archived} = 0`),
+  ],
+);
 
 export const agentSessionDefaults = sqliteTable('agent_session_defaults', {
   agentId: text('agent_id').primaryKey().notNull(),

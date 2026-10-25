@@ -9,6 +9,7 @@ import { installedPackageEntries, installedPackageName } from './agent-installed
 export const DiscoveredEntrySchema = z.object({
   source: z.enum(['registered', 'path', 'directory', 'package']),
   agentId: z.string().optional(),
+  association: z.enum(['linked', 'possible']).optional(),
   name: z.string(),
   packageName: z.string().optional(),
   packageVersion: z.string().optional(),
@@ -73,6 +74,8 @@ export function discoverAgentEntries(
   const candidates: z.infer<typeof DiscoveredEntrySchema>[] = agents
     .filter(
       (agent) =>
+        (agent.registrationSource?.status === 'linked' &&
+          agent.registrationSource.record?.entryId === entry.id) ||
         normalize(agent.definition.name) === normalize(entry.name) ||
         (usableName &&
           normalize(paths.basename(agent.definition.runtime.command)) === normalize(usableName)),
@@ -80,6 +83,11 @@ export function discoverAgentEntries(
     .map((agent) => ({
       source: 'registered',
       agentId: agent.definition.id,
+      association:
+        agent.registrationSource?.status === 'linked' &&
+        agent.registrationSource.record?.entryId === entry.id
+          ? 'linked'
+          : 'possible',
       name: agent.definition.name,
       runtime: agent.definition.runtime,
     }));

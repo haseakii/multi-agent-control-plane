@@ -67,7 +67,7 @@ Codex 成员默认在网页完成保存和恢复原生默认，最后恢复为�
 
 实际 `C:/Users/Administrator/.codex/config.toml` 原来固定旧代理代码。本轮只更新现有 `local_collaboration` 的 `command` 与 `args[0]`，连接文件路径和全部其它配置保持原样；Node 二进制哈希一致。未复制凭据。
 
-使用这份实际配置新建的临时 MCP 连接已确认公开 `sessionSettings` 和 `refreshSettings`，证据 `codex-entry-verified.json`。当前对话中此前已经启动的旧代理仍缓存旧参数描述；原有任务、状态查询和追问调用保持兼容，新增逐任务参数须在该连接重新加载后展示。没有重启 Codex 或强制结束旧代理。
+使用这份实际配置新建的临时 MCP 连接已确认公开 `sessionSettings` 和 `refreshSettings`，证据 `codex-entry-verified.json`。初次交付时当前对话的旧代理仍缓存旧参数描述；随后实际连接已成功接受 `projectId`、`agentId`、`refreshSettings:false` 并只返回指定成员，原任务的请求值、确认值与追问快照也已从该连接只读核对。没有重启 Codex 或强制结束旧代理。
 
 ## 其它主流 ACP 的扩展
 

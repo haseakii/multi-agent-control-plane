@@ -41,6 +41,29 @@ it('restores editable rows with stable IDs, without cached readiness, auth or er
   expect(writeOnboardingDraft(storage, [])).toBe('empty');
   expect(readOnboardingDraft(storage)).toEqual([]);
 });
+it('retains an explicit catalog selection across reload without importing connection evidence', () => {
+  const storage = store();
+  const catalogRow = { ...row, catalogSelection: { entryId: 'example-agent', version: '1.2.3' } };
+  expect(
+    writeOnboardingDraft(storage, [
+      {
+        ...catalogRow,
+        registrationSource: { status: 'linked' },
+        definitionHash: 'old-hash',
+      } as typeof catalogRow,
+    ]),
+  ).toBe('saved');
+  expect(readOnboardingDraft(storage)).toEqual([catalogRow]);
+  expect(storage.getItem(onboardingDraftKey)).not.toMatch(/registrationSource|definitionHash/);
+  expect(readOnboardingDraft(storage)[0]?.id).toBe(row.id);
+});
+it('does not infer a catalog association for old custom drafts during reconciliation', () => {
+  const storage = store();
+  writeOnboardingDraft(storage, [row]);
+  const restored = reconcileOnboardingRows(readOnboardingDraft(storage), []);
+  expect(restored[0]).not.toHaveProperty('catalogSelection');
+  expect(restored[0]?.runtime).toEqual(row.runtime);
+});
 it('reconciles lost registration responses and preserves the server role instead of cached status', () => {
   const agent = {
     definition: {

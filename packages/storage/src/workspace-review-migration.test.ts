@@ -32,7 +32,7 @@ it('upgrades ten migrations to durable workspace review storage without changing
     expect(storage.repositories.projects.get('p')).toEqual(project);
     expect(storage.repositories.workspaceReviews.list()).toEqual([]);
     expect(storage.sqlite.prepare('SELECT COUNT(*) AS n FROM __drizzle_migrations').get()).toEqual({
-      n: 16,
+      n: 18,
     });
     expect(storage.sqlite.pragma('foreign_key_check')).toEqual([]);
   } finally {

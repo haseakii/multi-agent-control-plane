@@ -97,6 +97,7 @@ import type { SqliteStorage } from '@control-plane/storage';
 import {
   SqliteContextSearch,
   SqliteSessionSettingsRepository,
+  SqliteSessionPresetsRepository,
   isSearchableText,
   TEXT_INDEX_BYTES,
 } from '@control-plane/storage';
@@ -143,9 +144,17 @@ const now = () => new Date().toISOString();
 const id = (kind: string) => `${kind}-${randomUUID()}`;
 const canonicalSettings = (values: Record<string, string>) =>
   Object.fromEntries(Object.entries(values).sort(([a], [b]) => a.localeCompare(b)));
-const settingsHash = (values?: Record<string, string>) =>
+const settingsHash = (values?: Record<string, string>, presetId?: string) =>
   createHash('sha256')
-    .update(JSON.stringify(values === undefined ? null : canonicalSettings(values)))
+    .update(
+      JSON.stringify(
+        presetId === undefined
+          ? values === undefined
+            ? null
+            : canonicalSettings(values)
+          : { sessionPresetId: presetId },
+      ),
+    )
     .digest('hex');
 const messageCommitUncertainFailure = {
   code: 'MESSAGE_COMMIT_UNCERTAIN',
@@ -259,6 +268,7 @@ export class ControlPlaneRuntime {
       new SqliteSessionSettingsRepository(this.storage.sqlite),
       {
         agent: (agentId) => this.requireAgent(agentId),
+        readiness: (agentId) => this.agentControl.state(this.requireAgent(agentId).id).readiness,
         cwd: (projectId) => {
           if (projectId) {
             const workspace = this.projectWorkspace(projectId);
@@ -269,8 +279,9 @@ export class ControlPlaneRuntime {
           mkdirSync(probe, { recursive: true });
           return probe;
         },
-        inspect: (agent, cwd, values) => runtimeControl.sessionSettings(agent, cwd, values),
+        inspect: (agent, cwd, values) => runtimeControl.inspectSessionSettings(agent, cwd, values),
       },
+      { presets: new SqliteSessionPresetsRepository(this.storage.sqlite) },
     );
     this.taskEngine = new TaskEngine(this.storage.repositories);
     this.contextSearch = new SqliteContextSearch(this.storage.sqlite);
@@ -1297,7 +1308,13 @@ export class ControlPlaneRuntime {
         objective: goal.objective,
         state: 'ready',
       });
-      this.sessionSettings.prepare(task.id, agent.id, goal.sessionSettings);
+      this.sessionSettings.prepare(
+        task.id,
+        agent.id,
+        goal.sessionSettings,
+        undefined,
+        goal.sessionPresetId,
+      );
       const { assignment, attempt } = this.prepareExecution(task, agent, task.objective, {
         name: 'Boss',
       });
@@ -1370,7 +1387,13 @@ export class ControlPlaneRuntime {
         objective: request.objective,
         state: 'ready',
       });
-      this.sessionSettings.prepare(task.id, agent.id, request.sessionSettings);
+      this.sessionSettings.prepare(
+        task.id,
+        agent.id,
+        request.sessionSettings,
+        undefined,
+        request.sessionPresetId,
+      );
       const { assignment, attempt } = this.prepareExecution(task, agent, task.objective, {
         name: 'Collaborator',
       });
@@ -1511,12 +1534,17 @@ export class ControlPlaneRuntime {
     const common = ResumeTaskSchema.extend({
       ...TaskRecordConfirmationSchema.shape,
       sessionSettings: SessionSettingValuesSchema.optional(),
+      sessionPresetId: z.string().uuid().optional(),
     });
     const choice = z
       .union([
         common.extend({ bossAgentId: AgentIdSchema }).strict(),
         common.extend({ mode: z.literal('direct'), agentId: AgentIdSchema }).strict(),
       ])
+      .refine(
+        (input) => input.sessionSettings === undefined || input.sessionPresetId === undefined,
+        'Choose session settings or a preset, not both.',
+      )
       .parse(input);
     return this.storage.repositories.transaction(() => {
       const view = this.taskRecords.confirm(taskId, choice.version);
@@ -1534,7 +1562,13 @@ export class ControlPlaneRuntime {
       this.directoryBindings.requireGoalConfirmation(workspace, choice.workspaceConfirmation);
       if (!direct) this.agentControl.selectBoss(project.id, agent.id);
       const task = this.taskEngine.transitionTask(taskId, 'ready');
-      this.sessionSettings.prepare(task.id, agent.id, choice.sessionSettings);
+      this.sessionSettings.prepare(
+        task.id,
+        agent.id,
+        choice.sessionSettings,
+        undefined,
+        choice.sessionPresetId,
+      );
       const { assignment, attempt } = this.prepareExecution(task, agent, task.objective, {
         name: direct ? 'Collaborator' : 'Boss',
       });
@@ -1639,7 +1673,7 @@ export class ControlPlaneRuntime {
       !terminal.has(task.state) ||
       this.instructionQueue.list(task).some((i) => i.idempotencyKeyHash === keyHash)
     ) {
-      if (request.sessionSettings !== undefined)
+      if (request.sessionSettings !== undefined || request.sessionPresetId !== undefined)
         throw new TaskControlError(
           409,
           '运行中的补充要求沿用当前设置；请在本轮结束后选择下一轮设置。',
@@ -1678,7 +1712,9 @@ export class ControlPlaneRuntime {
         if (
           task.objective !== request.content ||
           (existing.payload.settingsHash !== undefined &&
-            existing.payload.settingsHash !== settingsHash(request.sessionSettings))
+            existing.payload.settingsHash !==
+              settingsHash(request.sessionSettings, request.sessionPresetId)) ||
+          (request.sessionPresetId !== undefined && existing.payload.settingsHash === undefined)
         )
           throw new TaskControlError(409, '该发送标识已用于另一条追问。');
         return { task, reused: true };
@@ -1758,12 +1794,18 @@ export class ControlPlaneRuntime {
           payload: {
             sourceTaskId: previous.id,
             conversationRootTaskId: history[0]!.id,
-            settingsHash: settingsHash(request.sessionSettings),
+            settingsHash: settingsHash(request.sessionSettings, request.sessionPresetId),
           },
           occurredAt: now(),
         }),
       );
-      this.sessionSettings.prepare(task.id, agent.id, request.sessionSettings, previous.id);
+      this.sessionSettings.prepare(
+        task.id,
+        agent.id,
+        request.sessionSettings,
+        previous.id,
+        request.sessionPresetId,
+      );
       const { assignment, attempt } = this.prepareExecution(
         task,
         agent,

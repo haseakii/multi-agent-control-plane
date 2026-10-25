@@ -11,6 +11,21 @@ export const unavailableSessionSettings = (): SessionSettingsSnapshot => ({
   options: [],
 });
 
+/** Host-generated observation metadata stays separate from a task's actual model snapshot. */
+export const SessionSettingsInspectionSchema = z
+  .object({
+    settings: SessionSettingsSnapshotSchema,
+    observation: z
+      .object({
+        source: z.literal('acp-session-new'),
+        observedAt: z.string().datetime(),
+        sessionIdHash: z.string().regex(/^[a-f0-9]{64}$/),
+      })
+      .strict(),
+  })
+  .strict();
+export type SessionSettingsInspection = z.infer<typeof SessionSettingsInspectionSchema>;
+
 const messages = {
   'invalid-advertisement': 'Agent returned invalid or excessive session settings.',
   'invalid-values': 'Requested session settings are invalid.',

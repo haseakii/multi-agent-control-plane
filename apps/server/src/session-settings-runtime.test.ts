@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, it, vi } from 'vitest';
-import { openSqliteStorage } from '@control-plane/storage';
+import { openSqliteStorage, SqliteSessionPresetsRepository } from '@control-plane/storage';
 import { createControlPlaneRuntime } from './runtime-composition.js';
 
 type Trace = {
@@ -93,6 +93,107 @@ function fixture(reject: false | 'reject' | 'malformed' | 'idle-update' = false)
     },
   };
 }
+
+it('freezes an active preset once and reuses the accepted task after that preset changes and is archived', async () => {
+  const f = fixture();
+  try {
+    const presets = new SqliteSessionPresetsRepository(f.storage.sqlite);
+    const presetId = '022125ee-15a3-413d-9a35-e97d2513741d';
+    const preset = presets.create({
+      id: presetId,
+      agentId: 'worker',
+      name: 'Original large',
+      values: { model: 'large', reasoning: 'high' },
+    });
+    const lookup = vi.spyOn(f.runtime.sessionSettings, 'getPreset');
+    const input = {
+      projectId: 'p',
+      agentId: 'worker',
+      objective: 'Create with a frozen preset',
+      idempotencyKey: 'preset-frozen',
+      sessionPresetId: presetId,
+    };
+    const first = f.runtime.submitClientTask('fixture-client', input);
+    const copied = f.runtime.sessionSettings.repository.getTask(first.task.id)!;
+    expect(copied).toMatchObject({
+      requested: preset.values,
+      selectedPreset: { id: presetId, revision: 1, name: 'Original large' },
+    });
+    const edited = presets.update('worker', presetId, 1, {
+      name: 'Now small',
+      values: { model: 'small' },
+    });
+    presets.archive('worker', presetId, edited.revision);
+    expect(f.runtime.submitClientTask('fixture-client', input)).toMatchObject({
+      reused: true,
+      task: { id: first.task.id },
+    });
+    expect(() =>
+      f.runtime.submitConversationInput(first.task.id, {
+        content: 'While running',
+        idempotencyKey: 'running-preset',
+        sessionPresetId: presetId,
+      }),
+    ).toThrow('沿用当前设置');
+    await f.settled(first.task.id, 'completed');
+    expect(f.readTrace().filter((row) => row.type === 'prompt')).toMatchObject([
+      { model: 'large', thought: 'high' },
+    ]);
+    expect(lookup).toHaveBeenCalledTimes(1);
+    await f.reopen();
+    expect(f.runtime.submitClientTask('fixture-client', input)).toMatchObject({
+      reused: true,
+      task: { id: first.task.id },
+    });
+    expect(f.runtime.sessionSettings.repository.getTask(first.task.id)).toMatchObject({
+      requested: preset.values,
+      selectedPreset: copied.selectedPreset,
+    });
+    expect(f.readTrace().filter((row) => row.type === 'prompt')).toHaveLength(1);
+    const second = f.runtime.followUpTask(first.task.id, {
+      content: 'Keep first and add second',
+      idempotencyKey: 'preset-inherit',
+    });
+    await f.settled(second.task.id, 'completed');
+    expect(f.runtime.sessionSettings.repository.getTask(second.task.id)?.requested).toEqual(
+      preset.values,
+    );
+    expect(
+      f.runtime.sessionSettings.repository.getTask(second.task.id)?.selectedPreset,
+    ).toBeUndefined();
+    const reopenedPresets = new SqliteSessionPresetsRepository(f.storage.sqlite);
+    const restored = reopenedPresets.restore(
+      'worker',
+      presetId,
+      reopenedPresets.get('worker', presetId)!.revision,
+    );
+    const nextInput = {
+      content: 'Use the selected small preset for the next round',
+      idempotencyKey: 'explicit-preset-followup',
+      sessionPresetId: presetId,
+    };
+    const third = f.runtime.followUpTask(second.task.id, nextInput);
+    reopenedPresets.archive('worker', presetId, restored.revision);
+    expect(f.runtime.followUpTask(second.task.id, nextInput)).toMatchObject({
+      reused: true,
+      task: { id: third.task.id },
+    });
+    await f.settled(third.task.id, 'completed');
+    expect(f.runtime.sessionSettings.repository.getTask(third.task.id)).toMatchObject({
+      requested: { model: 'small' },
+      selectedPreset: { id: presetId, revision: restored.revision, name: 'Now small' },
+    });
+    expect(
+      f
+        .readTrace()
+        .filter((row) => row.type === 'prompt')
+        .at(-1),
+    ).toMatchObject({ model: 'small', thought: 'low' });
+    expect(f.readTrace().filter((row) => row.type === 'prompt')).toHaveLength(3);
+  } finally {
+    await f.dispose();
+  }
+}, 25_000);
 
 it('applies actual ACP choices before prompt and inherits the last confirmed settings across restart and followup', async () => {
   const f = fixture();

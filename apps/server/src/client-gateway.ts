@@ -153,6 +153,14 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
                   readiness: runtime.agentControl.state(a.id).readiness,
                   settings: observed.settings,
                   defaults: observed.defaults,
+                  freshness: observed.freshness,
+                  observation: observed.observation,
+                  staleReason: observed.staleReason,
+                  presets: runtime.sessionSettings.listPresets(a.id).presets.map((preset) => ({
+                    id: preset.id,
+                    name: preset.name,
+                    revision: preset.revision,
+                  })),
                 };
               }),
           };
@@ -329,6 +337,9 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
               content: value.content,
               ...(value.sessionSettings !== undefined
                 ? { sessionSettings: value.sessionSettings }
+                : {}),
+              ...(value.sessionPresetId !== undefined
+                ? { sessionPresetId: value.sessionPresetId }
                 : {}),
               idempotencyKey: digest(JSON.stringify([identity.id, value.idempotencyKey])),
               workspaceConfirmation: runtime.resolveClientWorkspaceConfirmation(

@@ -12,3 +12,5 @@ export * from './workspace-cleanup.js';
 export * from './message-delivery-view.js';
 export * from './task-record.js';
 export * from './session-settings.js';
+export * from './session-presets.js';
+export * from './agent-catalog-source.js';

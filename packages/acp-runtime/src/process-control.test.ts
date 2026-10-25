@@ -37,6 +37,17 @@ describe('ProcessAgentRuntimeControl', () => {
     });
     expect(stop).toHaveBeenCalledTimes(1);
     expect(runner.status(stop.mock.calls[0]![0]).state).not.toBe('running');
+    const inspection = await control.inspectSessionSettings(definition(), process.cwd(), {
+      model: 'large',
+    });
+    expect(inspection.settings).toEqual(snapshot);
+    expect(inspection.observation).toMatchObject({
+      source: 'acp-session-new',
+      sessionIdHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      observedAt: expect.any(String),
+    });
+    expect(inspection.observation).not.toHaveProperty('sessionId');
+    expect(inspection.settings).not.toHaveProperty('observation');
     await expect(
       control.sessionSettings(definition(), process.cwd(), { model: 'unavailable' }),
     ).rejects.toMatchObject({ code: 'invalid-value' });
