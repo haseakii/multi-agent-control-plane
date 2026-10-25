@@ -21,6 +21,8 @@ type Preview = z.infer<typeof Status>;
 const Document = z.object({ html: z.string(), revision: z.string(), url: z.string().url() });
 export function PagePreview({ tasks, onClose }: { tasks: TaskData[]; onClose: () => void }) {
   const latest = tasks.at(-1)?.id ?? '';
+  const conversationRoot = tasks[0]?.id ?? '';
+  const previousConversation = useRef(conversationRoot);
   const [taskId, setTaskId] = useState(latest),
     [entry, setEntry] = useState<string>();
   const [status, setStatus] = useState<Preview>(),
@@ -33,8 +35,11 @@ export function PagePreview({ tasks, onClose }: { tasks: TaskData[]; onClose: ()
   const iframe = useRef<HTMLIFrameElement>(null);
   useEffect(() => {
     setTaskId(latest);
-    setEntry(undefined);
-  }, [latest]);
+    if (previousConversation.current !== conversationRoot) {
+      previousConversation.current = conversationRoot;
+      setEntry(undefined);
+    }
+  }, [latest, conversationRoot]);
   useEffect(() => {
     if (!taskId) return;
     let disposed = false,
@@ -149,10 +154,7 @@ export function PagePreview({ tasks, onClose }: { tasks: TaskData[]; onClose: ()
           <select
             aria-label="预览轮次"
             value={taskId}
-            onChange={(event) => {
-              setTaskId(event.target.value);
-              setEntry(undefined);
-            }}
+            onChange={(event) => setTaskId(event.target.value)}
           >
             {tasks.map((task, i) => (
               <option key={task.id} value={task.id}>
@@ -201,6 +203,11 @@ export function PagePreview({ tasks, onClose }: { tasks: TaskData[]; onClose: ()
               ? '等待页面文件。Agent 创建 HTML 后会自动准备预览。'
               : `${paused ? '已暂停自动更新' : '保存后自动更新'} · ${status.entry} · ${status.fileCount} 个页面资源`}
       </p>
+      {error && entry && (
+        <button type="button" onClick={() => setEntry(undefined)}>
+          返回默认预览页面
+        </button>
+      )}
       {pageError && (
         <p role="alert" className={s.error}>
           {pageError} 可直接在左侧要求 Agent 修复。
