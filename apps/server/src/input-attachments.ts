@@ -6,6 +6,8 @@ import {
   InputAttachmentSchema,
   INPUT_ATTACHMENT_DIRECTORY,
   INPUT_ATTACHMENT_MAX_BYTES,
+  TaskIdSchema,
+  type AuditEvent,
   type InputAttachment,
 } from '@control-plane/core';
 import type { InputAttachmentRepository } from '@control-plane/storage';
@@ -24,21 +26,28 @@ export function inputAttachmentTaskScope(
     if (item.projectId !== task.projectId) throw Error('附件上下文不属于当前项目。');
     return item;
   };
-  const visit = (item: Task, parentDepth: number) => {
+  const stack = [{ item: task, parentDepth: 0, exit: false }];
+  while (stack.length) {
+    const { item, parentDepth, exit } = stack.pop()!;
+    if (exit) {
+      path.delete(item.id);
+      continue;
+    }
     sameProject(item);
-    if (path.has(item.id) || parentDepth > 16 || visited.size >= 1024)
+    if (path.has(item.id) || parentDepth > 16)
       throw Error('附件上下文的任务关联异常，未读取其它任务数据。');
-    if (visited.has(item.id)) return;
+    if (visited.has(item.id)) continue;
+    if (visited.size >= 1024) throw Error('附件上下文的任务关联异常，未读取其它任务数据。');
     visited.add(item.id);
     path.add(item.id);
     ids.add(item.id);
     for (const id of item.dependencyIds) ids.add(sameProject(read(id)).id);
-    if (item.parentTaskId) visit(read(item.parentTaskId), parentDepth + 1);
+    stack.push({ item, parentDepth, exit: true });
     const prior = previous(item);
-    if (prior) visit(read(prior), parentDepth);
-    path.delete(item.id);
-  };
-  visit(task, 0);
+    if (prior) stack.push({ item: read(prior), parentDepth, exit: false });
+    if (item.parentTaskId)
+      stack.push({ item: read(item.parentTaskId), parentDepth: parentDepth + 1, exit: false });
+  }
   return [...ids];
 }
 
@@ -59,6 +68,35 @@ const normal = (value: string) =>
   process.platform === 'win32' ? resolve(value).toLowerCase() : resolve(value);
 export class InputAttachmentService {
   constructor(readonly repository: InputAttachmentRepository) {}
+
+  taskScope(
+    task: Task,
+    read: (id: string) => Task,
+    events: readonly Pick<AuditEvent, 'projectId' | 'taskId' | 'type' | 'payload'>[],
+  ): string[] {
+    const previous = new Map<string, unknown[]>();
+    for (const event of events) {
+      if (
+        event.projectId !== task.projectId ||
+        event.type !== 'task.followup.created' ||
+        !event.taskId
+      )
+        continue;
+      const links = previous.get(event.taskId) ?? [];
+      links.push(event.payload.sourceTaskId);
+      previous.set(event.taskId, links);
+    }
+    return inputAttachmentTaskScope(task, read, (item) => {
+      // Only traversed predecessors need validation; unrelated legacy records
+      // cannot poison this task's input scope.
+      const sources = new Set(
+        (previous.get(item.id) ?? []).map((source) => TaskIdSchema.parse(source)),
+      );
+      if (sources.size > 1) throw new Error('附件上下文的会话关联异常。');
+      return sources.values().next().value;
+    });
+  }
+
   upload(name: string, declaredType: string, bytes: Uint8Array, id = randomUUID() as string) {
     if (!bytes.length || bytes.length > INPUT_ATTACHMENT_MAX_BYTES)
       throw Error('每个附件须为 1 字节至 20 MB。');

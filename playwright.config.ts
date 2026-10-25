@@ -12,14 +12,7 @@ export default defineConfig({
   testMatch: '**/*.e2e.ts',
   fullyParallel: true,
   reporter: process.env.CI ? 'github' : 'list',
-  projects: [
-    { name: 'local', testIgnore: '**/acp-official-catalog.e2e.ts' },
-    {
-      name: 'official-catalog',
-      testMatch: '**/acp-official-catalog.e2e.ts',
-      dependencies: ['local'],
-    },
-  ],
+  projects: [{ name: 'local', testIgnore: '**/acp-official-catalog.e2e.ts' }],
   use: {
     baseURL: 'http://127.0.0.1:4173',
     trace: 'retain-on-failure',

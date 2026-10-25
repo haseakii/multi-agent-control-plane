@@ -126,7 +126,7 @@ import { NetworkSettingsService, applyNetworkEnvironment } from './network-setti
 import { SqliteNetworkSettingsRepository } from '@control-plane/storage';
 import { SqliteInputAttachmentRepository } from '@control-plane/storage';
 import { InputAttachmentIdsSchema } from '@control-plane/core';
-import { InputAttachmentService, inputAttachmentTaskScope } from './input-attachments.js';
+import { InputAttachmentService } from './input-attachments.js';
 import { TaskRecords } from './task-records.js';
 import {
   TaskDraftInputSchema,
@@ -1459,28 +1459,13 @@ export class ControlPlaneRuntime {
     return new TaskRecords(this.storage.repositories);
   }
   private inputAttachmentScope(task: Task) {
-    const previous = new Map<string, unknown[]>();
-    for (const event of this.projectEvents(task.projectId)) {
-      if (event.type !== 'task.followup.created' || !event.taskId) continue;
-      const links = previous.get(event.taskId) ?? [];
-      links.push(event.payload.sourceTaskId);
-      previous.set(event.taskId, links);
-    }
-    return inputAttachmentTaskScope(
+    return this.inputAttachments.taskScope(
       task,
       (id) => this.getTask(id),
-      (item) => {
-        // Attachment inheritance needs only the predecessor. Validate the
-        // traversed chain, independently of newer optional history metadata or
-        // unrelated conversations in this project.
-        const sources = new Set(
-          (previous.get(item.id) ?? []).map((source) =>
-            FollowUpLinkSchema.shape.sourceTaskId.parse(source),
-          ),
-        );
-        if (sources.size > 1) throw new Error('附件上下文的会话关联异常。');
-        return sources.values().next().value;
-      },
+      this.storage.repositories.events.listByProject(task.projectId, {
+        taskIds: [],
+        types: ['task.followup.created'],
+      }),
     );
   }
 

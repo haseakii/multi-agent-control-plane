@@ -1,11 +1,10 @@
-import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { AuditEventSchema, INPUT_ATTACHMENT_MAX_BYTES, type Task } from '@control-plane/core';
 import {
-  ClientAccessFileSchema,
   ClientToolRequestSchema,
   ClientAttachmentUploadQuerySchema,
   clientToolDefinitions,
@@ -16,6 +15,7 @@ import type { SqliteStorage } from '@control-plane/storage';
 import type { ControlPlaneRuntime } from './runtime-composition.js';
 import { TaskControlError } from './task-control.js';
 import { SessionSettingsError } from './session-settings.js';
+import { ClientAccessGuard, type ClientPolicyAction } from './client-access.js';
 
 export type ClientGatewayOptions = {
   storage: SqliteStorage;
@@ -40,27 +40,13 @@ const card = (task: Task) => ({
 export function registerClientGateway(app: FastifyInstance, options: ClientGatewayOptions) {
   const { runtime, storage } = options,
     repo = storage.repositories;
-  const authenticate = (authorization: string | undefined) => {
-    const token = /^Bearer ([a-f0-9]{64})$/.exec(authorization ?? '')?.[1];
-    let access;
-    try {
-      access = ClientAccessFileSchema.parse(options.readAccess());
-    } catch {
-      throw new TaskControlError(503, 'Local client access configuration is unavailable.');
-    }
-    const hash = Buffer.from(digest(token ?? ''), 'hex');
-    const client = token
-      ? access.clients.find(
-          (c) => c.enabled && timingSafeEqual(hash, Buffer.from(c.tokenSha256, 'hex')),
-        )
-      : undefined;
-    if (!client) throw new TaskControlError(401, 'Local client access is missing or revoked.');
-    return client;
-  };
+  const access = new ClientAccessGuard(options.readAccess, (projectId) =>
+    runtime.getProjectPolicy(projectId),
+  );
   app.get('/internal/client/capabilities', async (request, reply) => {
     reply.header('cache-control', 'no-store');
     try {
-      const client = authenticate(request.headers.authorization);
+      const client = access.authenticate(request.headers.authorization);
       return { tools: client.tools };
     } catch (error) {
       return reply.code(error instanceof TaskControlError ? error.statusCode : 503).send({
@@ -77,25 +63,19 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
     async (request, reply) => {
       let projectId: string | undefined, client: ClientAccess | undefined;
       try {
-        client = authenticate(request.headers.authorization);
+        client = access.authenticate(request.headers.authorization);
         const value = ClientAttachmentUploadQuerySchema.parse(request.query);
-        if (!client.tools.includes(value.toolName))
-          throw new TaskControlError(403, 'Tool is not authorized for this client.');
         projectId = value.projectId ?? repo.tasks.get(value.taskId!)?.projectId;
-        if (!projectId || !client.projects.some((p) => p.projectId === projectId))
+        if (!projectId)
           throw new TaskControlError(403, 'Project is not authorized for this client.');
-        const policy = runtime.getProjectPolicy(projectId);
         const task = value.taskId ? repo.tasks.get(value.taskId) : undefined;
-        const actions =
+        const actions: ClientPolicyAction[] =
           value.toolName === 'collaboration_submit_task'
             ? ['control_create_task', 'control_delegate_task']
-            : [
-                'control_send_message',
-                ...(task && ended(task) ? ['control_create_task', 'control_delegate_task'] : []),
-              ];
-        for (const action of actions)
-          if (policy.tools[action as keyof typeof policy.tools] === 'deny')
-            throw new TaskControlError(403, 'Current project policy denies this operation.');
+            : ['control_send_message'];
+        if (value.toolName !== 'collaboration_submit_task' && task && ended(task))
+          actions.push('control_create_task', 'control_delegate_task');
+        access.authorize(client, value.toolName, projectId, actions);
         if (!Buffer.isBuffer(request.body))
           throw new TaskControlError(400, 'Expected binary attachment content.');
         if (createHash('sha256').update(request.body).digest('hex') !== value.sha256)
@@ -157,7 +137,7 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
   app.post('/internal/client/tool', async (request, reply) => {
     let client: ClientAccess | undefined;
     try {
-      client = authenticate(request.headers.authorization);
+      client = access.authenticate(request.headers.authorization);
     } catch (error) {
       return reply.code(error instanceof TaskControlError ? error.statusCode : 503).send({
         error:
@@ -193,30 +173,10 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
         );
       }
     };
-    const currentIdentity = () => {
-      const current = ClientAccessFileSchema.parse(options.readAccess()).clients.find(
-        (candidate) =>
-          candidate.id === identity.id &&
-          candidate.enabled &&
-          candidate.tokenSha256 === identity.tokenSha256,
-      );
-      if (!current || (toolName && !current.tools.includes(toolName)))
-        throw new TaskControlError(
-          403,
-          'Client access changed while the operation was in progress.',
-        );
-      return current;
-    };
-    const authorize = (id: string, actions: string[]) => {
-      const current = currentIdentity();
-      if (!current.projects.some((p) => p.projectId === id))
-        throw new TaskControlError(403, 'Project is not authorized for this client.');
+    const authorize = (id: string, actions: readonly ClientPolicyAction[]) => {
+      const project = access.authorize(identity, toolName!, id, actions);
       projectId = id;
-      const policy = runtime.getProjectPolicy(id);
-      for (const action of actions)
-        if (policy.tools[action as keyof typeof policy.tools] === 'deny')
-          throw new TaskControlError(403, 'Current project policy denies this operation.');
-      return current.projects.find((p) => p.projectId === id)!;
+      return project;
     };
     const authorizeAttachments = (id: string, attachmentIds: readonly string[] = []) => {
       for (const attachmentId of attachmentIds)
@@ -226,7 +186,7 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
             'Attachment is not authorized for this client and project.',
           );
     };
-    const taskAccess = (id: string, actions: string[]) => {
+    const taskAccess = (id: string, actions: readonly ClientPolicyAction[]) => {
       const task = repo.tasks.get(id);
       if (!task) throw new TaskControlError(404, 'Task is unavailable.');
       const grant = authorize(task.projectId, actions);

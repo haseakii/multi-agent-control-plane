@@ -3,9 +3,35 @@ import { z } from 'zod';
 
 export const RecoveryDiagnosticSchema = z.object({
   version: z.literal(1),
-  reason: z.string().min(1),
+  reason: z.enum([
+    'newer_round_available',
+    'waiting_approval',
+    'cleanup_in_progress',
+    'executing',
+    'execution_completed',
+    'execution_interrupted',
+    'connection_lost',
+    'upstream_failure',
+    'incomplete_turn',
+    'execution_failed',
+    'cancelled',
+    'waiting_dependencies',
+    'awaiting_dispatch',
+    'blocked',
+    'state_requires_inspection',
+  ]),
   actionOwner: z.enum(['operator', 'coordinator', 'runtime', 'none']),
-  nextAction: z.string().min(1),
+  nextAction: z.enum([
+    'read_latest_task',
+    'review_approval',
+    'wait',
+    'verify_outputs',
+    'inspect_before_resume',
+    'inspect_dependencies',
+    'inspect_dispatch',
+    'inspect_workbench',
+    'await_user_direction',
+  ]),
   executionActive: z.boolean(),
   automaticRetryAllowed: z.literal(false),
   requiresWorkspaceInspection: z.boolean(),
@@ -44,49 +70,8 @@ const descriptions: Record<RecoveryReason, [string, string]> = {
   ],
 };
 
-export type RecoveryReason =
-  | 'newer_round_available'
-  | 'waiting_approval'
-  | 'cleanup_in_progress'
-  | 'executing'
-  | 'execution_completed'
-  | 'execution_interrupted'
-  | 'connection_lost'
-  | 'upstream_failure'
-  | 'incomplete_turn'
-  | 'execution_failed'
-  | 'cancelled'
-  | 'waiting_dependencies'
-  | 'awaiting_dispatch'
-  | 'blocked'
-  | 'state_requires_inspection';
-
-export interface RecoveryDiagnostic {
-  version: 1;
-  reason: RecoveryReason;
-  actionOwner: 'operator' | 'coordinator' | 'runtime' | 'none';
-  nextAction:
-    | 'read_latest_task'
-    | 'review_approval'
-    | 'wait'
-    | 'verify_outputs'
-    | 'inspect_before_resume'
-    | 'inspect_dependencies'
-    | 'inspect_dispatch'
-    | 'inspect_workbench'
-    | 'await_user_direction';
-  executionActive: boolean;
-  automaticRetryAllowed: false;
-  requiresWorkspaceInspection: boolean;
-  pendingApprovalCount: number;
-  observedAt: string;
-  lastActivityAt: string | null;
-  inactivityMs: number | null;
-  instruction: string;
-  pendingApprovals: { execution: number; review: number; push: number };
-  title: string;
-  message: string;
-}
+export type RecoveryDiagnostic = z.infer<typeof RecoveryDiagnosticSchema>;
+export type RecoveryReason = RecoveryDiagnostic['reason'];
 
 export interface RecoveryObservation {
   task: Pick<Task, 'id' | 'state' | 'updatedAt'>;
@@ -176,7 +161,7 @@ export function diagnoseTaskRecovery(input: RecoveryObservation): RecoveryDiagno
       requiresWorkspaceInspection,
       title: descriptions[reason][0],
       message: descriptions[reason][1],
-    }) as RecoveryDiagnostic;
+    });
 
   if (input.latestTaskId !== task.id)
     return result(

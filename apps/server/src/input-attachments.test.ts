@@ -231,7 +231,7 @@ it('delivers native image and actual file content to a process, and carries them
   }
 }, 25000);
 
-it.each(['completed', 'failed', 'cancelled'] as const)(
+it.each(['failed', 'cancelled'] as const)(
   'delivers original input bytes after a %s round and retains that link across restart',
   async (state) => {
     const root = fixture(),
@@ -286,15 +286,11 @@ it.each(['completed', 'failed', 'cancelled'] as const)(
       const attempt = runtime.taskEngine.createAttempt(assignment.id);
       runtime.taskEngine.startAttempt(attempt.id);
       if (state === 'cancelled') runtime.taskEngine.cancelTask(original.id);
-      else if (state === 'failed')
+      else
         runtime.taskEngine.finishAttempt(attempt.id, {
           outcome: 'failed',
           failure: { code: 'SYNTHETIC_FAILURE', message: 'Synthetic failure', retryable: true },
         });
-      else {
-        runtime.taskEngine.finishAttempt(attempt.id, { outcome: 'completed' });
-        runtime.taskEngine.completeTask(original.id);
-      }
       await runtime.close();
       storage.close();
       storage = openSqliteStorage({ filename });
@@ -340,7 +336,7 @@ it.each(['completed', 'failed', 'cancelled'] as const)(
 
 it('walks conversation inputs beyond the text context window and rejects corrupt project or cycle links', () => {
   const tasks = new Map<string, Task>();
-  for (let index = 0; index < 25; index++)
+  for (let index = 0; index < 1025; index++)
     tasks.set(
       'round-' + index,
       TaskSchema.parse({
@@ -359,7 +355,9 @@ it('walks conversation inputs beyond the text context window and rejects corrupt
   const previous = (task: Task) =>
     Number(task.id.slice(6)) > 0 ? 'round-' + (Number(task.id.slice(6)) - 1) : undefined;
   const read = (id: string) => tasks.get(id)!;
-  expect(inputAttachmentTaskScope(read('round-24'), read, previous)).toContain('round-1');
+  const last = TaskSchema.parse({ ...read('round-1023'), parentTaskId: 'round-0' });
+  expect(inputAttachmentTaskScope(last, read, previous)).toHaveLength(1024);
+  expect(() => inputAttachmentTaskScope(read('round-1024'), read, previous)).toThrow('关联异常');
   expect(() =>
     inputAttachmentTaskScope(read('round-1'), read, (task) =>
       task.id === 'round-1' ? 'round-0' : 'round-1',

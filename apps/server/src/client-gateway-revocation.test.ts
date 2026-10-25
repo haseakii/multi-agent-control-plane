@@ -5,8 +5,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, it, vi } from 'vitest';
+import type { ProjectPolicy } from '@control-plane/core';
 import { openSqliteStorage } from '@control-plane/storage';
-import { clientToolDefinitions } from '@control-plane/fleet-mcp';
+import { ClientAccessFileSchema, clientToolDefinitions } from '@control-plane/fleet-mcp';
+import { ClientAccessGuard } from './client-access.js';
 import { createControlPlaneRuntime } from './runtime-composition.js';
 import { buildServer } from './server.js';
 
@@ -16,6 +18,23 @@ function deferred() {
     resolve = done;
   });
   return { promise, resolve };
+}
+
+const token = 'c'.repeat(64);
+function accessFile() {
+  return ClientAccessFileSchema.parse({
+    version: 1,
+    clients: [
+      {
+        id: 'client',
+        name: 'Client',
+        enabled: true,
+        tokenSha256: createHash('sha256').update(token).digest('hex'),
+        projects: [{ projectId: 'p' }],
+        tools: clientToolDefinitions.map((tool) => tool.name),
+      },
+    ],
+  });
 }
 
 function fixture() {
@@ -28,20 +47,7 @@ function fixture() {
   });
   runtime.setBridgeBaseUrl('http://127.0.0.1:4000');
   runtime.createProject({ id: 'p', name: 'Revocation project' });
-  const token = 'c'.repeat(64);
-  const access = {
-    version: 1,
-    clients: [
-      {
-        id: 'client',
-        name: 'Client',
-        enabled: true,
-        tokenSha256: createHash('sha256').update(token).digest('hex'),
-        projects: [{ projectId: 'p' }],
-        tools: clientToolDefinitions.map((tool) => tool.name),
-      },
-    ],
-  };
+  const access = accessFile();
   const app = buildServer({
     taskControl: runtime,
     clientGateway: { storage, runtime, readAccess: () => access },
@@ -65,50 +71,86 @@ function fixture() {
 }
 
 it.each(['revoked', 'project-removed', 'tool-removed', 'token-rotated', 'policy-denied'] as const)(
-  'rechecks %s authority after the review cleanup wait',
-  async (change) => {
-    const f = fixture();
-    try {
-      const task = f.runtime.taskEngine.createTask({
-        id: 'ended',
-        projectId: 'p',
-        title: 'Ended',
-        objective: 'Review',
-        state: 'ready',
-      });
-      f.runtime.taskEngine.cancelTask(task.id);
-      const waiting = deferred();
-      let active = true;
-      vi.spyOn(f.runtime, 'taskExecutionActive').mockImplementation(() => {
-        waiting.resolve();
-        return active;
-      });
-      const prepare = vi.spyOn(f.runtime, 'prepareWorkspaceReview');
-      const result = Promise.resolve(f.call('collaboration_prepare_review', { taskId: task.id }));
-      await waiting.promise;
-      const client = f.access.clients[0]!;
-      if (change === 'revoked') client.enabled = false;
-      if (change === 'project-removed') client.projects = [{ projectId: 'elsewhere' }];
-      if (change === 'tool-removed') client.tools = ['collaboration_get_task'];
-      if (change === 'token-rotated') client.tokenSha256 = 'd'.repeat(64);
-      if (change === 'policy-denied')
-        f.runtime.setProjectPolicy('p', {
-          expectedRevision: 0,
-          tools: { control_get_task: 'deny' },
-          gitMerge: 'ask',
-          gitPush: 'deny',
-          requireEnforcedExecution: false,
-        });
-      active = false;
-      expect((await result).statusCode).toBe(403);
-      expect(prepare).not.toHaveBeenCalled();
-      expect(f.storage.repositories.workspaceReviews.list()).toHaveLength(0);
-      expect(f.storage.repositories.approvals.list()).toHaveLength(0);
-    } finally {
-      await f.close();
-    }
+  'rejects %s authority using current grants and policy',
+  (change) => {
+    const access = accessFile();
+    const policy: Pick<ProjectPolicy, 'tools'> = { tools: {} };
+    const guard = new ClientAccessGuard(
+      () => access,
+      () => policy,
+    );
+    const identity = guard.authenticate('Bearer ' + token);
+    const authorize = () =>
+      guard.authorize(identity, 'collaboration_prepare_review', 'p', ['control_get_task']);
+    expect(authorize()).toEqual({ projectId: 'p' });
+    const client = access.clients[0]!;
+    if (change === 'revoked') client.enabled = false;
+    if (change === 'project-removed') client.projects = [{ projectId: 'elsewhere' }];
+    if (change === 'tool-removed') client.tools = ['collaboration_get_task'];
+    if (change === 'token-rotated') client.tokenSha256 = 'd'.repeat(64);
+    if (change === 'policy-denied') policy.tools.control_get_task = 'deny';
+    expect(authorize).toThrow(expect.objectContaining({ statusCode: 403 }));
   },
 );
+
+it('fails closed without disclosing invalid or unreadable access configuration', () => {
+  const access = accessFile();
+  let readAccess: () => unknown = () => access;
+  const guard = new ClientAccessGuard(
+    () => readAccess(),
+    () => ({ tools: {} }),
+  );
+  const identity = guard.authenticate('Bearer ' + token);
+  const unavailable = {
+    statusCode: 503,
+    message: 'Local client access configuration is unavailable.',
+  };
+  for (const read of [
+    () => ({ secret: 'do-not-echo' }),
+    () => {
+      throw Error('do-not-echo');
+    },
+  ]) {
+    readAccess = read;
+    expect(() => guard.authenticate('Bearer ' + token)).toThrow(
+      expect.objectContaining(unavailable),
+    );
+    expect(() =>
+      guard.authorize(identity, 'collaboration_prepare_review', 'p', ['control_get_task']),
+    ).toThrow(expect.objectContaining(unavailable));
+  }
+});
+
+it('rechecks authority after the review cleanup wait before preparing any durable result', async () => {
+  const f = fixture();
+  try {
+    const task = f.runtime.taskEngine.createTask({
+      id: 'ended',
+      projectId: 'p',
+      title: 'Ended',
+      objective: 'Review',
+      state: 'ready',
+    });
+    f.runtime.taskEngine.cancelTask(task.id);
+    const waiting = deferred();
+    let active = true;
+    vi.spyOn(f.runtime, 'taskExecutionActive').mockImplementation(() => {
+      waiting.resolve();
+      return active;
+    });
+    const prepare = vi.spyOn(f.runtime, 'prepareWorkspaceReview');
+    const result = Promise.resolve(f.call('collaboration_prepare_review', { taskId: task.id }));
+    await waiting.promise;
+    f.access.clients[0]!.enabled = false;
+    active = false;
+    expect((await result).statusCode).toBe(403);
+    expect(prepare).not.toHaveBeenCalled();
+    expect(f.storage.repositories.workspaceReviews.list()).toHaveLength(0);
+    expect(f.storage.repositories.approvals.list()).toHaveLength(0);
+  } finally {
+    await f.close();
+  }
+});
 
 it('refuses artifact and review commits when access is revoked during review IO, and allows an authorized retry', async () => {
   const f = fixture();

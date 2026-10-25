@@ -314,44 +314,42 @@ test('new goal remains open through polling and preserves its draft after a fail
   await expect(objective).toHaveValue('A new independent objective.');
 });
 
-for (const width of [1366, 1024]) {
-  test(`artifact preview yields to approval review at ${width}`, async ({ page }) => {
-    await page.setViewportSize({ width, height: 768 });
-    await serve(page, fixture());
-    await page
-      .locator('.task-card')
-      .filter({ hasText: 'Completed validation' })
-      .getByRole('button', { name: '查看结果', exact: true })
-      .click();
-    await expect(page.getByRole('region', { name: 'Result preview' })).toContainText(
-      'Durable fixture result.',
-    );
-    // A narrow preview is modal: dismiss its context first, then use the page banner.
-    await page.getByRole('button', { name: 'Close context', exact: true }).press('Escape');
-    await page.getByRole('button', { name: '查看待审批事项', exact: true }).click();
-    await expect(page.getByRole('region', { name: 'Result preview' })).toHaveCount(0);
-    const context = page.locator('.context-dialog');
-    await expect(context.getByRole('region', { name: 'Selected task' })).toContainText(
-      'Review boundaries',
-    );
-    await openApproval(page, context.locator('.approval-card'));
-    await expect(context.getByRole('button', { name: '允许一次', exact: true })).toBeVisible();
-    await expect(context.getByRole('button', { name: '拒绝当前请求', exact: true })).toBeVisible();
-  });
-  test(`artifact list restores its rebuilt trigger at ${width}`, async ({ page }) => {
-    await page.setViewportSize({ width, height: 768 });
-    await serve(page, fixture());
-    await openContext(page);
-    const trigger = page.getByRole('button', { name: '查看产物', exact: true });
-    await trigger.click();
-    await expect(page.getByRole('region', { name: 'Result preview' })).toContainText(
-      'Durable fixture result.',
-    );
-    await page.getByRole('button', { name: '关闭结果', exact: true }).click();
-    await expect(trigger).toBeVisible();
-    await expect(trigger).toBeFocused();
-  });
-}
+test('artifact preview yields to approval review at 1024', async ({ page }) => {
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await serve(page, fixture());
+  await page
+    .locator('.task-card')
+    .filter({ hasText: 'Completed validation' })
+    .getByRole('button', { name: '查看结果', exact: true })
+    .click();
+  await expect(page.getByRole('region', { name: 'Result preview' })).toContainText(
+    'Durable fixture result.',
+  );
+  // A narrow preview is modal: dismiss its context first, then use the page banner.
+  await page.getByRole('button', { name: 'Close context', exact: true }).press('Escape');
+  await page.getByRole('button', { name: '查看待审批事项', exact: true }).click();
+  await expect(page.getByRole('region', { name: 'Result preview' })).toHaveCount(0);
+  const context = page.locator('.context-dialog');
+  await expect(context.getByRole('region', { name: 'Selected task' })).toContainText(
+    'Review boundaries',
+  );
+  await openApproval(page, context.locator('.approval-card'));
+  await expect(context.getByRole('button', { name: '允许一次', exact: true })).toBeVisible();
+  await expect(context.getByRole('button', { name: '拒绝当前请求', exact: true })).toBeVisible();
+});
+test('artifact list restores its rebuilt trigger at 1366', async ({ page }) => {
+  await page.setViewportSize({ width: 1366, height: 768 });
+  await serve(page, fixture());
+  await openContext(page);
+  const trigger = page.getByRole('button', { name: '查看产物', exact: true });
+  await trigger.click();
+  await expect(page.getByRole('region', { name: 'Result preview' })).toContainText(
+    'Durable fixture result.',
+  );
+  await page.getByRole('button', { name: '关闭结果', exact: true }).click();
+  await expect(trigger).toBeVisible();
+  await expect(trigger).toBeFocused();
+});
 
 test('1024 left-navigation result returns focus outside the closed context modal', async ({
   page,

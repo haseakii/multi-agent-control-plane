@@ -166,9 +166,11 @@ or its database.
 Each run defaults to a fresh temporary data directory. If setting
 `CONTROL_PLANE_E2E_DATA_DIR`, choose a new dedicated directory for that run;
 existing cache files are preserved rather than overwritten. `PLAYWRIGHT_CHANNEL=msedge`
-can select an already-installed Edge browser. Local tests use private synthetic
-catalog metadata; the real official-registry refresh runs afterward so it cannot
-replace the local registration fixtures while those tests are executing.
+can select an already-installed Edge browser. The default browser suite uses
+private synthetic catalog metadata and requires no external registry access.
+Run `pnpm test:e2e:live` separately to check the real official-registry refresh;
+it downloads catalog metadata only and starts its own servers and private data.
+See [test scope and cost](CONTRIBUTING.md#test-scope-and-cost) before expanding a matrix.
 
 Start the API and web UI in separate terminals:
 
