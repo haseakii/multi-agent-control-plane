@@ -1,6 +1,6 @@
 # ACP 成员运行设置：实现与真实验收
 
-2026-10-25。日用入口 `http://127.0.0.1:8057/`，本轮发布目录 `.run/session-settings-verified-20261025/release`。原始记录位于 `.run/session-settings-20261025/`，本文件不包含认证信息。
+2026-10-25。日用入口 `http://127.0.0.1:8057/`，首批验证发布目录 `.run/session-settings-verified-20261025/release`。后续日用更新见 `acp-presets-and-catalog-20261025.md`。原始记录位于 `.run/session-settings-20261025/`，本文件不包含认证信息。
 
 ## 已交付
 

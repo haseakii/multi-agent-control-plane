@@ -91,6 +91,8 @@
 
 ## 参考
 
+网络代理作为独立系统设置设计，支持全局默认和每成员例外，详见[系统设置与每成员网络代理](system-network-proxy.md)。当前仅设计定稿，尚未改变日用版网络路径；模型常用方案不承载代理或凭据。
+
 - [IDEA / AI Assistant 的 ACP Agents 与目录接入](https://www.jetbrains.com/help/ai-assistant/acp.html)
 - [IDEA 官方 Agents 页面示例](https://resources.jetbrains.com/help/img/idea/2026.2/ai_acp_agents_settings.png)
 - [ACP v1 Session Config Options](https://agentclientprotocol.com/protocol/v1/session-config-options)
