@@ -1,9 +1,11 @@
 import { expect, test } from '@playwright/test';
 import { join } from 'node:path';
+import { openCatalog } from './helpers';
 test('explicit real official catalog refresh only downloads metadata', async ({ page }) => {
+  const before = (await (await page.request.get('/api/control-center')).json()).executionAttempts;
   await page.setViewportSize({ width: 1366, height: 900 });
   await page.goto('/');
-  await page.getByRole('button', { name: 'Agent & project settings', exact: true }).click();
+  await openCatalog(page);
   const catalog = page.getByRole('region', { name: 'ACP 接入目录' });
   const request = page.waitForResponse(
     (r) => r.url().endsWith('/api/agent-catalog/refresh') && r.request().method() === 'POST',
@@ -39,5 +41,5 @@ test('explicit real official catalog refresh only downloads metadata', async ({ 
       fullPage: true,
     });
   const state = await (await page.request.get('/api/control-center')).json();
-  expect(state.executionAttempts).toHaveLength(1); // Only seeded completed demo attempt; no execution started.
+  expect(state.executionAttempts).toEqual(before);
 });

@@ -12,20 +12,33 @@ import type { InputAttachmentRepository } from '@control-plane/storage';
 import type { PromptAttachment } from '@control-plane/acp-runtime';
 import type { Task } from '@control-plane/core';
 
-export function inputAttachmentTaskScope(task: Task, read: (id: string) => Task): string[] {
-  const ids = new Set([...task.dependencyIds, task.id]);
-  const seen = new Set([task.id]);
-  let parentId = task.parentTaskId;
-  while (parentId) {
-    if (seen.has(parentId) || seen.size > 16)
+export function inputAttachmentTaskScope(
+  task: Task,
+  read: (id: string) => Task,
+  previous: (task: Task) => string | undefined = () => undefined,
+): string[] {
+  const ids = new Set<string>();
+  const visited = new Set<string>(),
+    path = new Set<string>();
+  const sameProject = (item: Task) => {
+    if (item.projectId !== task.projectId) throw Error('附件上下文不属于当前项目。');
+    return item;
+  };
+  const visit = (item: Task, parentDepth: number) => {
+    sameProject(item);
+    if (path.has(item.id) || parentDepth > 16 || visited.size >= 1024)
       throw Error('附件上下文的任务关联异常，未读取其它任务数据。');
-    const parent = read(parentId);
-    if (parent.projectId !== task.projectId) throw Error('附件上下文不属于当前项目。');
-    seen.add(parentId);
-    ids.add(parentId);
-    for (const id of parent.dependencyIds) ids.add(id);
-    parentId = parent.parentTaskId;
-  }
+    if (visited.has(item.id)) return;
+    visited.add(item.id);
+    path.add(item.id);
+    ids.add(item.id);
+    for (const id of item.dependencyIds) ids.add(sameProject(read(id)).id);
+    if (item.parentTaskId) visit(read(item.parentTaskId), parentDepth + 1);
+    const prior = previous(item);
+    if (prior) visit(read(prior), parentDepth);
+    path.delete(item.id);
+  };
+  visit(task, 0);
   return [...ids];
 }
 

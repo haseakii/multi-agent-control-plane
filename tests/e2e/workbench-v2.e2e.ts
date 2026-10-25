@@ -1,3 +1,4 @@
+import { snapshotForUi, openApproval, showHistory, openContext, mockTaskPanels } from './helpers';
 import { expect, test, type Page } from '@playwright/test';
 
 function fixture() {
@@ -15,7 +16,7 @@ function fixture() {
           controlBridge: { transport: 'mcp', scopes: ['boss.orchestration'] },
           capabilities: [],
         },
-        readiness: { runtime: 'ready', auth: 'unknown' },
+        readiness: { runtime: 'ready', auth: 'not_reported' },
         authMethods: [],
       },
     ],
@@ -119,12 +120,16 @@ function fixture() {
   };
 }
 async function serve(page: Page, state: ReturnType<typeof fixture>) {
-  await page.route('**/api/control-center', (route) => route.fulfill({ json: state }));
+  await mockTaskPanels(page);
+  await page.route('**/api/control-center', (route) =>
+    route.fulfill({ json: snapshotForUi(state) }),
+  );
   await page.route('**/api/artifacts/report/content', (route) =>
     route.fulfill({ contentType: 'text/plain', body: 'Durable fixture result.' }),
   );
   await page.goto('/');
-  await expect(page.getByLabel('Active project')).toHaveValue('p');
+  await expect(page.getByLabel('当前项目')).toHaveValue('p');
+  await showHistory(page);
 }
 
 test('workbench keeps tasks first, scopes records, and previews results without moving the reading position', async ({
@@ -133,12 +138,14 @@ test('workbench keeps tasks first, scopes records, and previews results without 
   await page.setViewportSize({ width: 1366, height: 768 });
   const state = fixture();
   await serve(page, state);
-  await expect(page.getByRole('heading', { name: 'Register ACP agent', exact: true })).toHaveCount(
+  await expect(page.getByRole('heading', { name: '添加已有的 AI 成员', exact: true })).toHaveCount(
     0,
   );
   await expect(page.locator('.goal-overview')).toContainText('Review boundaries');
   await expect(page.locator('.goal-overview')).toContainText('执行者：Fixture Agent');
-  await expect(page.getByRole('region', { name: 'Selected task' })).toContainText('a');
+  await openContext(page);
+  await expect(page.getByRole('region', { name: 'Selected task' })).toContainText('Fixture Agent');
+  await page.getByRole('button', { name: 'Close context', exact: true }).click();
   await page.getByRole('button', { name: 'Open task Local acceptance goal', exact: true }).click();
   await expect(
     page.locator('.timeline strong').filter({ hasText: /^task\.observed\.0$/ }),
@@ -159,25 +166,24 @@ test('workbench keeps tasks first, scopes records, and previews results without 
   const result = page
     .locator('.task-card')
     .filter({ hasText: 'Completed validation' })
-    .getByRole('button', { name: 'View result', exact: true });
+    .getByRole('button', { name: '查看结果', exact: true });
   await result.click();
   await expect(page.getByRole('region', { name: 'Result preview' })).toContainText(
     'Durable fixture result.',
   );
-  await expect(page.getByRole('button', { name: 'Close result', exact: true })).toBeFocused();
+  await expect(page.getByRole('button', { name: '关闭结果', exact: true })).toBeFocused();
   expect(Math.abs((await page.evaluate(() => scrollY)) - before)).toBeLessThan(5);
-  await page.getByRole('button', { name: 'Close result', exact: true }).click();
+  await page.getByRole('button', { name: '关闭结果', exact: true }).click();
   await expect(result).toBeFocused();
   await page
     .getByRole('button', { name: 'Open task Interrupted documentation', exact: true })
     .click();
+  await openContext(page);
   await expect(
     page.locator('.timeline strong').filter({ hasText: /^task\.observed\.0$/ }),
   ).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Cancel task', exact: true })).toHaveCount(0);
-  await expect(
-    page.getByRole('button', { name: 'Recover from saved context', exact: true }),
-  ).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '取消任务', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '从已保存进度恢复', exact: true })).toHaveCount(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 
@@ -190,6 +196,7 @@ test('task actions use server qualification, preserve errors and prevent duplica
   await page
     .getByRole('button', { name: 'Open task Interrupted documentation', exact: true })
     .click();
+  await openContext(page);
   let resumes = 0,
     cancels = 0;
   await page.route('**/api/tasks/failed/resume', async (route) => {
@@ -205,14 +212,14 @@ test('task actions use server qualification, preserve errors and prevent duplica
     state.executionAttempts[0]!.state = 'running';
     return route.fulfill({ status: 202, json: {} });
   });
-  await page.getByRole('button', { name: 'Recover from saved context', exact: true }).click();
-  await expect(page.getByRole('dialog')).toContainText('new execution attempt');
+  await page.getByRole('button', { name: '从已保存进度恢复', exact: true }).click();
+  await expect(page.locator('.task-action-dialog[open]')).toContainText('new execution attempt');
   await page.getByRole('button', { name: 'Create new execution attempt', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('cleaning up');
   await page.waitForResponse('**/api/control-center');
   expect(resumes).toBe(1);
   await page.getByRole('button', { name: 'Create new execution attempt', exact: true }).click();
-  await expect(page.getByRole('dialog')).not.toBeVisible();
+  await expect(page.locator('.task-action-dialog[open]')).toHaveCount(0);
   expect(resumes).toBe(2);
   let release!: () => void;
   const gate = new Promise<void>((resolve) => {
@@ -225,17 +232,15 @@ test('task actions use server qualification, preserve errors and prevent duplica
     state.executionAttempts[0]!.state = 'cancelled';
     await route.fulfill({ json: state.tasks[2] });
   });
-  await page.getByRole('button', { name: 'Cancel task', exact: true }).click();
+  await page.getByRole('button', { name: '取消任务', exact: true }).click();
   await page.getByRole('button', { name: 'Confirm cancellation', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Saving…', exact: true })).toBeDisabled();
   expect(cancels).toBe(1);
   release();
-  await expect(page.getByRole('dialog')).not.toBeVisible();
-  await expect(page.locator('.task-context-summary')).toContainText('cancelled');
-  await expect(page.getByRole('button', { name: 'Cancel task', exact: true })).toHaveCount(0);
-  await expect(
-    page.getByRole('button', { name: 'Recover from saved context', exact: true }),
-  ).toHaveCount(0);
+  await expect(page.locator('.task-action-dialog[open]')).toHaveCount(0);
+  await expect(page.locator('.task-context-summary')).toContainText('已取消');
+  await expect(page.getByRole('button', { name: '取消任务', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '从已保存进度恢复', exact: true })).toHaveCount(0);
 });
 
 test('1024 context is explicit, errors stay visible and Escape returns to the opener', async ({
@@ -244,7 +249,7 @@ test('1024 context is explicit, errors stay visible and Escape returns to the op
   await page.setViewportSize({ width: 1024, height: 768 });
   const state = fixture();
   await serve(page, state);
-  const opener = page.getByRole('button', { name: 'Task context · 1', exact: true });
+  const opener = page.getByRole('button', { name: '结果与审批 · 1', exact: true });
   await opener.click();
   await expect(page.getByRole('dialog')).toBeVisible();
   let approvals = 0;
@@ -255,11 +260,19 @@ test('1024 context is explicit, errors stay visible and Escape returns to the op
       json: { error: 'Decision not saved. Choose explicitly again.' },
     });
   });
-  await page.getByRole('button', { name: 'Approve', exact: true }).click();
-  await expect(page.getByRole('dialog').getByRole('alert')).toContainText('Decision not saved');
+  await openApproval(page, page.locator('.approval-card'));
+  await page.getByRole('button', { name: '允许一次', exact: true }).click();
+  await expect(page.getByRole('region', { name: '审批详情' }).getByRole('alert')).toContainText(
+    'Decision not saved',
+  );
   await page.waitForResponse('**/api/control-center');
   expect(approvals).toBe(1);
   expect(state.approvals[0]!.state).toBe('pending');
+  await page
+    .getByRole('region', { name: '审批详情' })
+    .getByRole('button', { name: '返回审批列表' })
+    .press('Escape');
+  await expect(page.getByRole('region', { name: '审批详情' })).toHaveCount(0);
   await page.getByRole('button', { name: 'Close context', exact: true }).press('Escape');
   await expect(page.getByRole('dialog')).not.toBeVisible();
   await expect(opener).toBeFocused();
@@ -272,7 +285,7 @@ test('new goal remains open through polling and preserves its draft after a fail
   const state = fixture();
   await serve(page, state);
   await page.locator('.new-goal > summary').click();
-  const objective = page.getByLabel('Goal objective', { exact: true });
+  const objective = page.getByLabel('描述任务', { exact: true });
   await expect(objective).toBeVisible();
   await page.waitForResponse('**/api/control-center');
   await expect(objective).toBeVisible();
@@ -287,8 +300,8 @@ test('new goal remains open through polling and preserves its draft after a fail
     await gate;
     await route.fulfill({ status: 503, json: { error: 'Goal not saved; draft remains.' } });
   });
-  await page.getByRole('button', { name: 'Submit goal', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Submitting…', exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: '开始协作 →', exact: true }).click();
+  await expect(page.getByRole('button', { name: '启动中…', exact: true })).toBeDisabled();
   await page
     .locator('.goal-form')
     .evaluate((form) =>
@@ -308,36 +321,33 @@ for (const width of [1366, 1024]) {
     await page
       .locator('.task-card')
       .filter({ hasText: 'Completed validation' })
-      .getByRole('button', { name: 'View result', exact: true })
+      .getByRole('button', { name: '查看结果', exact: true })
       .click();
     await expect(page.getByRole('region', { name: 'Result preview' })).toContainText(
       'Durable fixture result.',
     );
     // A narrow preview is modal: dismiss its context first, then use the page banner.
-    if (width === 1024)
-      await page.getByRole('button', { name: 'Close context', exact: true }).press('Escape');
-    await page.getByRole('button', { name: 'Review approvals', exact: true }).click();
+    await page.getByRole('button', { name: 'Close context', exact: true }).press('Escape');
+    await page.getByRole('button', { name: '查看待审批事项', exact: true }).click();
     await expect(page.getByRole('region', { name: 'Result preview' })).toHaveCount(0);
-    const context =
-      width === 1024
-        ? page.getByRole('dialog')
-        : page.getByRole('complementary', { name: 'Task context' });
+    const context = page.locator('.context-dialog');
     await expect(context.getByRole('region', { name: 'Selected task' })).toContainText(
       'Review boundaries',
     );
-    await expect(context.getByRole('button', { name: 'Approve', exact: true })).toBeVisible();
-    await expect(context.getByRole('button', { name: 'Reject', exact: true })).toBeVisible();
+    await openApproval(page, context.locator('.approval-card'));
+    await expect(context.getByRole('button', { name: '允许一次', exact: true })).toBeVisible();
+    await expect(context.getByRole('button', { name: '拒绝当前请求', exact: true })).toBeVisible();
   });
   test(`artifact list restores its rebuilt trigger at ${width}`, async ({ page }) => {
     await page.setViewportSize({ width, height: 768 });
     await serve(page, fixture());
-    if (width === 1024) await page.getByRole('button', { name: /^Task context/ }).click();
-    const trigger = page.getByRole('button', { name: 'View artifact', exact: true });
+    await openContext(page);
+    const trigger = page.getByRole('button', { name: '查看产物', exact: true });
     await trigger.click();
     await expect(page.getByRole('region', { name: 'Result preview' })).toContainText(
       'Durable fixture result.',
     );
-    await page.getByRole('button', { name: 'Close result', exact: true }).click();
+    await page.getByRole('button', { name: '关闭结果', exact: true }).click();
     await expect(trigger).toBeVisible();
     await expect(trigger).toBeFocused();
   });
@@ -351,19 +361,17 @@ test('1024 left-navigation result returns focus outside the closed context modal
   const trigger = page
     .locator('.task-card')
     .filter({ hasText: 'Completed validation' })
-    .getByRole('button', { name: 'View result', exact: true });
+    .getByRole('button', { name: '查看结果', exact: true });
   await trigger.click();
   await expect(page.getByRole('dialog')).toBeVisible();
   await expect(page.getByRole('region', { name: 'Result preview' })).toContainText(
     'Durable fixture result.',
   );
-  await page.getByRole('button', { name: 'Close result', exact: true }).click();
+  await page.getByRole('button', { name: '关闭结果', exact: true }).click();
   await expect(page.getByRole('dialog')).not.toBeVisible();
   await expect(trigger).toBeFocused();
   await trigger.press('Tab');
-  await expect(
-    page.getByRole('button', { name: 'Agent & project settings', exact: true }),
-  ).toBeFocused();
+  await expect(page.getByRole('button', { name: '成员与设置', exact: true })).toBeFocused();
 });
 
 for (const width of [1366, 1024]) {
@@ -448,12 +456,12 @@ for (const width of [1366, 1024]) {
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
       true,
     );
-    if (width === 1024) await page.getByRole('button', { name: /^Task context/ }).click();
+    if (width === 1024) await page.getByRole('button', { name: /^结果与审批/ }).click();
     await expect(page.locator('.approval-card .badge')).toHaveText('待决定');
     state.approvals[0]!.state = 'approved';
     await page.waitForResponse('**/api/control-center');
     await expect(page.locator('.approval-card .badge')).toHaveText('已批准');
-    await expect(page.getByRole('button', { name: 'Approve', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '允许一次', exact: true })).toHaveCount(0);
   });
 }
 

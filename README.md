@@ -163,6 +163,12 @@ pnpm test:e2e
 Browser tests start their own API and web servers; stop any existing services on
 ports 3000 and 4173 before running them. Tests never reuse your normal local API
 or its database.
+Each run defaults to a fresh temporary data directory. If setting
+`CONTROL_PLANE_E2E_DATA_DIR`, choose a new dedicated directory for that run;
+existing cache files are preserved rather than overwritten. `PLAYWRIGHT_CHANNEL=msedge`
+can select an already-installed Edge browser. Local tests use private synthetic
+catalog metadata; the real official-registry refresh runs afterward so it cannot
+replace the local registration fixtures while those tests are executing.
 
 Start the API and web UI in separate terminals:
 

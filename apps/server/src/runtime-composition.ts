@@ -393,17 +393,20 @@ export class ControlPlaneRuntime {
       },
       new LocalGitReviewAdapter(),
       {
-        publish: async (input) =>
+        publish: async (input, beforeCommit) =>
           (
-            await this.artifacts.publish({
-              ...input,
-              mimeType: input.kind === 'diff' ? 'text/x-diff' : 'application/json',
-              content: new TextEncoder().encode(input.content),
-              links: [
-                { entityType: 'task', entityId: input.taskId },
-                { entityType: 'assignment', entityId: input.assignmentId },
-              ],
-            })
+            await this.artifacts.publish(
+              {
+                ...input,
+                mimeType: input.kind === 'diff' ? 'text/x-diff' : 'application/json',
+                content: new TextEncoder().encode(input.content),
+                links: [
+                  { entityType: 'task', entityId: input.taskId },
+                  { entityType: 'assignment', entityId: input.assignmentId },
+                ],
+              },
+              beforeCommit ? { beforeCommit } : {},
+            )
           ).artifact,
       },
       new PolicyGate(this.projectPolicy, this.approvals),
@@ -872,10 +875,13 @@ export class ControlPlaneRuntime {
     await this.workspaceProvisioner.validate(workspace);
     await this.workspaceProvisioner.validate(source);
   }
-  prepareWorkspaceReview(taskId: string) {
+  prepareWorkspaceReview(taskId: string, requireAccess: () => void = () => undefined) {
+    requireAccess();
     return this.reviewOperation(taskId, () =>
-      this.workspaceReviews.prepare(taskId, (workspace, source) =>
-        this.validateReviewWorkspaces(workspace, source),
+      this.workspaceReviews.prepare(
+        taskId,
+        (workspace, source) => this.validateReviewWorkspaces(workspace, source),
+        requireAccess,
       ),
     );
   }
@@ -1452,12 +1458,37 @@ export class ControlPlaneRuntime {
   get taskRecords() {
     return new TaskRecords(this.storage.repositories);
   }
+  private inputAttachmentScope(task: Task) {
+    const previous = new Map<string, unknown[]>();
+    for (const event of this.projectEvents(task.projectId)) {
+      if (event.type !== 'task.followup.created' || !event.taskId) continue;
+      const links = previous.get(event.taskId) ?? [];
+      links.push(event.payload.sourceTaskId);
+      previous.set(event.taskId, links);
+    }
+    return inputAttachmentTaskScope(
+      task,
+      (id) => this.getTask(id),
+      (item) => {
+        // Attachment inheritance needs only the predecessor. Validate the
+        // traversed chain, independently of newer optional history metadata or
+        // unrelated conversations in this project.
+        const sources = new Set(
+          (previous.get(item.id) ?? []).map((source) =>
+            FollowUpLinkSchema.shape.sourceTaskId.parse(source),
+          ),
+        );
+        if (sources.size > 1) throw new Error('附件上下文的会话关联异常。');
+        return sources.values().next().value;
+      },
+    );
+  }
+
   taskInputAttachments(taskId: string) {
     const task = this.getTask(taskId);
     return [
       ...new Map(
-        inputAttachmentTaskScope(task, (id) => this.getTask(id))
-          .filter((id) => this.getTask(id).projectId === task.projectId)
+        this.inputAttachmentScope(task)
           .flatMap((id) => this.inputAttachments.repository.forTask(id))
           .map((item) => [item.id, item]),
       ).values(),
@@ -2900,7 +2931,7 @@ export class ControlPlaneRuntime {
     const binding = this.storage.repositories.assignmentWorkspaces.get(execution.assignment.id);
     const workspace = binding && this.storage.repositories.workspaces.get(binding.workspaceId);
     if (!workspace) throw new Error('Attachment workspace is unavailable.');
-    const inputTasks = inputAttachmentTaskScope(task, (id) => this.getTask(id));
+    const inputTasks = this.inputAttachmentScope(task);
     const attachments = await this.inputAttachments.prepare(inputTasks, workspace.rootPath);
     if (attachments.content.length)
       this.event(

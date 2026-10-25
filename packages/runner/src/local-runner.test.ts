@@ -2,7 +2,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { LocalRunner, type RunnerEvent } from './index.js';
+import { LocalRunner, type ProcessHandle, type RunnerEvent } from './index.js';
+import { RunnerIdSchema } from '@control-plane/core';
 
 const tempDirectories: string[] = [];
 
@@ -31,6 +32,99 @@ async function collectEvents(
 }
 
 describe('LocalRunner', () => {
+  it('releases exited process records and bounds completed handles and output without losing subscribed output', async () => {
+    const runner = new LocalRunner({
+      completedProcessLimit: 3,
+      completedOutputBytesLimit: 100_000,
+    });
+    const handles: ProcessHandle[] = [];
+    for (let index = 0; index < 8; index++) {
+      const handle = await runner.spawn({
+        command: process.execPath,
+        args: ['-e', 'process.stdout.write("x".repeat(60000))'],
+        cwd: tempDirectory(),
+      });
+      handles.push(handle);
+      const events = collectEvents(runner, handle);
+      const reader = runner.transport(handle).readable.getReader();
+      const drained = (async () => {
+        let bytes = 0;
+        for (;;) {
+          const chunk = await reader.read();
+          if (chunk.done) return bytes;
+          bytes += chunk.value.byteLength;
+        }
+      })();
+      const exited = await runner.wait(handle);
+      expect(exited.state).toBe('exited');
+      exited.state = 'running';
+      expect(runner.status(handle).state).toBe('exited');
+      expect(await drained).toBe(60000);
+      expect(
+        (await events)
+          .filter((event) => event.type === 'process.stdout')
+          .reduce(
+            (bytes, event) =>
+              bytes + (event.type === 'process.stdout' ? Buffer.byteLength(event.chunk) : 0),
+            0,
+          ),
+      ).toBe(60000);
+      expect((await runner.stop(handle)).state).toBe('exited');
+    }
+    expect((runner as unknown as { records: Map<string, unknown> }).records.size).toBe(0);
+    for (const handle of handles.slice(0, -3))
+      expect(() => runner.status(handle)).toThrow('Unknown process handle');
+    let retained = 0;
+    for (const handle of handles.slice(-3)) {
+      expect(runner.status(handle).state).toBe('exited');
+      for await (const event of runner.events(handle))
+        if (event.type === 'process.stdout') retained += Buffer.byteLength(event.chunk);
+    }
+    expect(retained).toBeLessThanOrEqual(100_000);
+    const last = handles.at(-1)!;
+    const status = runner.status(last);
+    status.state = 'running';
+    expect((await runner.wait(last)).state).toBe('exited');
+    expect(() => runner.status({ ...last, pid: last.pid + 1 })).toThrow('Unknown process handle');
+    expect(() => runner.status({ ...last, runnerId: RunnerIdSchema.parse('different') })).toThrow(
+      'belongs to runner',
+    );
+  });
+
+  it('keeps active processes while completed history is evicted, including a zero output budget', async () => {
+    const runner = new LocalRunner({ completedProcessLimit: 1, completedOutputBytesLimit: 0 });
+    const active = await runner.spawn({
+      command: process.execPath,
+      args: ['-e', 'setInterval(() => {}, 1000)'],
+      cwd: tempDirectory(),
+    });
+    try {
+      for (let index = 0; index < 3; index++) {
+        const finished = await runner.spawn({
+          command: process.execPath,
+          args: ['-e', 'console.log("finished")'],
+          cwd: tempDirectory(),
+        });
+        await runner.wait(finished);
+        expect(
+          (await collectEvents(runner, finished)).some((event) => event.type === 'process.stdout'),
+        ).toBe(false);
+        expect(runner.status(active).state).toBe('running');
+      }
+    } finally {
+      await runner.stop(active);
+    }
+    expect((await runner.wait(active)).state).toBe('exited');
+  });
+
+  it('rejects invalid completed retention bounds before launching anything', () => {
+    for (const completedProcessLimit of [0, -1, 0.5, Infinity])
+      expect(() => new LocalRunner({ completedProcessLimit })).toThrow('completedProcessLimit');
+    for (const completedOutputBytesLimit of [-1, 0.5, Infinity])
+      expect(() => new LocalRunner({ completedOutputBytesLimit })).toThrow(
+        'completedOutputBytesLimit',
+      );
+  });
   it.runIf(process.platform === 'win32')(
     'stops a launcher with a child that inherits its output pipes',
     async () => {

@@ -1,3 +1,11 @@
+import {
+  snapshotForUi,
+  openProjectForm,
+  openSettings,
+  openApproval,
+  openContext,
+  mockTaskPanels,
+} from './helpers';
 import { expect, test, type Page } from '@playwright/test';
 
 type Project = { id: string; name: string; defaultBossAgentId?: string };
@@ -59,7 +67,10 @@ function fixture() {
 }
 
 async function serveSnapshot(page: Page, state: ReturnType<typeof fixture>) {
-  await page.route('**/api/control-center', (route) => route.fulfill({ json: state }));
+  await mockTaskPanels(page);
+  await page.route('**/api/control-center', (route) =>
+    route.fulfill({ json: snapshotForUi(state) }),
+  );
 }
 
 function projectWithBoss(): Project {
@@ -121,23 +132,27 @@ test('creates a fresh project, selects its Boss, submits once and shows a durabl
   );
 
   await page.goto('/');
-  await expect(page.getByText('No active project')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Submit goal', exact: true })).toBeDisabled();
-  await page.getByLabel('Project name', { exact: true }).fill(' New project ');
-  await page.getByRole('button', { name: 'Create project', exact: true }).click();
-  await expect(page.getByLabel('Active project')).toHaveValue('new-project');
-  await page.getByLabel('Goal title (optional)').fill(' Review the architecture ');
-  await page.getByLabel('Goal objective').fill(' Find actionable improvements. ');
-  await expect(page.getByRole('button', { name: 'Submit goal', exact: true })).toBeDisabled();
-  await page.getByLabel('Select Boss agent').selectOption('boss-agent');
-  await expect(page.getByRole('button', { name: 'Submit goal', exact: true })).toBeEnabled();
-  await page.getByRole('button', { name: 'Submit goal', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Submitting…', exact: true })).toBeDisabled();
-  await expect(page.getByLabel('Goal objective')).toBeDisabled();
+  await expect(page.getByLabel('当前项目')).toHaveValue('');
+  await expect(page.getByRole('button', { name: '开始协作 →', exact: true })).toHaveCount(0);
+  await openProjectForm(page);
+  await page.getByLabel('项目名称', { exact: true }).fill(' New project ');
+  await page.getByRole('button', { name: '创建项目', exact: true }).click();
+  await expect(page.getByLabel('当前项目')).toHaveValue('new-project');
+  await page.locator('.composer-options > summary').click();
+  await page.getByLabel('任务名称').fill(' Review the architecture ');
+  await page.getByLabel('描述任务').fill(' Find actionable improvements. ');
+  await expect(page.getByRole('button', { name: '开始协作 →', exact: true })).toBeDisabled();
+  await openSettings(page);
+  await page.getByLabel('选择任务负责人').selectOption('boss-agent');
+  await page.getByRole('button', { name: '返回任务', exact: true }).click();
+  await expect(page.getByRole('button', { name: '开始协作 →', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: '开始协作 →', exact: true }).click();
+  await expect(page.getByRole('button', { name: '启动中…', exact: true })).toBeDisabled();
+  await expect(page.getByLabel('描述任务')).toBeDisabled();
   releaseSubmission();
   await expect(page.locator('.task-card')).toContainText('执行中');
   expect(submissions).toBe(1);
-  await expect(page.getByLabel('Goal objective')).toHaveValue('');
+  await expect(page.getByLabel('描述任务')).toHaveValue('');
 
   state.tasks[0]!.state = 'completed';
   state.tasks[0]!.resultArtifactRefs = ['final-answer'];
@@ -150,14 +165,14 @@ test('creates a fresh project, selects its Boss, submits once and shows a durabl
     sizeBytes: 55,
   });
   await expect(page.locator('.task-card')).toContainText('已完成');
-  await page.getByRole('button', { name: 'View result', exact: true }).click();
+  await page.getByRole('button', { name: '查看结果', exact: true }).click();
   const preview = page.getByRole('region', { name: 'Result preview' });
   await expect(preview).toContainText('Final answer incorporates the durable worker review.');
-  await expect(preview.getByRole('link', { name: 'Download result' })).toHaveAttribute(
+  await expect(preview.getByRole('link', { name: '下载结果' })).toHaveAttribute(
     'href',
     '/api/artifacts/final-answer/content',
   );
-  await page.getByRole('button', { name: 'Close result', exact: true }).click();
+  await page.getByRole('button', { name: '关闭结果', exact: true }).click();
   await expect(preview).toHaveCount(0);
   await page.reload();
   await expect(page.locator('.task-card')).toContainText('已完成');
@@ -182,15 +197,15 @@ test('keeps a failed goal draft and error through polling, then allows an explic
     await route.fulfill({ status: 202, json: { task } });
   });
   await page.goto('/');
-  await page.getByLabel('Goal objective').fill('Find actionable improvements.');
-  await page.getByRole('button', { name: 'Submit goal', exact: true }).click();
+  await page.getByLabel('描述任务').fill('Find actionable improvements.');
+  await page.getByRole('button', { name: '开始协作 →', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('Boss is not ready. Probe it first.');
   const nextPoll = page.waitForResponse('**/api/control-center');
   await nextPoll;
   await expect(page.getByRole('alert')).toContainText('Boss is not ready. Probe it first.');
-  await expect(page.getByLabel('Goal objective')).toHaveValue('Find actionable improvements.');
+  await expect(page.getByLabel('描述任务')).toHaveValue('Find actionable improvements.');
   expect(submissions).toBe(1);
-  await page.getByRole('button', { name: 'Submit goal', exact: true }).click();
+  await page.getByRole('button', { name: '开始协作 →', exact: true }).click();
   await expect(page.locator('.task-card')).toContainText('执行中');
   await expect(page.getByRole('alert')).toHaveCount(0);
   expect(submissions).toBe(2);
@@ -227,20 +242,27 @@ test('only decides pending approvals after the user chooses approve or reject', 
   await page.goto('/');
   const write = page.locator('.approval-card').filter({ hasText: 'workspace.write' });
   const network = page.locator('.approval-card').filter({ hasText: 'network.access' });
-  await expect(write).toContainText('/project/src');
-  await expect(write).toContainText('boss-agent');
-  await expect(write).toContainText('enforced');
-  await expect(network.getByRole('button', { name: 'Reject', exact: true })).toBeEnabled();
+  await openContext(page);
+  await expect(network.getByRole('button', { name: '查看审批详情', exact: true })).toBeEnabled();
   expect(decisions).toEqual([]);
-  await write.getByRole('button', { name: 'Approve', exact: true }).click();
+  const review = await openApproval(page, write);
+  await expect(review).toContainText('/project/src');
+  await expect(review).toContainText('enforced');
+  await review.getByText('执行绑定详情', { exact: true }).click();
+  await expect(review).toContainText('goal-one');
+  expect(decisions).toEqual([]);
+  await review.getByRole('button', { name: '允许一次', exact: true }).click();
+  await review.getByRole('button', { name: '返回审批列表', exact: true }).click();
   await expect(write.locator('.badge')).toHaveText('已批准');
-  await expect(write.getByRole('button')).toHaveCount(0);
-  await network.getByRole('button', { name: 'Reject', exact: true }).click();
+  await expect(write.getByRole('button', { name: '查看审批详情' })).toBeEnabled();
+  await openApproval(page, network);
+  await review.getByRole('button', { name: '拒绝当前请求', exact: true }).click();
+  await review.getByRole('button', { name: '返回审批列表', exact: true }).click();
   await expect(network.locator('.badge')).toHaveText('已拒绝');
-  await expect(network.getByRole('button')).toHaveCount(0);
+  await expect(network.getByRole('button', { name: '查看审批详情' })).toBeEnabled();
   expect(decisions).toEqual(['write:approve', 'network:reject']);
   await page.reload();
-  await expect(page.getByRole('button', { name: 'Approve', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '允许一次', exact: true })).toHaveCount(0);
   expect(decisions).toEqual(['write:approve', 'network:reject']);
 });
 
@@ -265,16 +287,20 @@ test('switches project-scoped data and closes an old project result', async ({ p
     route.fulfill({ contentType: 'text/plain', body: 'First result' }),
   );
   await page.goto('/');
-  await page.getByRole('button', { name: 'View result', exact: true }).click();
+  await page.getByRole('button', { name: '查看结果', exact: true }).click();
   await expect(page.getByRole('region', { name: 'Result preview' })).toContainText('First result');
-  await page.getByLabel('Active project').selectOption('project-two');
+  await page.getByLabel('当前项目').selectOption('project-two');
   await expect(page.getByRole('region', { name: 'Result preview' })).toHaveCount(0);
   await expect(page.locator('.task-card')).toHaveCount(0);
-  await expect(page.getByText('No tasks in this project yet.')).toBeVisible();
-  await expect(page.getByText('No artifacts in this project yet.')).toBeVisible();
-  await expect(page.getByLabel('Select Boss agent')).toHaveValue('');
-  await expect(page.getByRole('button', { name: 'Submit goal', exact: true })).toBeDisabled();
-  await page.getByLabel('Active project').selectOption('project-one');
+  await expect(page.getByText('任务会保存在这里。')).toBeVisible();
+  await openContext(page);
+  await expect(page.getByText('还没有产物，任务完成后会显示在这里。')).toBeVisible();
+  await page.getByRole('button', { name: 'Close context', exact: true }).click();
+  await openSettings(page);
+  await expect(page.getByLabel('选择任务负责人')).toHaveValue('');
+  await page.getByRole('button', { name: '返回任务', exact: true }).click();
+  await expect(page.getByRole('button', { name: '开始协作 →', exact: true })).toBeDisabled();
+  await page.getByLabel('当前项目').selectOption('project-one');
   await expect(page.locator('.task-card')).toContainText('Review the architecture');
   await expect(page.getByRole('region', { name: 'Result preview' })).toHaveCount(0);
 });

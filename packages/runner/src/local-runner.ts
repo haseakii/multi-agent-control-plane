@@ -44,6 +44,14 @@ type ProcessRecord = {
   stdoutTransport: RawByteChannel;
 };
 
+type CompletedProcess = { status: ProcessStatus; channel: EventChannel<RunnerEvent> };
+
+function outputBytes(event: RunnerEvent): number {
+  return event.type === 'process.stdout' || event.type === 'process.stderr'
+    ? Buffer.byteLength(event.chunk)
+    : 0;
+}
+
 class RawByteChannel {
   private readonly queued: Uint8Array[] = [];
   private queuedBytes = 0;
@@ -148,6 +156,9 @@ export type LocalRunnerOptions = {
   eventHistoryLimit?: number;
   outputChunkCharacters?: number;
   defaultStopGracePeriodMs?: number;
+  /** Completed handles remain readable only within this bounded in-memory cache. */
+  completedProcessLimit?: number;
+  completedOutputBytesLimit?: number;
 };
 
 const defaultEnvironmentKeys =
@@ -158,6 +169,10 @@ const defaultEnvironmentKeys =
 export class LocalRunner implements Runner {
   private readonly runnerId: RunnerId;
   private readonly records = new Map<string, ProcessRecord>();
+  private readonly completed = new Map<string, CompletedProcess>();
+  private completedOutputBytes = 0;
+  private readonly completedProcessLimit: number;
+  private readonly completedOutputBytesLimit: number;
   private readonly labels: string[];
   private readonly capabilities: string[];
   private readonly inheritedEnvironmentKeys: string[];
@@ -193,6 +208,12 @@ export class LocalRunner implements Runner {
     this.eventHistoryLimit = options.eventHistoryLimit ?? 512;
     this.outputChunkCharacters = options.outputChunkCharacters ?? 64 * 1024;
     this.defaultStopGracePeriodMs = options.defaultStopGracePeriodMs ?? 2_000;
+    this.completedProcessLimit = options.completedProcessLimit ?? 64;
+    this.completedOutputBytesLimit = options.completedOutputBytesLimit ?? 4 * 1024 * 1024;
+    if (!Number.isSafeInteger(this.completedProcessLimit) || this.completedProcessLimit < 1)
+      throw new RangeError('completedProcessLimit must be a positive safe integer.');
+    if (!Number.isSafeInteger(this.completedOutputBytesLimit) || this.completedOutputBytesLimit < 0)
+      throw new RangeError('completedOutputBytesLimit must be a nonnegative safe integer.');
   }
 
   descriptor(): RunnerDescriptor {
@@ -252,7 +273,7 @@ export class LocalRunner implements Runner {
       handle,
       child,
       state: 'running',
-      channel: new EventChannel(this.eventHistoryLimit),
+      channel: new EventChannel(this.eventHistoryLimit, outputBytes),
       exitPromise,
       resolveExit,
       sequence: 0,
@@ -319,20 +340,26 @@ export class LocalRunner implements Runner {
   }
 
   status(handle: ProcessHandle): ProcessStatus {
+    const completed = this.completedRecord(handle);
+    if (completed) return structuredClone(completed.status);
     const record = this.getRecord(handle);
     return this.snapshot(record);
   }
 
   wait(handle: ProcessHandle): Promise<ProcessStatus> {
+    const completed = this.completedRecord(handle);
+    if (completed) return Promise.resolve(structuredClone(completed.status));
     return this.getRecord(handle).exitPromise;
   }
 
   events(handle: ProcessHandle, options: { replay?: boolean } = {}): AsyncIterable<RunnerEvent> {
-    const record = this.getRecord(handle);
+    const record = this.completedRecord(handle) ?? this.getRecord(handle);
     return record.channel.subscribe(options.replay ?? true);
   }
 
   async stop(handle: ProcessHandle, options: StopOptions = {}): Promise<ProcessStatus> {
+    const completed = this.completedRecord(handle);
+    if (completed) return structuredClone(completed.status);
     const record = this.getRecord(handle);
     if (record.finalized) {
       return this.snapshot(record);
@@ -590,7 +617,27 @@ export class LocalRunner implements Runner {
       signal,
     });
     record.channel.close();
-    record.resolveExit(this.snapshot(record));
+    const status = this.snapshot(record);
+    // Never retain a ChildProcess, raw transport or its listener closures after
+    // exit. Durable task/artifact history is owned by the control plane.
+    this.records.delete(record.handle.id);
+    this.completed.set(record.handle.id, {
+      status: structuredClone(status),
+      channel: record.channel,
+    });
+    this.completedOutputBytes += record.channel.retainedBytes;
+    for (const [id, completed] of this.completed) {
+      if (this.completed.size <= this.completedProcessLimit) break;
+      this.completedOutputBytes -= completed.channel.retainedBytes;
+      completed.channel.clearHistory();
+      this.completed.delete(id);
+    }
+    for (const completed of this.completed.values()) {
+      if (this.completedOutputBytes <= this.completedOutputBytesLimit) break;
+      this.completedOutputBytes -= completed.channel.retainedBytes;
+      completed.channel.clearHistory();
+    }
+    record.resolveExit(status);
   }
 
   private snapshot(record: ProcessRecord): ProcessStatus {
@@ -654,5 +701,14 @@ export class LocalRunner implements Runner {
       throw new Error(`Unknown process handle: ${handle.id}`);
     }
     return record;
+  }
+
+  private completedRecord(handle: ProcessHandle): CompletedProcess | undefined {
+    if (handle.runnerId !== this.runnerId)
+      throw new Error(`Process handle belongs to runner ${handle.runnerId}, not ${this.runnerId}.`);
+    const completed = this.completed.get(handle.id);
+    if (completed && completed.status.pid !== handle.pid)
+      throw new Error(`Unknown process handle: ${handle.id}`);
+    return completed;
   }
 }

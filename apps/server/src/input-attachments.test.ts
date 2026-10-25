@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { expect, it } from 'vitest';
+import { TaskSchema, WorkspaceSchema, type Task } from '@control-plane/core';
 import {
   openSqliteStorage,
   SqliteInputAttachmentRepository,
@@ -125,14 +126,16 @@ it('uploads actual binary bytes with safe download headers, and keeps managed co
     const task = runtime.createDraft('p', { objective: 'fixture', attachmentIds: [a.id] });
     await runtime.inputAttachments.prepare([task.id], root);
     writeFileSync(join(root, 'index.html'), '<h1>edited</h1>');
-    const captured = await new LocalGitReviewAdapter().capture({
-      id: 'w',
-      projectId: 'p',
-      provider: 'git-worktree',
-      rootPath: root,
-      baseRevision,
-      access: 'read-write',
-    });
+    const captured = await new LocalGitReviewAdapter().capture(
+      WorkspaceSchema.parse({
+        id: 'w',
+        projectId: 'p',
+        provider: 'git-worktree',
+        rootPath: root,
+        baseRevision,
+        access: 'read-write',
+      }),
+    );
     expect(captured.files.map((f) => f.path)).toEqual(['index.html']);
     expect(captured.patch).not.toContain('.control-plane-inputs');
   } finally {
@@ -187,11 +190,18 @@ it('delivers native image and actual file content to a process, and carries them
     await expect
       .poll(() => runtime.taskExecutionActive(first.task.id), { timeout: 10000 })
       .toBe(false);
-    const child = { ...first.task, id: 'child', parentTaskId: first.task.id, dependencyIds: [] };
+    const child = TaskSchema.parse({
+      ...first.task,
+      id: 'child',
+      parentTaskId: first.task.id,
+      dependencyIds: [],
+    });
     const childScope = inputAttachmentTaskScope(child, (id) => runtime.getTask(id));
     expect(childScope).toContain(first.task.id);
     expect(() =>
-      inputAttachmentTaskScope(child, () => ({ ...first.task, projectId: 'other' })),
+      inputAttachmentTaskScope(child, () =>
+        TaskSchema.parse({ ...first.task, projectId: 'other' }),
+      ),
     ).toThrow('当前项目');
     const next = runtime.followUpTask(first.task.id, {
       content: 'Keep previous inputs and continue',
@@ -220,3 +230,194 @@ it('delivers native image and actual file content to a process, and carries them
     cleanup(root);
   }
 }, 25000);
+
+it.each(['completed', 'failed', 'cancelled'] as const)(
+  'delivers original input bytes after a %s round and retains that link across restart',
+  async (state) => {
+    const root = fixture(),
+      filename = join(root, 'state.sqlite');
+    let storage = openSqliteStorage({ filename });
+    const createRuntime = () =>
+      createControlPlaneRuntime({
+        storage,
+        workspaceRoot: join(root, 'workspaces'),
+        artifactRoot: join(root, 'artifacts'),
+      });
+    let runtime = createRuntime();
+    runtime.setBridgeBaseUrl('http://127.0.0.1:4000');
+    try {
+      runtime.createProject({ id: 'p', name: 'Recovery inputs' });
+      runtime.setWorkspaceMode('p', { mode: 'task-local' });
+      runtime.agentControl.create({
+        id: 'worker',
+        name: 'Input fixture',
+        enabled: true,
+        runtime: {
+          type: 'acp-stdio',
+          command: process.execPath,
+          args: [fileURLToPath(new URL('../fixtures/input-worker.mjs', import.meta.url))],
+        },
+        auth: { mode: 'agent-managed' },
+        capabilities: [],
+        orchestration: { canBeBoss: false },
+        controlBridge: { transport: 'none', scopes: [] },
+      });
+      const original = runtime.taskEngine.createTask({
+        id: 'original',
+        projectId: 'p',
+        title: 'Original input',
+        objective: 'Read references',
+        state: 'ready',
+      });
+      const image = runtime.inputAttachments.upload('image.png', 'image/png', png);
+      const file = runtime.inputAttachments.upload(
+        'notes.txt',
+        'text/plain',
+        Buffer.from('retain blue-pine-37'),
+      );
+      runtime.inputAttachments.repository.bind(original.id, original.id, [image.id, file.id]);
+      const assignment = runtime.taskEngine.createAssignment({
+        id: 'original-assignment',
+        taskId: original.id,
+        agentId: 'worker',
+        objective: original.objective,
+        role: { name: 'Collaborator' },
+      });
+      const attempt = runtime.taskEngine.createAttempt(assignment.id);
+      runtime.taskEngine.startAttempt(attempt.id);
+      if (state === 'cancelled') runtime.taskEngine.cancelTask(original.id);
+      else if (state === 'failed')
+        runtime.taskEngine.finishAttempt(attempt.id, {
+          outcome: 'failed',
+          failure: { code: 'SYNTHETIC_FAILURE', message: 'Synthetic failure', retryable: true },
+        });
+      else {
+        runtime.taskEngine.finishAttempt(attempt.id, { outcome: 'completed' });
+        runtime.taskEngine.completeTask(original.id);
+      }
+      await runtime.close();
+      storage.close();
+      storage = openSqliteStorage({ filename });
+      runtime = createRuntime();
+      runtime.setBridgeBaseUrl('http://127.0.0.1:4000');
+      const next = runtime.followUpTask(original.id, {
+        content: 'Continue reading the original inputs',
+        idempotencyKey: 'next',
+      });
+      expect(runtime.taskInputAttachments(next.task.id).map((a) => a.id)).toEqual([
+        image.id,
+        file.id,
+      ]);
+      await expect
+        .poll(() => runtime.getTask(next.task.id).state, { timeout: 10000 })
+        .toBe('completed');
+      await expect
+        .poll(() => runtime.taskExecutionActive(next.task.id), { timeout: 10000 })
+        .toBe(false);
+      const binding = storage.repositories.assignmentWorkspaces
+        .list()
+        .find((b) => b.taskId === next.task.id)!;
+      const workspace = storage.repositories.workspaces.get(binding.workspaceId)!;
+      expect(readFileSync(join(workspace.rootPath, 'followup-proof.txt'), 'utf8')).toContain(
+        'native image + real file + blue-pine-37',
+      );
+      await runtime.close();
+      storage.close();
+      storage = openSqliteStorage({ filename });
+      runtime = createRuntime();
+      expect(runtime.taskInputAttachments(next.task.id).map((a) => a.id)).toEqual([
+        image.id,
+        file.id,
+      ]);
+    } finally {
+      await runtime.close();
+      storage.close();
+      cleanup(root);
+    }
+  },
+  20000,
+);
+
+it('walks conversation inputs beyond the text context window and rejects corrupt project or cycle links', () => {
+  const tasks = new Map<string, Task>();
+  for (let index = 0; index < 25; index++)
+    tasks.set(
+      'round-' + index,
+      TaskSchema.parse({
+        id: 'round-' + index,
+        projectId: 'p',
+        title: 'Round',
+        objective: 'Continue',
+        state: index % 2 ? 'failed' : 'completed',
+        dependencyIds: [],
+        contextRefs: [],
+        resultArtifactRefs: [],
+        createdAt: '2026-10-25T00:00:00Z',
+        updatedAt: '2026-10-25T00:00:00Z',
+      }),
+    );
+  const previous = (task: Task) =>
+    Number(task.id.slice(6)) > 0 ? 'round-' + (Number(task.id.slice(6)) - 1) : undefined;
+  const read = (id: string) => tasks.get(id)!;
+  expect(inputAttachmentTaskScope(read('round-24'), read, previous)).toContain('round-1');
+  expect(() =>
+    inputAttachmentTaskScope(read('round-1'), read, (task) =>
+      task.id === 'round-1' ? 'round-0' : 'round-1',
+    ),
+  ).toThrow('关联异常');
+  tasks.set('round-0', TaskSchema.parse({ ...read('round-0'), projectId: 'other' }));
+  expect(() => inputAttachmentTaskScope(read('round-1'), read, previous)).toThrow('当前项目');
+  expect(() =>
+    inputAttachmentTaskScope(
+      TaskSchema.parse({ ...read('round-1'), dependencyIds: ['round-0'] }),
+      read,
+    ),
+  ).toThrow('当前项目');
+});
+
+it('reads legacy predecessor-only input links and isolates unrelated malformed conversation links', async () => {
+  const root = fixture(),
+    storage = openSqliteStorage({ filename: ':memory:' });
+  const runtime = createControlPlaneRuntime({
+    storage,
+    workspaceRoot: join(root, 'workspaces'),
+    artifactRoot: join(root, 'artifacts'),
+  });
+  try {
+    runtime.createProject({ id: 'p', name: 'Legacy input links' });
+    for (const id of ['original', 'next', 'unrelated'])
+      runtime.taskEngine.createTask({
+        id,
+        projectId: 'p',
+        title: id,
+        objective: 'References',
+        state: 'ready',
+      });
+    const attachment = runtime.inputAttachments.upload(
+      'legacy.txt',
+      'text/plain',
+      Buffer.from('Legacy bytes'),
+    );
+    runtime.inputAttachments.repository.bind('original', 'original', [attachment.id]);
+    for (const [taskId, sourceTaskId] of [
+      ['next', 'original'],
+      ['unrelated', 17],
+    ] as const)
+      storage.repositories.events.append({
+        id: 'link-' + taskId,
+        projectId: 'p',
+        taskId,
+        type: 'task.followup.created',
+        actor: { type: 'system', id: 'fixture' },
+        payload: { sourceTaskId },
+        occurredAt: '2026-10-25T00:00:00Z',
+      });
+    expect(runtime.taskInputAttachments('original').map((a) => a.id)).toEqual([attachment.id]);
+    expect(runtime.taskInputAttachments('next').map((a) => a.id)).toEqual([attachment.id]);
+    expect(() => runtime.taskInputAttachments('unrelated')).toThrow();
+  } finally {
+    await runtime.close();
+    storage.close();
+    cleanup(root);
+  }
+});

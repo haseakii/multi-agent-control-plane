@@ -111,29 +111,34 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
           ]),
         );
         const id = `${hash.slice(0, 8)}-${hash.slice(8, 12)}-5${hash.slice(13, 16)}-8${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
-        const attachment = runtime.inputAttachments.upload(
-          value.name,
-          value.mimeType,
-          request.body,
-          id,
-        );
-        repo.events.append(
-          AuditEventSchema.parse({
-            id: 'event-' + randomUUID(),
-            projectId,
-            ...(task ? { taskId: task.id } : {}),
-            type: 'client.input.uploaded',
-            actor: { type: 'agent', id: 'mcp-client:' + client.id },
-            payload: {
-              attachmentId: attachment.id,
-              sha256: attachment.sha256,
-              sizeBytes: attachment.sizeBytes,
-              enforcementMode: 'enforced',
-              boundary: 'client-gateway',
-            },
-            occurredAt: new Date().toISOString(),
-          }),
-        );
+        const uploadBytes = request.body,
+          uploadClient = client;
+        const attachment = repo.transaction(() => {
+          const attachment = runtime.inputAttachments.upload(
+            value.name,
+            value.mimeType,
+            uploadBytes,
+            id,
+          );
+          repo.events.append(
+            AuditEventSchema.parse({
+              id: 'event-' + randomUUID(),
+              projectId,
+              ...(task ? { taskId: task.id } : {}),
+              type: 'client.input.uploaded',
+              actor: { type: 'agent', id: 'mcp-client:' + uploadClient.id },
+              payload: {
+                attachmentId: attachment.id,
+                sha256: attachment.sha256,
+                sizeBytes: attachment.sizeBytes,
+                enforcementMode: 'enforced',
+                boundary: 'client-gateway',
+              },
+              occurredAt: new Date().toISOString(),
+            }),
+          );
+          return attachment;
+        });
         return { attachment };
       } catch (error) {
         if (error instanceof TaskControlError)
@@ -188,15 +193,38 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
         );
       }
     };
+    const currentIdentity = () => {
+      const current = ClientAccessFileSchema.parse(options.readAccess()).clients.find(
+        (candidate) =>
+          candidate.id === identity.id &&
+          candidate.enabled &&
+          candidate.tokenSha256 === identity.tokenSha256,
+      );
+      if (!current || (toolName && !current.tools.includes(toolName)))
+        throw new TaskControlError(
+          403,
+          'Client access changed while the operation was in progress.',
+        );
+      return current;
+    };
     const authorize = (id: string, actions: string[]) => {
-      if (!identity.projects.some((p) => p.projectId === id))
+      const current = currentIdentity();
+      if (!current.projects.some((p) => p.projectId === id))
         throw new TaskControlError(403, 'Project is not authorized for this client.');
       projectId = id;
       const policy = runtime.getProjectPolicy(id);
       for (const action of actions)
         if (policy.tools[action as keyof typeof policy.tools] === 'deny')
           throw new TaskControlError(403, 'Current project policy denies this operation.');
-      return identity.projects.find((p) => p.projectId === id)!;
+      return current.projects.find((p) => p.projectId === id)!;
+    };
+    const authorizeAttachments = (id: string, attachmentIds: readonly string[] = []) => {
+      for (const attachmentId of attachmentIds)
+        if (!runtime.inputAttachments.repository.availableToClient(attachmentId, id, identity.id))
+          throw new TaskControlError(
+            403,
+            'Attachment is not authorized for this client and project.',
+          );
     };
     const taskAccess = (id: string, actions: string[]) => {
       const task = repo.tasks.get(id);
@@ -247,6 +275,7 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
             throw new TaskControlError(403, 'Current project policy denies agent discovery.');
           if (value.refreshSettings)
             await runtime.sessionSettings.inspect(value.agentId!, value.projectId!);
+          if (value.projectId) authorize(value.projectId, ['control_discover_agents']);
           result = {
             agents: repo.agentDefinitions
               .list()
@@ -294,6 +323,7 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
             'control_create_task',
             'control_delegate_task',
           ]);
+          authorizeAttachments(value.projectId, value.attachmentIds);
           const submitted = runtime.submitClientTask(
             identity.id,
             value,
@@ -342,14 +372,6 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
             events = read();
           }
           // Revalidate access after waiting so revocation never releases new content.
-          const fresh = ClientAccessFileSchema.parse(options.readAccess()).clients.find(
-            (c) => c.id === identity.id && c.enabled && c.tokenSha256 === identity.tokenSha256,
-          );
-          if (
-            !fresh?.projects.some((p) => p.projectId === task.projectId) ||
-            !fresh.tools.includes(toolName)
-          )
-            throw new TaskControlError(403, 'Client access changed while waiting.');
           authorize(task.projectId, ['control_get_task']);
           const start = value.after ? events.findIndex((e) => e.id === value.after) + 1 : 0;
           const page = events.slice(start, start + value.limit);
@@ -443,6 +465,7 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
           const { task, grant } = taskAccess(value.taskId, ['control_send_message']);
           if (ended(task))
             authorize(task.projectId, ['control_create_task', 'control_delegate_task']);
+          authorizeAttachments(task.projectId, value.attachmentIds);
           const continued = runtime.submitConversationInput(
             task.id,
             {
@@ -494,6 +517,7 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
             result = { artifact, note: 'Large artifact; inspect it through the workbench.' };
           else {
             const loaded = await runtime.loadArtifact(metadata.id);
+            authorize(metadata.projectId, ['control_get_artifact']);
             if (createHash('sha256').update(loaded.content).digest('hex') !== metadata.sha256)
               throw new TaskControlError(409, 'Artifact integrity check failed.');
             const text = new TextDecoder().decode(loaded.content),
@@ -520,13 +544,20 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
             Date.now() < deadline
           )
             await delay(50);
+          const requireAccess = () => {
+            taskAccess(value.taskId, ['control_get_task']);
+          };
+          requireAccess();
           const existing = runtime
             .listWorkspaceReviews(value.taskId)
             .find((r) => r.review.state === 'ready' && r.approvalState === 'pending');
           result = {
-            review: existing?.review ?? (await runtime.prepareWorkspaceReview(value.taskId)),
+            review:
+              existing?.review ??
+              (await runtime.prepareWorkspaceReview(value.taskId, requireAccess)),
             requiresHumanReview: true,
           };
+          requireAccess();
           break;
         }
       }

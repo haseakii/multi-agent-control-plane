@@ -5,6 +5,8 @@ import {
   InputAttachmentIdsSchema,
   InputAttachmentIdSchema,
   INPUT_ATTACHMENT_TOTAL_BYTES,
+  ProjectIdSchema,
+  ExternalClientAccessSchema,
   type InputAttachment,
 } from '@control-plane/core';
 export interface InputAttachmentRepository {
@@ -13,6 +15,7 @@ export interface InputAttachmentRepository {
   find(id: string): InputAttachment | undefined;
   read(id: string): Uint8Array;
   removeUnbound(id: string): boolean;
+  availableToClient(id: string, projectId: string, clientId: string): boolean;
   bind(taskId: string, ownerId: string, ids: string[], replace?: boolean): void;
   forOwner(ownerId: string): InputAttachment[];
   forTask(taskId: string): InputAttachment[];
@@ -76,6 +79,36 @@ export class SqliteInputAttachmentRepository implements InputAttachmentRepositor
     if (rows.some((row) => InputAttachmentIdsSchema.parse(JSON.parse(row.ids_json)).includes(id)))
       return false;
     return this.sqlite.prepare('DELETE FROM input_attachments WHERE id=?').run(id).changes === 1;
+  }
+  availableToClient(rawId: string, rawProjectId: string, rawClientId: string): boolean {
+    const id = InputAttachmentIdSchema.parse(rawId),
+      projectId = ProjectIdSchema.parse(rawProjectId),
+      clientId = ExternalClientAccessSchema.shape.id.parse(rawClientId);
+    // Existing project inputs are shared within that project's grant. Unbound
+    // uploads remain private to the uploading client and its original project.
+    // These durable records predate this check, so legacy inputs need no backfill.
+    return !!this.sqlite
+      .prepare(
+        `SELECT 1 FROM input_attachments AS attachment WHERE attachment.id = @id AND (
+          EXISTS (
+            SELECT 1 FROM input_attachment_messages AS message
+            JOIN tasks AS task ON task.id = message.task_id
+            JOIN json_each(message.ids_json) AS reference
+            WHERE task.project_id = @projectId AND reference.value = attachment.id
+          ) OR EXISTS (
+            SELECT 1 FROM events AS event
+            WHERE event.project_id = @projectId AND event.type = 'client.input.uploaded'
+              AND json_extract(event.payload, '$.actor.type') = 'agent'
+              AND json_extract(event.payload, '$.actor.id') = @actor
+              AND json_extract(event.payload, '$.payload.boundary') = 'client-gateway'
+              AND json_extract(event.payload, '$.payload.enforcementMode') = 'enforced'
+              AND json_extract(event.payload, '$.payload.attachmentId') = attachment.id
+              AND json_extract(event.payload, '$.payload.sha256') = json_extract(attachment.payload, '$.sha256')
+              AND json_extract(event.payload, '$.payload.sizeBytes') = json_extract(attachment.payload, '$.sizeBytes')
+          )
+        )`,
+      )
+      .get({ id, projectId, actor: 'mcp-client:' + clientId });
   }
   bind(taskId: string, ownerId: string, rawIds: string[], replace = false) {
     const ids = InputAttachmentIdsSchema.parse(rawIds);
