@@ -26,6 +26,7 @@ export const CapabilityObservation = z.object({
   sessionIdHash: z.string(),
   definitionFingerprint: z.string(),
   readinessFingerprint: z.string(),
+  networkFingerprint: z.string().optional(),
   accountIdentity: z.literal('not-exposed'),
   accountIdentityNote: z.string(),
 });
@@ -37,7 +38,13 @@ export const AgentSessionSettings = z.object({
   freshness: z.enum(['fresh', 'stale', 'unavailable']).default('unavailable'),
   observation: CapabilityObservation.nullable().default(null),
   staleReason: z
-    .enum(['expired', 'definition-changed', 'readiness-changed', 'inspection-failed'])
+    .enum([
+      'expired',
+      'definition-changed',
+      'readiness-changed',
+      'inspection-failed',
+      'network-changed',
+    ])
     .nullable()
     .default(null),
 });

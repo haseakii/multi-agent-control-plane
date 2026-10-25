@@ -127,6 +127,13 @@
       "when": 1792584011000,
       "tag": "0017_agent_catalog_sources",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1792584012000,
+      "tag": "0018_network_settings",
+      "breakpoints": true
     }
   ]
 }

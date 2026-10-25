@@ -1,6 +1,7 @@
 import { AgentDefinitionSchema } from '@control-plane/core';
 import type { AgentDefinition } from '@control-plane/core';
 import { createFleetMcpServer } from './server.js';
+import { loopbackFetch } from './loopback-fetch.js';
 import {
   FleetRecipientUnavailableError,
   FleetRetryableFailureSchema,
@@ -40,7 +41,12 @@ export class FleetBridgeHttpProxy {
 
   constructor(private readonly options: FleetBridgeHttpProxyOptions) {
     this.baseUrl = normalizeBaseUrl(options.baseUrl);
-    this.fetchImpl = options.fetchImpl ?? fetch;
+    const parsed = new URL(this.baseUrl);
+    this.fetchImpl =
+      options.fetchImpl ??
+      (parsed.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname)
+        ? loopbackFetch
+        : fetch);
   }
 
   async manifest(): Promise<FleetBridgeProxyManifest> {

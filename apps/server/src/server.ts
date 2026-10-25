@@ -17,6 +17,7 @@ import { registerFleetBridgeGateway, type FleetBridgeGatewayOptions } from './fl
 import { registerTaskControlRoutes } from './task-control.js';
 import { registerClientGateway, type ClientGatewayOptions } from './client-gateway.js';
 import type { ControlPlaneRuntime } from './runtime-composition.js';
+import { registerNetworkSettingsRoutes } from './network-settings-routes.js';
 
 export type ControlCenterProvider = (
   options?: ControlCenterReadOptions,
@@ -86,6 +87,7 @@ export function buildServer(options: BuildServerOptions = {}) {
   }
   if (options.taskControl) {
     registerTaskControlRoutes(app, options.taskControl);
+    registerNetworkSettingsRoutes(app, options.taskControl.network);
   }
 
   app.get('/health', async () => ({

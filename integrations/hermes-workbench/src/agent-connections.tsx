@@ -25,6 +25,7 @@ import {
 import { AgentQuickAdd } from './agent-quick-add';
 import { AgentManagement } from './agent-management';
 import { SessionSettingsControl } from './agent-session-settings';
+import { NetworkSettingsView, type NetworkViewData } from './network-settings-model';
 import { MemberOverviewReader } from './member-overview-reader';
 import { selectableAgents, type ExecutionMode } from './agent-selection';
 import { filterMembers, memberStatus, type MemberFilter } from './member-list';
@@ -79,6 +80,8 @@ export type AgentConnectionsProps = {
   onChanged: () => void;
   onUse: (agentId: string, mode: ExecutionMode) => void;
   onOpenTask: (taskId: string) => void;
+  onNetwork?: (agentId: string) => void;
+  networkVersion?: number;
   activeAgentIds?: readonly string[];
   projectId?: string;
 };
@@ -93,12 +96,24 @@ export function AgentConnections({
   onChanged,
   onUse,
   onOpenTask,
+  onNetwork,
+  networkVersion,
   activeAgentIds,
   projectId,
 }: AgentConnectionsProps) {
   const dialog = useRef<HTMLDialogElement>(null);
   const actionInFlight = useRef(false);
   const [agents, setAgents] = useState<Connection[]>([]);
+  const [network, setNetwork] = useState<NetworkViewData>();
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetchJSON('/api/system/network', { signal: controller.signal }, NetworkSettingsView)
+      .then((value) => {
+        if (!controller.signal.aborted) setNetwork(value);
+      })
+      .catch(() => {});
+    return () => controller.abort();
+  }, [networkVersion]);
   const [loading, setLoading] = useState(true);
   const [pending, setPending] = useState<{ id: string; kind: 'probe' | 'auth' } | null>(null);
   const [error, setError] = useState('');
@@ -560,6 +575,24 @@ export function AgentConnections({
                     projectId={projectId}
                     disabled={disabled || editing !== null}
                   />
+                  {onNetwork && (
+                    <button
+                      type="button"
+                      disabled={configBusy || !!pending || editing !== null}
+                      onClick={() => onNetwork(id)}
+                    >
+                      {(() => {
+                        const effective = network?.effective.find((value) => value.agentId === id);
+                        return !effective
+                          ? '网络设置 · 待核对'
+                          : effective.source === 'member'
+                            ? effective.mode === 'direct'
+                              ? '网络：独立直连'
+                              : '网络：单独代理'
+                            : '网络：跟随全局';
+                      })()}
+                    </button>
+                  )}
                 </div>
                 <dl className={s.status}>
                   <div>

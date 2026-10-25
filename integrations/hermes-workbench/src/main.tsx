@@ -28,6 +28,7 @@ import {
   Eye,
   GitPullRequest,
   PanelLeft,
+  Settings2,
 } from 'lucide-react';
 import {
   artifactUrl,
@@ -63,6 +64,7 @@ import { activeAgents } from './agent-config';
 import { MemberActivity, recentMemberTask } from './member-history';
 import { MemberWorkHint } from './member-work-hint';
 import { WorkbenchHelp } from './workbench-help';
+import { SystemSettings } from './system-settings';
 import { composerDrafts } from './composer-drafts';
 import { followUpSubmissions } from './followup-submissions';
 import { goalSubmissions } from './goal-submissions';
@@ -419,6 +421,9 @@ function Workbench() {
   const { confirmForProject, confirmationDialog } = useWorkspaceConfirmation();
   const [connectionsOpen, setConnectionsOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [systemSettingsOpen, setSystemSettingsOpen] = useState(false);
+  const [networkVersion, setNetworkVersion] = useState(0);
+  const [networkMemberId, setNetworkMemberId] = useState<string>();
   const [connectionTarget, setConnectionTarget] = useState<string>();
   const [connectionAdd, setConnectionAdd] = useState(false);
   function openConnections(memberId?: string, add = false) {
@@ -934,6 +939,14 @@ function Workbench() {
         </button>
         <button disabled={sending} onClick={() => setHelpOpen(true)}>
           使用说明
+        </button>
+        <button
+          onClick={() => {
+            setNetworkMemberId(undefined);
+            setSystemSettingsOpen(true);
+          }}
+        >
+          <Settings2 size={16} /> 系统设置
         </button>
         <button
           aria-label="切换主题"
@@ -1748,6 +1761,10 @@ function Workbench() {
                 {rail === 'process' && (
                   <ExecutionDetails
                     taskIds={rounds.map((r) => r.id)}
+                    onNetwork={(agentId) => {
+                      setNetworkMemberId(agentId);
+                      setSystemSettingsOpen(true);
+                    }}
                     onClose={() => setRail(null)}
                   />
                 )}
@@ -1845,6 +1862,11 @@ function Workbench() {
             setConnectionsOpen(false);
           }}
           activeAgentIds={snapshot ? [...activeMemberIds] : undefined}
+          onNetwork={(agentId) => {
+            setNetworkMemberId(agentId);
+            setSystemSettingsOpen(true);
+          }}
+          networkVersion={networkVersion}
         />
       )}
       {helpOpen && (
@@ -1862,6 +1884,19 @@ function Workbench() {
           onCurrentTask={() => {
             setHelpOpen(false);
             setRail('process');
+          }}
+        />
+      )}
+      {systemSettingsOpen && (
+        <SystemSettings
+          initialMemberId={networkMemberId}
+          onClose={() => {
+            setSystemSettingsOpen(false);
+            setNetworkVersion((value) => value + 1);
+          }}
+          onSaved={() => {
+            setNetworkVersion((value) => value + 1);
+            void refresh();
           }}
         />
       )}

@@ -43,6 +43,7 @@ export interface AgentRuntimeControl {
 }
 
 export type ProcessAgentRuntimeControlOptions = {
+  prepareEnvironment?: (definition: AgentDefinition) => Record<string, string>;
   probeTimeoutMs?: number | undefined;
   authenticationTimeoutMs?: number | undefined;
   runtimeFactory?: (() => AcpClientRuntime) | undefined;
@@ -109,6 +110,7 @@ export class ProcessAgentRuntimeControl implements AgentRuntimeControl {
   private readonly probeTimeoutMs: number;
   private readonly authenticationTimeoutMs: number;
   private readonly runtimeFactory: () => AcpClientRuntime;
+  private readonly prepareEnvironment: (definition: AgentDefinition) => Record<string, string>;
 
   constructor(
     private readonly runner: Runner,
@@ -117,6 +119,7 @@ export class ProcessAgentRuntimeControl implements AgentRuntimeControl {
     this.probeTimeoutMs = options.probeTimeoutMs ?? 15_000;
     this.authenticationTimeoutMs = options.authenticationTimeoutMs ?? 5 * 60_000;
     this.runtimeFactory = options.runtimeFactory ?? (() => new AcpClientRuntime());
+    this.prepareEnvironment = options.prepareEnvironment ?? environmentFor;
   }
 
   async probe(definition: AgentDefinition): Promise<AgentRuntimeObservation> {
@@ -217,7 +220,7 @@ export class ProcessAgentRuntimeControl implements AgentRuntimeControl {
         command: definition.runtime.command,
         args: [...definition.runtime.args],
         cwd: definition.runtime.cwd ?? process.cwd(),
-        env: environmentFor(definition),
+        env: this.prepareEnvironment(definition),
         timeoutMs,
         signal: this.shutdown.signal,
       });

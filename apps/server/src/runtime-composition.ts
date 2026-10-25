@@ -122,6 +122,8 @@ import {
 } from '@control-plane/workspace';
 import { LocalAssignmentWorkspaceProvisioner } from './assignment-workspace-provisioner.js';
 import { AgentControlService } from './agent-control.js';
+import { NetworkSettingsService, applyNetworkEnvironment } from './network-settings.js';
+import { SqliteNetworkSettingsRepository } from '@control-plane/storage';
 import { TaskRecords } from './task-records.js';
 import {
   TaskDraftInputSchema,
@@ -203,6 +205,7 @@ export type ControlPlaneRuntimeOptions = {
 
 /** Local V0 application composition. SQLite is durable; ACP sessions and grants are not task state. */
 export class ControlPlaneRuntime {
+  readonly network: NetworkSettingsService;
   readonly agentControl: AgentControlService;
   readonly sessionSettings: SessionSettingsService;
   readonly taskEngine: TaskEngine;
@@ -262,13 +265,20 @@ export class ControlPlaneRuntime {
     );
     this.grants = new InMemoryFleetBridgeGrantStore({ ttlMs: this.executionTimeoutMs + 60_000 });
     this.storage.repositories.runners.upsert(this.runner.descriptor());
-    const runtimeControl = new ProcessAgentRuntimeControl(this.runner);
+    this.network = new NetworkSettingsService(
+      new SqliteNetworkSettingsRepository(this.storage.sqlite),
+      () => this.storage.repositories.agentDefinitions.list(),
+    );
+    const runtimeControl = new ProcessAgentRuntimeControl(this.runner, {
+      prepareEnvironment: (agent) => this.network.environment(agent),
+    });
     this.agentControl = new AgentControlService(this.storage, runtimeControl);
     this.sessionSettings = new SessionSettingsService(
       new SqliteSessionSettingsRepository(this.storage.sqlite),
       {
         agent: (agentId) => this.requireAgent(agentId),
         readiness: (agentId) => this.agentControl.state(this.requireAgent(agentId).id).readiness,
+        networkFingerprint: (agentId) => this.network.effective(agentId).fingerprint,
         cwd: (projectId) => {
           if (projectId) {
             const workspace = this.projectWorkspace(projectId);
@@ -1474,6 +1484,7 @@ export class ControlPlaneRuntime {
     return {
       latestTaskId,
       diagnostic: diagnoseTaskRecovery({
+        // Network observations are separate from task-state/approval diagnosis.
         task,
         latestTaskId,
         executionActive: this.taskExecutionActive(task.id),
@@ -1483,6 +1494,12 @@ export class ControlPlaneRuntime {
         events,
         now: observedAt,
       }),
+      network: this.network.diagnostic(
+        latestAttempt?.id,
+        latestAttempt
+          ? this.storage.repositories.assignments.get(latestAttempt.assignmentId)?.agentId
+          : undefined,
+      ),
     };
   }
 
@@ -2221,10 +2238,25 @@ export class ControlPlaneRuntime {
         },
         task.id,
       );
-      const environment = Object.fromEntries(
-        (agent.runtime.environmentAllowlist ?? []).flatMap((key) =>
-          process.env[key] === undefined ? [] : [[key, process.env[key]!]],
+      stage = 'network_prepare';
+      const effectiveNetwork = this.network.effective(agent.id);
+      const networkObservation = {
+        attemptId: attempt.id,
+        taskId: task.id,
+        agentId: agent.id,
+        effective: effectiveNetwork,
+        observedAt: now(),
+        state: 'prepared' as const,
+        trafficVerified: false as const,
+      };
+      this.network.repository.putAttempt(networkObservation);
+      const environment = applyNetworkEnvironment(
+        Object.fromEntries(
+          (agent.runtime.environmentAllowlist ?? []).flatMap((key) =>
+            process.env[key] === undefined ? [] : [[key, process.env[key]!]],
+          ),
         ),
+        effectiveNetwork,
       );
       stage = 'process_spawn';
       const handle = await this.runner.spawn({
@@ -2237,6 +2269,17 @@ export class ControlPlaneRuntime {
         signal: execution.abort.signal,
       });
       execution.handle = handle;
+      this.network.repository.putAttempt({
+        ...networkObservation,
+        state: 'started',
+        observedAt: now(),
+      });
+      this.event(
+        task.projectId,
+        'execution.network.started',
+        { attemptId: attempt.id, effective: effectiveNetwork, trafficVerified: false },
+        task.id,
+      );
       const transport = this.runner.transport(handle);
       const scopes = agent.controlBridge.scopes.filter(
         (scope) => boss || scope !== 'boss.orchestration',

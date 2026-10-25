@@ -41,6 +41,7 @@ const staleReasonSchema = z.enum([
   'definition-changed',
   'readiness-changed',
   'inspection-failed',
+  'network-changed',
 ]);
 const readinessEvidenceSchema = z
   .object({
@@ -58,6 +59,7 @@ export const SessionSettingsCacheObservationSchema = z
     sessionIdHash: digest,
     definitionFingerprint: digest,
     readinessFingerprint: digest,
+    networkFingerprint: digest.optional(),
     accountIdentity: z.literal('not-exposed'),
     accountIdentityNote: z.literal('账号身份未由 ACP 暴露；仅绑定当前可观察的登录与连接就绪证据。'),
   })
@@ -113,6 +115,7 @@ export class SessionSettingsService {
     private readonly host: {
       agent(id: string): AgentDefinition;
       readiness(id: string): AgentReadiness;
+      networkFingerprint?(id: string): string;
       cwd(projectId?: string): string;
       inspect(
         agent: AgentDefinition,
@@ -148,6 +151,8 @@ export class SessionSettingsService {
       return 'definition-changed' as const;
     if (cached.observation.readinessFingerprint !== this.readinessFingerprint(agentId))
       return 'readiness-changed' as const;
+    if (cached.observation.networkFingerprint !== this.host.networkFingerprint?.(agentId))
+      return 'network-changed' as const;
     if (cached.invalidated) return 'inspection-failed' as const;
     if (this.now() >= Date.parse(cached.observation.expiresAt)) return 'expired' as const;
     return null;
@@ -170,7 +175,8 @@ export class SessionSettingsService {
   async inspect(agentId: string, projectId?: string, rawValues?: unknown) {
     const agent = this.host.agent(agentId),
       version = fingerprint(agent),
-      readiness = this.readinessFingerprint(agentId);
+      readiness = this.readinessFingerprint(agentId),
+      networkFingerprint = this.host.networkFingerprint?.(agentId);
     if (!agent.enabled)
       throw new SessionSettingsError(409, '此成员已停用，请先启用后读取运行设置。');
     const key = this.key(agentId, projectId);
@@ -187,7 +193,8 @@ export class SessionSettingsService {
       );
       if (
         fingerprint(this.host.agent(agentId)) !== version ||
-        this.readinessFingerprint(agentId) !== readiness
+        this.readinessFingerprint(agentId) !== readiness ||
+        this.host.networkFingerprint?.(agentId) !== networkFingerprint
       )
         throw new SessionSettingsError(409, '成员配置或登录就绪证据已变化，请重新读取运行设置。');
       const observation = SessionSettingsCacheObservationSchema.parse({
@@ -197,6 +204,7 @@ export class SessionSettingsService {
         ).toISOString(),
         definitionFingerprint: version,
         readinessFingerprint: readiness,
+        ...(networkFingerprint ? { networkFingerprint } : {}),
         accountIdentity: 'not-exposed',
         accountIdentityNote: '账号身份未由 ACP 暴露；仅绑定当前可观察的登录与连接就绪证据。',
       });

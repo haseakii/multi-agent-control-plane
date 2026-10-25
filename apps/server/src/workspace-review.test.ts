@@ -287,7 +287,7 @@ it('reviews, merges, and pushes the approved snapshot to a local bare remote acr
     await app.close();
     storage.close();
     await createConsistentSqliteSnapshot(filename, join(root, 'backup.sqlite'));
-    expect(inspectSqliteSnapshot(join(root, 'backup.sqlite')).migrations).toHaveLength(18);
+    expect(inspectSqliteSnapshot(join(root, 'backup.sqlite')).migrations).toHaveLength(19);
   } finally {
     if (storage.sqlite.open) await runtime.close();
     await app.close();

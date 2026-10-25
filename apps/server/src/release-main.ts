@@ -71,6 +71,7 @@ async function startRelease(args: string[]) {
       agentControl: runtime.agentControl,
       agentCatalog: new AgentCatalogService(
         new FileCatalogCache(join(config.dataDir, 'cache/agent-catalog.json')),
+        runtime.network.fetch,
       ),
       taskControl: runtime,
       fleetGateway: runtime.fleetGateway,

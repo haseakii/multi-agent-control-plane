@@ -28,6 +28,7 @@ const app = buildServer({
   agentControl: runtime.agentControl,
   agentCatalog: new AgentCatalogService(
     new FileCatalogCache(join(dirname(filename), 'cache/agent-catalog.json')),
+    runtime.network.fetch,
   ),
   taskControl: runtime,
   fleetGateway: runtime.fleetGateway,

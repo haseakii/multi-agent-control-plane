@@ -388,13 +388,15 @@ function SessionSettingsDialog({
   }
   const options = data?.settings ? editableSessionOptions(data.settings) : [];
   const staleDescription =
-    data?.staleReason === 'readiness-changed'
-      ? '连接或登录状态的已知证据已变化，请重新核对选项；这不表示已读取账号身份。'
-      : data?.staleReason === 'definition-changed'
-        ? '成员启动配置已变化，请重新读取可用选项。'
-        : data?.staleReason === 'inspection-failed'
-          ? '上次核对未成功，当前显示此前记录，请重新读取。'
-          : '选项缓存已过期，请重新读取后再保存方案或默认。';
+    data?.staleReason === 'network-changed'
+      ? '网络设置已变化，请重新核对可用选项；最后已知登录记录仍保留。'
+      : data?.staleReason === 'readiness-changed'
+        ? '连接或登录状态的已知证据已变化，请重新核对选项；这不表示已读取账号身份。'
+        : data?.staleReason === 'definition-changed'
+          ? '成员启动配置已变化，请重新读取可用选项。'
+          : data?.staleReason === 'inspection-failed'
+            ? '上次核对未成功，当前显示此前记录，请重新读取。'
+            : '选项缓存已过期，请重新读取后再保存方案或默认。';
   function presetManagerRow(preset: SessionPresetData) {
     const name = renameNames[preset.id] ?? preset.name;
     return (

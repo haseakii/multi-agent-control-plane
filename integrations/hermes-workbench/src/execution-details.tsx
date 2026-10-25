@@ -243,7 +243,15 @@ function TechnicalDetails({ value }: { value: unknown }) {
   );
 }
 
-export function ExecutionDetails({ taskIds, onClose }: { taskIds: string[]; onClose: () => void }) {
+export function ExecutionDetails({
+  taskIds,
+  onClose,
+  onNetwork,
+}: {
+  taskIds: string[];
+  onClose: () => void;
+  onNetwork?: (agentId: string) => void;
+}) {
   const [records, setRecords] = useState<Records>();
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
@@ -455,6 +463,7 @@ export function ExecutionDetails({ taskIds, onClose }: { taskIds: string[]; onCl
                 <TaskRecovery
                   key={viewingRound || taskIds.at(-1)}
                   taskId={viewingRound || taskIds.at(-1)!}
+                  onNetwork={onNetwork}
                 />
               )}
               {tasks.length ? (

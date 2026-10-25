@@ -10,6 +10,34 @@ import { sql } from 'drizzle-orm';
 
 const payload = () => text('payload').notNull();
 
+export const networkSettings = sqliteTable('network_settings', {
+  id: text('id').primaryKey().notNull(),
+  revision: integer('revision').notNull(),
+  globalJson: text('global_json').notNull(),
+  updatedAt: text('updated_at').notNull(),
+});
+export const agentNetworkSettings = sqliteTable('agent_network_settings', {
+  agentId: text('agent_id')
+    .primaryKey()
+    .notNull()
+    .references(() => agentDefinitions.id, { onDelete: 'cascade' }),
+  payload: payload(),
+});
+export const executionNetworkObservations = sqliteTable(
+  'execution_network_observations',
+  {
+    attemptId: text('attempt_id')
+      .primaryKey()
+      .notNull()
+      .references(() => executionAttempts.id),
+    taskId: text('task_id')
+      .notNull()
+      .references(() => tasks.id),
+    payload: payload(),
+  },
+  (table) => [index('execution_network_task_idx').on(table.taskId)],
+);
+
 export const agentCatalogSources = sqliteTable(
   'agent_catalog_sources',
   {

@@ -153,6 +153,7 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
                   readiness: runtime.agentControl.state(a.id).readiness,
                   settings: observed.settings,
                   defaults: observed.defaults,
+                  network: runtime.network.effective(a.id),
                   freshness: observed.freshness,
                   observation: observed.observation,
                   staleReason: observed.staleReason,
@@ -271,9 +272,10 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
             .listPending(task.projectId)
             .filter((a) => a.taskId && tree.has(a.taskId))
             .map((a) => ({ id: a.id, taskId: a.taskId, action: a.action }));
-          const { latestTaskId, diagnostic } = runtime.taskRecovery(task.id);
+          const { latestTaskId, diagnostic, network } = runtime.taskRecovery(task.id);
           result = {
             task: card(current),
+            network,
             sessionSettings: runtime.sessionSettings.repository.getTask(task.id) ?? {
               state: 'unavailable',
             },

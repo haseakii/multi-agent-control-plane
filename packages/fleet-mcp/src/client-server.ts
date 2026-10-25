@@ -1,5 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { clientToolDefinitions, type ClientToolName } from './client-contract.js';
+import { loopbackFetch } from './loopback-fetch.js';
 
 export interface ClientToolTransport {
   invoke(toolName: ClientToolName, input: unknown): Promise<Record<string, unknown>>;
@@ -61,7 +62,7 @@ export function createClientHttpTransport(baseUrl: string, token: string): Clien
     async invoke(toolName, input) {
       let response: Response;
       try {
-        response = await fetch(new URL('/internal/client/tool', url), {
+        response = await loopbackFetch(new URL('/internal/client/tool', url), {
           method: 'POST',
           redirect: 'error',
           signal: AbortSignal.timeout(45_000),
