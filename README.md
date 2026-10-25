@@ -6,6 +6,8 @@ The project does not hard-code Codex, Gemini, Claude, OpenHands, Antigravity, or
 
 ## Start the Hermes workbench on this machine
 
+The fixed installation now owns release selection. Double-click `升级工作台.cmd` and choose a complete new package to upgrade with backup and recovery; `恢复工作台.cmd` handles interrupted maintenance. Startup and MCP configuration stay fixed across upgrades. See [simple delivery](docs/guides/simple-delivery.md) for daily use and the single build-side publish command.
+
 Double-click `启动工作台.cmd` to start or reuse the background service and open `http://127.0.0.1:8057/`. You can close the launcher window. Codex's configured `local_collaboration` entry also starts the same engine when needed. Use `停止工作台.cmd` for a normal shutdown; a later MCP call can start it again. `start-hermes.cmd start` / `stop` and the integration directory's `start.cmd` / `start-real.cmd` are aliases for this same daily service. The historical PowerShell development scripts are separate, explicit development tools, not daily startup instructions.
 
 Choose an execution mode, member and working directory, then enter your goal and send it. Direct execution works with an ordinary ready member; orchestration requires a member with the Boss role and MCP orchestration scope. The same conversation accepts instructions while running and follow-up requests after completion. Use the workbench's **使用说明** button for the complete flow and links to member setup, a new task and the current task process. The earlier three-prompt acceptance cap does not limit daily use.
@@ -191,7 +193,6 @@ See [docs/architecture/overview.md](docs/architecture/overview.md), [docs/archit
 See [real-agent preflight](docs/guides/real-agent-preflight.md) for the disabled
 Codex ACP example and offline-only `pnpm diagnose:agent` command.
 
-
 ## ACP access center A0
 
 Open Agent & project settings for the official catalog and existing local entries. Catalog reads are offline by default. Only the explicit refresh button fetches the fixed generic ACP registry URL; it rejects redirects, times out after 8 seconds and limits metadata to 1 MiB. The cached contract follows the official agent schema (binary/npx/uvx), with local resource limits. Text and distribution commands are untrusted display data; no icons, packages, environment values or commands are downloaded/executed from catalog entries.
@@ -202,7 +203,6 @@ Role intention, ACP connectivity, authentication, model execution and Fleet perm
 
 A0 requires no SQL schema migration or existing AgentDefinition rewrite. B0 adds the sixth migration described below. Negotiation remains process-local and becomes unknown on server restart or definition changes. Catalog cache lives under data/cache and is deliberately excluded from private backups; restored registrations still work independently of the catalog. Keep M2-R1 and its pre-A0 data backup as the rollback baseline. Set CONTROL_PLANE_E2E_DATA_DIR for isolated browser test DB/artifact/workspace paths; browser screenshots from deterministic cache fixtures are labeled separately from live official-catalog captures.
 
-
 ## A0-R1 delivery boundaries
 
 The Windows directory package includes the ACP access center and the reviewed A0-R1 fixes: stale probe/auth responses cannot overwrite changed configurations; authentication metadata and public observations are bounded without shortening executable authentication IDs; explicit local cwd must exist as a directory. Existing-entry binding remains disabled by default.
@@ -210,7 +210,6 @@ The Windows directory package includes the ACP access center and the reviewed A0
 Installation, upgrades, uninstall and persistent login management are not implemented. Existing nonterminal ACP authentication is an explicit action; terminal login remains outside this API. Probe means initialize/connectivity only, and becomes unknown again after a definition change or server restart. Catalog cache is optional and excluded from private backups. External Agent installations and their credentials are not bundled.
 
 Separate acceptance evidence now covers the deterministic Boss -> Worker -> Boss API/CLI chain and a real Codex + Antigravity mainline. Codex discovered/delegated to Antigravity, read its durable `17 × 19 = 323` result, and resumed to save the final summary. Both tasks, their message and artifacts survived restart. This used the user's original 3 ACP prompts plus an explicitly authorized 1-prompt recovery; no Worker was rerun during recovery. See [the dated real-agent record](docs/guides/real-agent-preflight.md) and `.run/collaboration-integration-20261022/real-pair/finalization.json`. The user also confirmed the historical 8031 console displayed after manual Edge address-bar navigation; this does not validate every browser action. Physical Windows Ctrl+C remains unverified; automated shutdown evidence uses application close or a test-owned IPC signal wrapper.
-
 
 ## B0: bind an existing Windows directory
 

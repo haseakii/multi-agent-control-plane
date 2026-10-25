@@ -6,17 +6,18 @@ export function createEngineLifecycle(options: {
   wait?: () => Promise<unknown>;
   attempts?: number;
 }) {
+  // fetch nests the socket error in cause; our direct loopback transport returns it directly.
+  const refused = (error: unknown) => {
+    const value = error as { code?: string; cause?: { code?: string } };
+    return value?.code === 'ECONNREFUSED' || value?.cause?.code === 'ECONNREFUSED';
+  };
   let pending: Promise<void> | undefined;
   async function ensure() {
     try {
       await options.health();
       return;
     } catch (error) {
-      if (
-        (error as { cause?: { code?: string } }).cause?.code !== 'ECONNREFUSED' ||
-        !options.launch
-      )
-        throw error;
+      if (!refused(error) || !options.launch) throw error;
     }
     await options.launch();
     for (let i = 0; i < (options.attempts ?? 100); i++) {
@@ -24,7 +25,7 @@ export function createEngineLifecycle(options: {
         await options.health();
         return;
       } catch (error) {
-        if ((error as { cause?: { code?: string } }).cause?.code !== 'ECONNREFUSED') throw error;
+        if (!refused(error)) throw error;
         await (options.wait?.() ?? delay(250));
       }
     }

@@ -1,7 +1,7 @@
 @echo off
 setlocal
 chcp 65001 >nul
-"%~dp0.run\mcp-input-attachments-20261025\release\runtime\node.exe" "%~dp0.run\hermes-usable-20261023-r1\start-daily.mjs" --stop
+"%~dp0.data\control-plane\runtime\node.exe" "%~dp0.data\control-plane\launcher\control-plane.mjs" stop
 set "_CP_EXIT=%errorlevel%"
 if not "%_CP_EXIT%"=="0" if not defined CONTROL_PLANE_NO_PAUSE pause
 exit /b %_CP_EXIT%

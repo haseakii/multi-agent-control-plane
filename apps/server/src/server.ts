@@ -19,12 +19,14 @@ import { registerClientGateway, type ClientGatewayOptions } from './client-gatew
 import type { ControlPlaneRuntime } from './runtime-composition.js';
 import { registerNetworkSettingsRoutes } from './network-settings-routes.js';
 import { registerInputAttachmentRoutes } from './input-attachment-routes.js';
+import { deploymentMaintenance, type DeploymentContext } from './deployment-context.js';
 
 export type ControlCenterProvider = (
   options?: ControlCenterReadOptions,
 ) => Promise<ControlCenterSnapshot> | ControlCenterSnapshot;
 
 export type BuildServerOptions = {
+  deployment?: DeploymentContext;
   fastify?: FastifyServerOptions;
   webRoot?: string;
   controlCenter?: ControlCenterProvider;
@@ -42,6 +44,14 @@ export function buildServer(options: BuildServerOptions = {}) {
   // Local-owner API, not a multi-user service. Reject DNS rebinding and foreign
   // browser origins; this does not authenticate other processes of the same user.
   app.addHook('onRequest', async (request, reply) => {
+    if (
+      !['GET', 'HEAD', 'OPTIONS'].includes(request.method) &&
+      deploymentMaintenance(options.deployment)
+    )
+      return reply.code(503).send({
+        code: 'DEPLOYMENT_IN_PROGRESS',
+        error: '工作台正在升级或恢复，记录仍保留，请稍后再发送。',
+      });
     const host = request.headers.host;
     try {
       if (!host || /[\s/@\\,]/.test(host)) throw new Error('Invalid host.');
@@ -95,6 +105,16 @@ export function buildServer(options: BuildServerOptions = {}) {
   app.get('/health', async () => ({
     status: 'ok' as const,
     service: 'multi-agent-control-plane',
+    ...(options.deployment
+      ? {
+          deployment: {
+            installationId: options.deployment.installationId,
+            generationId: options.deployment.generationId,
+            releaseId: options.deployment.releaseId,
+          },
+          maintenance: deploymentMaintenance(options.deployment),
+        }
+      : {}),
   }));
 
   app.get('/api/control-center', async (request, reply) => {

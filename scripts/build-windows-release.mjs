@@ -301,6 +301,35 @@ const launcher = [
   '',
 ].join(String.fromCharCode(13, 10));
 writeFileSync(join(output, 'start.cmd'), launcher);
+mkdirSync(join(output, 'launcher/lib'), { recursive: true });
+for (const file of ['control-plane.mjs', 'installed-entry.mjs'])
+  copyFileSync(join(repo, 'scripts', file), join(output, 'launcher', file));
+copyFileSync(
+  join(repo, 'scripts/lib/installation.mjs'),
+  join(output, 'launcher/lib/installation.mjs'),
+);
+for (const [name, command] of [
+  ['打开工作台.cmd', 'open-package'],
+  ['升级工作台.cmd', 'update'],
+]) {
+  const args =
+    command === 'open-package'
+      ? 'open-package --release "%~dp0."'
+      : 'update --installation "%LOCALAPPDATA%\\MultiAgentControlPlane\\installation.json" --release "%~dp0."';
+  writeFileSync(
+    join(output, name),
+    [
+      '@echo off',
+      'setlocal',
+      'chcp 65001 >nul',
+      '"%~dp0runtime\\node.exe" "%~dp0launcher\\control-plane.mjs" ' + args,
+      'set "_CP_EXIT=%errorlevel%"',
+      'if not "%_CP_EXIT%"=="0" if not defined CONTROL_PLANE_NO_PAUSE pause',
+      'exit /b %_CP_EXIT%',
+      '',
+    ].join('\r\n'),
+  );
+}
 copyFileSync(join(repo, 'scripts/release-RUN.txt'), join(output, 'RUN.txt'));
 copyFileSync(
   join(repo, 'scripts/release-startup-help.txt'),
@@ -336,6 +365,19 @@ const manifest = {
   dependencies: inventory,
   probe: JSON.parse(result.trim()),
 };
+const inventoryFiles = [];
+function inventoryDirectory(directory, prefix = '') {
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const name = prefix + entry.name,
+      full = join(directory, entry.name);
+    if (entry.isDirectory()) inventoryDirectory(full, name + '/');
+    else if (entry.isFile())
+      inventoryFiles.push({ path: name, size: statSync(full).size, sha256: digest(full) });
+    else throw Error('Release contains a non-regular entry.');
+  }
+}
+inventoryDirectory(output);
+manifest.files = inventoryFiles;
 writeFileSync(join(output, 'release-manifest.json'), JSON.stringify(manifest, null, 2));
 console.log(
   JSON.stringify(

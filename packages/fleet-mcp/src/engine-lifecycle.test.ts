@@ -1,7 +1,48 @@
 import { expect, it, vi } from 'vitest';
 import { createEngineLifecycle } from './engine-lifecycle.js';
 import { windowsArgument } from './background-launch.js';
+import { createServer } from 'node:http';
+import { loopbackFetch } from './loopback-fetch.js';
 const refused = () => Object.assign(new Error('offline'), { cause: { code: 'ECONNREFUSED' } });
+it('recognizes direct socket refusals during both initial detection and startup waiting', async () => {
+  let probes = 0;
+  const launch = vi.fn(async () => {}),
+    wait = vi.fn(async () => {});
+  const engine = createEngineLifecycle({
+    health: async () => {
+      if (++probes < 3) throw Object.assign(new Error('offline'), { code: 'ECONNREFUSED' });
+    },
+    launch,
+    wait,
+  });
+  await engine.ensure();
+  expect(launch).toHaveBeenCalledTimes(1);
+  expect(wait).toHaveBeenCalledTimes(1);
+});
+it('cold-starts against the real direct loopback HTTP transport', async () => {
+  const server = createServer((_request, response) => response.end('{"status":"ok"}'));
+  await new Promise<void>((ok) => server.listen(0, '127.0.0.1', ok));
+  const address = server.address();
+  if (!address || typeof address === 'string') throw Error('No test port');
+  const port = address.port;
+  await new Promise<void>((ok) => server.close(() => ok()));
+  const launch = vi.fn(async () => {
+    await new Promise<void>((ok) => server.listen(port, '127.0.0.1', ok));
+  });
+  const engine = createEngineLifecycle({
+    health: async () => {
+      const r = await loopbackFetch('http://127.0.0.1:' + port);
+      await r.json();
+    },
+    launch,
+  });
+  try {
+    await engine.ensure();
+    expect(launch).toHaveBeenCalledTimes(1);
+  } finally {
+    await new Promise<void>((ok) => server.close(() => ok()));
+  }
+});
 it('coalesces parallel cold starts and restarts after a later outage', async () => {
   let live = false;
   const launch = vi.fn(async () => {
