@@ -10,6 +10,7 @@ import {
 export interface InputAttachmentRepository {
   put(metadata: InputAttachment, content: Uint8Array): InputAttachment;
   get(id: string): InputAttachment;
+  find(id: string): InputAttachment | undefined;
   read(id: string): Uint8Array;
   removeUnbound(id: string): boolean;
   bind(taskId: string, ownerId: string, ids: string[], replace?: boolean): void;
@@ -40,14 +41,19 @@ export class SqliteInputAttachmentRepository implements InputAttachmentRepositor
       })
       .immediate();
   }
-  get(rawId: string) {
+  find(rawId: string) {
     const id = InputAttachmentIdSchema.parse(rawId);
     const row = this.sqlite.prepare('SELECT payload FROM input_attachments WHERE id=?').get(id) as
       | { payload: string }
       | undefined;
-    if (!row) throw Error('附件不存在，请重新上传。');
+    if (!row) return undefined;
     const value = InputAttachmentSchema.parse(JSON.parse(row.payload));
     if (value.id !== id) throw Error('Attachment identity mismatch.');
+    return value;
+  }
+  get(id: string) {
+    const value = this.find(id);
+    if (!value) throw Error('附件不存在，请重新上传。');
     return value;
   }
   read(id: string) {

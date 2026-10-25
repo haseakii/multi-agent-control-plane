@@ -46,7 +46,7 @@ const normal = (value: string) =>
   process.platform === 'win32' ? resolve(value).toLowerCase() : resolve(value);
 export class InputAttachmentService {
   constructor(readonly repository: InputAttachmentRepository) {}
-  upload(name: string, declaredType: string, bytes: Uint8Array) {
+  upload(name: string, declaredType: string, bytes: Uint8Array, id = randomUUID() as string) {
     if (!bytes.length || bytes.length > INPUT_ATTACHMENT_MAX_BYTES)
       throw Error('每个附件须为 1 字节至 20 MB。');
     const image = imageType(bytes);
@@ -55,18 +55,28 @@ export class InputAttachmentService {
       (/^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/i.test(declaredType)
         ? declaredType
         : 'application/octet-stream');
-    return this.repository.put(
-      InputAttachmentSchema.parse({
-        id: randomUUID(),
-        name,
-        mimeType,
-        sizeBytes: bytes.length,
-        sha256: createHash('sha256').update(bytes).digest('hex'),
-        image: !!image,
-        createdAt: new Date().toISOString(),
-      }),
-      bytes,
-    );
+    const metadata = InputAttachmentSchema.parse({
+      id,
+      name,
+      mimeType,
+      sizeBytes: bytes.length,
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+      image: !!image,
+      createdAt: new Date().toISOString(),
+    });
+    const existing = this.repository.find(id);
+    if (existing) {
+      if (
+        ['name', 'mimeType', 'sizeBytes', 'sha256', 'image'].some(
+          (key) =>
+            existing[key as keyof InputAttachment] !== metadata[key as keyof InputAttachment],
+        )
+      )
+        throw Error('该发送编号已绑定其它附件内容，请保留原附件重试，或为新内容使用新的发送编号。');
+      this.repository.read(id);
+      return existing;
+    }
+    return this.repository.put(metadata, bytes);
   }
   async prepare(
     taskIds: string[],

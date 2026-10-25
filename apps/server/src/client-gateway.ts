@@ -3,10 +3,11 @@ import { readFileSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { AuditEventSchema, type Task } from '@control-plane/core';
+import { AuditEventSchema, INPUT_ATTACHMENT_MAX_BYTES, type Task } from '@control-plane/core';
 import {
   ClientAccessFileSchema,
   ClientToolRequestSchema,
+  ClientAttachmentUploadQuerySchema,
   clientToolDefinitions,
   type ClientAccess,
   type ClientToolName,
@@ -39,19 +40,112 @@ const card = (task: Task) => ({
 export function registerClientGateway(app: FastifyInstance, options: ClientGatewayOptions) {
   const { runtime, storage } = options,
     repo = storage.repositories;
+  const authenticate = (authorization: string | undefined) => {
+    const token = /^Bearer ([a-f0-9]{64})$/.exec(authorization ?? '')?.[1];
+    let access;
+    try {
+      access = ClientAccessFileSchema.parse(options.readAccess());
+    } catch {
+      throw new TaskControlError(503, 'Local client access configuration is unavailable.');
+    }
+    const hash = Buffer.from(digest(token ?? ''), 'hex');
+    const client = token
+      ? access.clients.find(
+          (c) => c.enabled && timingSafeEqual(hash, Buffer.from(c.tokenSha256, 'hex')),
+        )
+      : undefined;
+    if (!client) throw new TaskControlError(401, 'Local client access is missing or revoked.');
+    return client;
+  };
+  app.post(
+    '/internal/client/input-attachments',
+    { bodyLimit: INPUT_ATTACHMENT_MAX_BYTES },
+    async (request, reply) => {
+      let projectId: string | undefined, client: ClientAccess | undefined;
+      try {
+        client = authenticate(request.headers.authorization);
+        const value = ClientAttachmentUploadQuerySchema.parse(request.query);
+        if (!client.tools.includes(value.toolName))
+          throw new TaskControlError(403, 'Tool is not authorized for this client.');
+        projectId = value.projectId ?? repo.tasks.get(value.taskId!)?.projectId;
+        if (!projectId || !client.projects.some((p) => p.projectId === projectId))
+          throw new TaskControlError(403, 'Project is not authorized for this client.');
+        const policy = runtime.getProjectPolicy(projectId);
+        const task = value.taskId ? repo.tasks.get(value.taskId) : undefined;
+        const actions =
+          value.toolName === 'collaboration_submit_task'
+            ? ['control_create_task', 'control_delegate_task']
+            : [
+                'control_send_message',
+                ...(task && ended(task) ? ['control_create_task', 'control_delegate_task'] : []),
+              ];
+        for (const action of actions)
+          if (policy.tools[action as keyof typeof policy.tools] === 'deny')
+            throw new TaskControlError(403, 'Current project policy denies this operation.');
+        if (!Buffer.isBuffer(request.body))
+          throw new TaskControlError(400, 'Expected binary attachment content.');
+        if (createHash('sha256').update(request.body).digest('hex') !== value.sha256)
+          throw new TaskControlError(400, 'Attachment integrity check failed.');
+        const hash = digest(
+          JSON.stringify([
+            client.id,
+            projectId,
+            value.toolName,
+            value.taskId ?? '',
+            value.idempotencyKey,
+            value.slot,
+          ]),
+        );
+        const id = `${hash.slice(0, 8)}-${hash.slice(8, 12)}-5${hash.slice(13, 16)}-8${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
+        const attachment = runtime.inputAttachments.upload(
+          value.name,
+          value.mimeType,
+          request.body,
+          id,
+        );
+        repo.events.append(
+          AuditEventSchema.parse({
+            id: 'event-' + randomUUID(),
+            projectId,
+            ...(task ? { taskId: task.id } : {}),
+            type: 'client.input.uploaded',
+            actor: { type: 'agent', id: 'mcp-client:' + client.id },
+            payload: {
+              attachmentId: attachment.id,
+              sha256: attachment.sha256,
+              sizeBytes: attachment.sizeBytes,
+              enforcementMode: 'enforced',
+              boundary: 'client-gateway',
+            },
+            occurredAt: new Date().toISOString(),
+          }),
+        );
+        return { attachment };
+      } catch (error) {
+        if (error instanceof TaskControlError)
+          return reply.code(error.statusCode).send({ error: error.message });
+        if (error instanceof z.ZodError)
+          return reply.code(400).send({ error: 'Invalid attachment input.' });
+        return reply.code(409).send({
+          error:
+            error instanceof Error
+              ? error.message
+              : 'Attachment could not be saved; task was not sent.',
+        });
+      }
+    },
+  );
   app.post('/internal/client/tool', async (request, reply) => {
-    const token = /^Bearer ([a-f0-9]{64})$/.exec(request.headers.authorization ?? '')?.[1];
     let client: ClientAccess | undefined;
     try {
-      const access = ClientAccessFileSchema.parse(options.readAccess());
-      const hash = Buffer.from(digest(token ?? ''), 'hex');
-      client = token
-        ? access.clients.find(
-            (c) => c.enabled && timingSafeEqual(hash, Buffer.from(c.tokenSha256, 'hex')),
-          )
-        : undefined;
-    } catch {
-      return reply.code(503).send({ error: 'Local client access configuration is unavailable.' });
+      client = authenticate(request.headers.authorization);
+    } catch (error) {
+      return reply.code(error instanceof TaskControlError ? error.statusCode : 503).send({
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Local client access configuration is unavailable.',
+      });
     }
     if (!client)
       return reply.code(401).send({ error: 'Local client access is missing or revoked.' });

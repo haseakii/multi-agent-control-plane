@@ -13,6 +13,10 @@ it('advertises validated MCP collaboration tools without approval/merge authorit
     await client.connect(a);
     const tools = (await client.listTools()).tools;
     expect(tools).toHaveLength(9);
+    for (const name of ['collaboration_submit_task', 'collaboration_continue_task'])
+      expect(tools.find((t) => t.name === name)?.inputSchema.properties).toHaveProperty(
+        'attachments',
+      );
     expect(tools.some((t) => /approve|merge|push/.test(t.name))).toBe(false);
     expect(
       (await client.callTool({ name: 'collaboration_list_projects', arguments: {} }))

@@ -1,5 +1,9 @@
 import { z } from 'zod';
-import { SessionSettingValuesSchema, InputAttachmentIdsSchema } from '@control-plane/core';
+import {
+  SessionSettingValuesSchema,
+  InputAttachmentIdsSchema,
+  InputAttachmentSchema,
+} from '@control-plane/core';
 
 const Id = z.string().trim().min(1).max(128);
 const TaskId = z.object({ taskId: Id }).strict();
@@ -32,6 +36,51 @@ export const ClientContinueSchema = z
   .refine(
     (value) => value.sessionSettings === undefined || value.sessionPresetId === undefined,
     'Choose sessionSettings or sessionPresetId, not both.',
+  );
+
+/** Paths exist only on the stdio client. The engine receives verified bytes and IDs. */
+export const ClientLocalAttachmentsSchema = z
+  .array(
+    z
+      .object({
+        path: z
+          .string()
+          .min(1)
+          .max(4096)
+          .refine((value) => !/[\x00\r\n]/.test(value))
+          .describe(
+            'Absolute local file path explicitly authorized by the user. No directories, globs, URLs, or credential discovery.',
+          ),
+        name: InputAttachmentSchema.shape.name.optional(),
+        mimeType: z.string().min(1).max(128).optional(),
+      })
+      .strict(),
+  )
+  .max(10);
+export const ClientMcpSubmitSchema = ClientSubmitSchema.safeExtend({
+  attachments: ClientLocalAttachmentsSchema.optional(),
+});
+export const ClientMcpContinueSchema = ClientContinueSchema.safeExtend({
+  attachments: ClientLocalAttachmentsSchema.optional(),
+});
+export const ClientAttachmentUploadQuerySchema = z
+  .object({
+    toolName: z.enum(['collaboration_submit_task', 'collaboration_continue_task']),
+    projectId: Id.optional(),
+    taskId: Id.optional(),
+    idempotencyKey: Id,
+    slot: z.coerce.number().int().min(0).max(9),
+    name: InputAttachmentSchema.shape.name,
+    mimeType: z.string().min(1).max(128),
+    sha256: InputAttachmentSchema.shape.sha256,
+  })
+  .strict()
+  .refine(
+    (value) =>
+      value.toolName === 'collaboration_submit_task'
+        ? !!value.projectId && !value.taskId
+        : !!value.taskId && !value.projectId,
+    'Choose the tool target.',
   );
 
 /** Shared validated contract; transport adapters do not own orchestration. */
