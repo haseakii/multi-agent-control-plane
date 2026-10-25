@@ -31,6 +31,7 @@ import { selectableAgents, type ExecutionMode } from './agent-selection';
 import { filterMembers, memberStatus, type MemberFilter } from './member-list';
 import { entryConnectionError, entryIssueText } from './agent-entry-feedback';
 import s from './agent-connections.module.css';
+import { AgentMemberCreate } from './agent-member-create';
 
 const runtimeLabels = { unknown: '尚未检查', ready: '连接正常', error: '连接失败' };
 const authLabels = {
@@ -105,6 +106,10 @@ export function AgentConnections({
   const actionInFlight = useRef(false);
   const [agents, setAgents] = useState<Connection[]>([]);
   const [network, setNetwork] = useState<NetworkViewData>();
+  const networkMembersKey = agents
+    .map((agent) => agent.definition.id)
+    .sort()
+    .join('\0');
   useEffect(() => {
     const controller = new AbortController();
     void fetchJSON('/api/system/network', { signal: controller.signal }, NetworkSettingsView)
@@ -113,7 +118,7 @@ export function AgentConnections({
       })
       .catch(() => {});
     return () => controller.abort();
-  }, [networkVersion]);
+  }, [networkVersion, networkMembersKey]);
   const [loading, setLoading] = useState(true);
   const [pending, setPending] = useState<{ id: string; kind: 'probe' | 'auth' } | null>(null);
   const [error, setError] = useState('');
@@ -594,6 +599,26 @@ export function AgentConnections({
                     </button>
                   )}
                 </div>
+                {agent.definition.auth.mode === 'agent-managed' && (
+                  <AgentMemberCreate
+                    endpoint={'/api/agents/' + encodeURIComponent(id) + '/members'}
+                    defaultName={agent.definition.name + ' · 新成员'}
+                    disabled={
+                      loading ||
+                      pending !== null ||
+                      configBusy ||
+                      editing !== null ||
+                      agent.localEntry?.offlineChecksPassed === false
+                    }
+                    onBusy={setConfigBusy}
+                    onCreated={(newId, message) => {
+                      revealMember(newId);
+                      setNotice(message);
+                      void refresh(false);
+                      onChanged();
+                    }}
+                  />
+                )}
                 <dl className={s.status}>
                   <div>
                     <dt>连接</dt>

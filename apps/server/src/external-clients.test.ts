@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
+import { createClientHttpTransport, clientToolDefinitions } from '@control-plane/fleet-mcp';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -164,7 +166,7 @@ it('migrates an existing twenty-migration database without changing history or i
     expect(storage.repositories.projects.get('p')?.name).toBe('Keep');
     expect(storage.sqlite.prepare('SELECT * FROM input_attachments').all()).toEqual(before);
     expect(storage.sqlite.prepare('SELECT count(*) AS n FROM __drizzle_migrations').get()).toEqual({
-      n: 21,
+      n: 22,
     });
     expect(storage.repositories.externalClients.list()).toEqual([]);
     expect(storage.repositories.agentInstallations.list()).toEqual([]);
@@ -200,3 +202,205 @@ it.skipIf(!codexCliPath())(
   },
   30000,
 );
+it('updates multiple project grants without replacing a client connection and filters its live capabilities', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'multi-project-client-')),
+    storage = openSqliteStorage({ filename: join(root, 'state.sqlite') });
+  const runtime = createControlPlaneRuntime({
+    storage,
+    artifactRoot: join(root, 'artifacts'),
+    workspaceRoot: join(root, 'workspaces'),
+  });
+  const installationFile = join(root, 'installation.json');
+  writeFileSync(
+    installationFile,
+    JSON.stringify({ version: 1, runtimeFile: process.execPath, current: { releaseDir: root } }),
+  );
+  let legacy: unknown = { version: 1, clients: [] };
+  const options = {
+    storage,
+    runtime,
+    installationFile,
+    baseUrl: 'http://127.0.0.1:0',
+    readLegacy: () => legacy,
+  };
+  const service = new ExternalClientsService(options),
+    app = buildServer({
+      taskControl: runtime,
+      externalClients: service,
+      clientGateway: { storage, runtime, readAccess: service.readAccess },
+    });
+  try {
+    options.baseUrl = await app.listen({ host: '127.0.0.1', port: 0 });
+    for (const id of ['p', 'q', 'private']) {
+      runtime.createProject({ id, name: id });
+      runtime.setWorkspaceMode(id, { mode: 'task-local' });
+    }
+    const generated = service.create({
+      requestId: randomUUID(),
+      name: 'One connection',
+      target: 'generic',
+      profile: 'read',
+      projects: [{ projectId: 'p' }],
+    });
+    const file = generated.server.args.at(-1)!,
+      bytes = readFileSync(file, 'utf8'),
+      token = JSON.parse(bytes).token,
+      transport = createClientHttpTransport(options.baseUrl, token);
+    const update = {
+      requestId: randomUUID(),
+      expectedRevision: 1,
+      profile: 'read',
+      projects: [{ projectId: 'p' }, { projectId: 'q' }],
+    };
+    expect(
+      (
+        await app.inject({
+          method: 'PATCH',
+          url: '/api/external-clients/' + generated.id + '/grants',
+          payload: update,
+        })
+      ).json(),
+    ).toMatchObject({ revision: 2 });
+    expect(service.updateGrants(generated.id, update).revision).toBe(2);
+    expect((await transport.invoke('collaboration_list_projects', {})).projects).toHaveLength(2);
+    expect(await transport.getTools!()).toEqual(
+      clientToolDefinitions.filter((tool) => tool.readOnly).map((tool) => tool.name),
+    );
+    await expect(
+      transport.invoke('collaboration_list_tasks', { projectId: 'private' }),
+    ).rejects.toThrow();
+    service.updateGrants(generated.id, {
+      requestId: randomUUID(),
+      expectedRevision: 2,
+      profile: 'collaborate',
+      projects: update.projects,
+    });
+    expect(await transport.getTools!()).toContain('collaboration_submit_task');
+    service.updateGrants(generated.id, {
+      requestId: randomUUID(),
+      expectedRevision: 3,
+      profile: 'read',
+      projects: [{ projectId: 'p' }],
+    });
+    await expect(
+      transport.invoke('collaboration_list_tasks', { projectId: 'q' }),
+    ).rejects.toThrow();
+    await expect(
+      transport.invoke('collaboration_submit_task', {
+        projectId: 'p',
+        agentId: 'none',
+        objective: 'no execution',
+        idempotencyKey: 'denied',
+      }),
+    ).rejects.toThrow();
+    expect(() =>
+      service.updateGrants(generated.id, { ...update, requestId: randomUUID() }),
+    ).toThrow('授权已在其他位置更新');
+    expect(readFileSync(file, 'utf8')).toBe(bytes);
+    expect(service.configuration(generated.id).config).toBe(generated.config);
+    expect(storage.repositories.externalClients.list()).toHaveLength(1);
+    const legacyToken = 'b'.repeat(64);
+    legacy = {
+      version: 1,
+      clients: [
+        {
+          id: 'existing-native-client',
+          name: 'Existing client',
+          enabled: true,
+          tokenSha256: createHash('sha256').update(legacyToken).digest('hex'),
+          projects: [{ projectId: 'p' }],
+          tools: clientToolDefinitions.map((tool) => tool.name),
+        },
+      ],
+    };
+    service.updateGrants('existing-native-client', {
+      requestId: randomUUID(),
+      expectedRevision: 0,
+      profile: 'read',
+      projects: update.projects,
+    });
+    expect(
+      (
+        await createClientHttpTransport(options.baseUrl, legacyToken).invoke(
+          'collaboration_list_projects',
+          {},
+        )
+      ).projects,
+    ).toHaveLength(2);
+    expect(
+      service.readAccess().clients.filter((client) => client.id === 'existing-native-client'),
+    ).toHaveLength(1);
+    service.revoke(generated.id);
+    await expect(transport.getTools!()).rejects.toThrow('revoked');
+  } finally {
+    await runtime.close();
+    await app.close();
+    storage.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+it('counts active clients separately from revoked history', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'active-client-quota-')),
+    storage = openSqliteStorage({ filename: ':memory:' });
+  const runtime = createControlPlaneRuntime({
+    storage,
+    artifactRoot: join(root, 'artifacts'),
+    workspaceRoot: join(root, 'workspaces'),
+  });
+  const installationFile = join(root, 'installation.json');
+  writeFileSync(
+    installationFile,
+    JSON.stringify({ version: 1, runtimeFile: process.execPath, current: { releaseDir: root } }),
+  );
+  const disabled = Array.from({ length: 64 }, (_, i) => ({
+    id: 'old-' + i,
+    name: 'Revoked',
+    enabled: false,
+    tokenSha256: 'a'.repeat(64),
+    projects: [{ projectId: 'p' }],
+    tools: ['collaboration_list_projects'],
+  }));
+  const service = new ExternalClientsService({
+    storage,
+    runtime,
+    installationFile,
+    baseUrl: 'http://127.0.0.1:8057',
+    readLegacy: () => ({ version: 1, clients: disabled }),
+  });
+  try {
+    runtime.createProject({ id: 'p', name: 'Quota' });
+    runtime.setWorkspaceMode('p', { mode: 'task-local' });
+    const create = () =>
+      service.create({
+        requestId: randomUUID(),
+        name: 'New active',
+        target: 'generic',
+        profile: 'read',
+        projects: [{ projectId: 'p' }],
+      });
+    const first = create();
+    expect(service.list()).toHaveLength(65);
+    expect(service.readAccess().clients).toHaveLength(1);
+    const row = storage.repositories.externalClients.get(first.id)!;
+    for (let i = 0; i < 63; i++) {
+      const uuid = randomUUID(),
+        id = 'client-' + uuid;
+      storage.repositories.externalClients.upsert({
+        ...row,
+        id,
+        requestId: uuid,
+        access: { ...row.access, id },
+      });
+    }
+    expect(() => create()).toThrow('上限');
+    service.revoke(first.id);
+    expect(create().id).not.toBe(first.id);
+    expect(service.readAccess().clients).toHaveLength(64);
+    expect(service.list().some((client) => client.id === first.id && !client.enabled)).toBe(true);
+  } finally {
+    await runtime.close();
+    storage.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});

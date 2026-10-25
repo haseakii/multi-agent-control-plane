@@ -57,6 +57,20 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
     if (!client) throw new TaskControlError(401, 'Local client access is missing or revoked.');
     return client;
   };
+  app.get('/internal/client/capabilities', async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    try {
+      const client = authenticate(request.headers.authorization);
+      return { tools: client.tools };
+    } catch (error) {
+      return reply.code(error instanceof TaskControlError ? error.statusCode : 503).send({
+        error:
+          error instanceof TaskControlError
+            ? error.message
+            : 'Client authorization is unavailable.',
+      });
+    }
+  });
   app.post(
     '/internal/client/input-attachments',
     { bodyLimit: INPUT_ATTACHMENT_MAX_BYTES },

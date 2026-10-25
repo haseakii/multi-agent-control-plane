@@ -2,7 +2,11 @@ import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { AgentIdSchema, type AgentInstallation } from '@control-plane/core';
+import {
+  AgentIdSchema,
+  type AgentInstallation,
+  type InstalledAgentPackage,
+} from '@control-plane/core';
 import type { SqliteStorage } from '@control-plane/storage';
 import { OFFICIAL_CATALOG_URL, type AgentCatalogService } from './agent-catalog.js';
 import type { AgentControlService } from './agent-control.js';
@@ -14,6 +18,7 @@ import {
   packagePlan,
 } from './agent-package-install.js';
 import { TaskControlError } from './task-control.js';
+import type { AgentMembersService } from './agent-members.js';
 
 export const StartAgentInstallSchema = z
   .object({
@@ -36,6 +41,7 @@ export class AgentInstallationsService {
       root: string;
       releaseRoot: string;
       installPackage?: typeof installAgentPackage;
+      members?: AgentMembersService;
     },
   ) {
     this.repo = options.storage.repositories.agentInstallations;
@@ -47,10 +53,25 @@ export class AgentInstallationsService {
         });
   }
   list() {
-    return this.repo.list().sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const origins = this.options.storage.repositories.agentMemberOrigins.list();
+    const agents = this.options.agents.list();
+    return this.repo
+      .list()
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .map((row) => ({
+        ...row,
+        installed: !!row.package || !!agents.find((a) => a.definition.id === row.agentId),
+        members: agents
+          .filter(
+            (a) =>
+              a.definition.id === row.agentId ||
+              origins.some((o) => o.installationId === row.id && o.id === a.definition.id),
+          )
+          .map((a) => ({ id: a.definition.id, name: a.definition.name })),
+      }));
   }
   get busy() {
-    return this.active.size > 0;
+    return this.active.size > 0 || !!this.options.members?.busy;
   }
   async settle() {
     await Promise.allSettled(this.active.values());
@@ -66,6 +87,35 @@ export class AgentInstallationsService {
   }
   private save(row: AgentInstallation, patch: Partial<AgentInstallation>) {
     return this.repo.upsert({ ...row, ...patch, updatedAt: new Date().toISOString() });
+  }
+  private localPackage(row: AgentInstallation): InstalledAgentPackage | undefined {
+    if (row.package) return row.package;
+    const agent = row.agentId
+      ? this.options.agents.list().find((a) => a.definition.id === row.agentId)
+      : undefined;
+    if (!agent) return undefined;
+    const pkg: InstalledAgentPackage = {
+      runtime: agent.definition.runtime,
+      source: {
+        entryId: row.entryId,
+        entryName: agent.definition.name,
+        catalogVersion: row.version,
+        catalogUrl: OFFICIAL_CATALOG_URL,
+      },
+      origin: 'registered-entry',
+    };
+    this.save(row, { package: pkg });
+    return pkg;
+  }
+  async createMember(id: string, raw: unknown) {
+    const row = this.repo.get(id);
+    if (!row) throw new TaskControlError(404, '安装记录不存在。');
+    if (this.active.has(id))
+      throw new TaskControlError(409, '此程序正在安装或恢复，请等待当前操作完成。');
+    const pkg = this.localPackage(row);
+    if (!pkg) throw new TaskControlError(409, '此程序还未安装完成，请先完成安装。');
+    if (!this.options.members) throw new TaskControlError(503, '此服务未启用成员创建。');
+    return this.options.members.fromPackage(id, pkg, raw);
   }
   start(raw: unknown) {
     const input = StartAgentInstallSchema.parse(raw),
@@ -109,9 +159,12 @@ export class AgentInstallationsService {
     if (this.active.has(id)) return row;
     if (this.busy) throw new TaskControlError(409, '有成员正在安装，请稍后重试。');
     if (!['failed', 'needs-attention'].includes(row.state)) return row;
-    const plan = this.plan(row.entryId);
-    if (plan.planHash !== row.planHash)
-      throw new TaskControlError(409, '安装来源已改变，请重新选择产品并确认。');
+    const local = this.localPackage(row);
+    if (!local) {
+      const plan = this.plan(row.entryId);
+      if (plan.planHash !== row.planHash)
+        throw new TaskControlError(409, '安装来源已改变，请重新选择产品并确认。');
+    }
     const next = this.save(row, {
       state: 'queued',
       message: '正在重试；已安装的入口和账号状态保留…',
@@ -126,22 +179,38 @@ export class AgentInstallationsService {
   private async execute(initial: AgentInstallation) {
     let row = initial;
     try {
-      const plan = this.plan(row.entryId);
-      if (plan.planHash !== row.planHash) throw new Error('Catalog changed.');
+      let pkg = this.localPackage(row);
+      // A legacy registration can be recovered without fetching a registry.
+      row = this.repo.get(row.id)!;
       let agent = row.agentId
         ? this.options.agents.list().find((a) => a.definition.id === row.agentId)
         : undefined;
       if (!agent) {
-        const runtime = await (this.options.installPackage ?? installAgentPackage)({
-          plan,
-          directory: join(this.options.root, row.entryId, row.version, row.id, randomUUID()),
-          releaseRoot: this.options.releaseRoot,
-          nodeExecutable: join(dirname(this.options.root), 'runtime/node.exe'),
-          network: this.options.network,
-          phase: (state, message) => {
-            row = this.save(row, { state, message });
-          },
-        });
+        if (!pkg) {
+          const plan = this.plan(row.entryId);
+          if (plan.planHash !== row.planHash) throw new Error('Catalog changed.');
+          const runtime = await (this.options.installPackage ?? installAgentPackage)({
+            plan,
+            directory: join(this.options.root, row.entryId, row.version, row.id, randomUUID()),
+            releaseRoot: this.options.releaseRoot,
+            nodeExecutable: join(dirname(this.options.root), 'runtime/node.exe'),
+            network: this.options.network,
+            phase: (state, message) => {
+              row = this.save(row, { state, message });
+            },
+          });
+          pkg = {
+            runtime,
+            origin: 'installation',
+            source: {
+              entryId: plan.entryId,
+              entryName: plan.name,
+              catalogVersion: plan.version,
+              catalogUrl: OFFICIAL_CATALOG_URL,
+            },
+          };
+          row = this.save(row, { package: pkg });
+        }
         const agentId = AgentIdSchema.parse('installed-' + row.id);
         // Journal the intended identity first so a crash after registration can resume it.
         row = this.save(row, {
@@ -152,9 +221,9 @@ export class AgentInstallationsService {
         agent = this.options.agents.create(
           {
             id: agentId,
-            name: plan.name,
+            name: pkg.source.entryName,
             enabled: true,
-            runtime,
+            runtime: pkg.runtime,
             capabilities: [],
             auth: { mode: 'agent-managed' },
             orchestration: { canBeBoss: false },
@@ -163,12 +232,7 @@ export class AgentInstallationsService {
               scopes: ['agent.messaging', 'artifact.read', 'artifact.publish', 'task.status'],
             },
           },
-          {
-            entryId: plan.entryId,
-            entryName: plan.name,
-            catalogVersion: plan.version,
-            catalogUrl: OFFICIAL_CATALOG_URL,
-          },
+          pkg.source,
         );
       } else if (!agent.definition.enabled)
         this.options.agents.update(agent.definition.id, { enabled: true });
@@ -181,7 +245,10 @@ export class AgentInstallationsService {
         this.options.agents.update(agent.definition.id, { enabled: false });
         this.save(row, {
           state: 'needs-attention',
-          message: '程序已安装，但 ACP 连接未就绪。可重试连接，或打开成员查看诊断；不会重新下载。',
+          message:
+            '程序已安装，但 ACP 连接未就绪。' +
+            (observed.error ?? '请检查程序入口。') +
+            '可重试连接，不会重新下载。',
         });
         return;
       }
@@ -250,6 +317,16 @@ export function registerAgentInstallationRoutes(
       z.object({}).strict().parse(request.body);
       return service.retry(z.object({ id: z.string().uuid() }).parse(request.params).id);
     }, reply),
+  );
+  app.post('/api/agent-installations/:id/members', (request, reply) =>
+    handler(
+      () =>
+        service.createMember(
+          z.object({ id: z.string().uuid() }).strict().parse(request.params).id,
+          request.body,
+        ),
+      reply,
+    ),
   );
   app.addHook('preClose', async () => {
     await service.settle();

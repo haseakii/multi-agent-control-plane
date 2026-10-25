@@ -78,7 +78,7 @@ it('isolates install, retries a failed install and interrupted check, reuses reg
     expect(runtime.agentControl.list()).toHaveLength(0);
     service.retry(first.id);
     await service.settle();
-    const ready = service.list()[0]!;
+    const ready = storage.repositories.agentInstallations.get(first.id)!;
     expect(ready.state).toBe('ready');
     expect(ready.agentId).toBeDefined();
     expect(installer).toHaveBeenCalledTimes(2);
@@ -94,6 +94,39 @@ it('isolates install, retries a failed install and interrupted check, reuses reg
     expect(service.list()[0]?.state).toBe('ready');
     expect(installer).toHaveBeenCalledTimes(2);
     expect(runtime.agentControl.list()).toHaveLength(1);
+    // Simulate losing the catalog after restart: connection retries use the
+    // durable package entry, including a restart before initial registration.
+    options.catalog = new AgentCatalogService();
+    storage.repositories.agentInstallations.upsert({
+      ...storage.repositories.agentInstallations.get(first.id)!,
+      state: 'needs-attention',
+    });
+    service = new AgentInstallationsService(options);
+    service.retry(first.id);
+    await service.settle();
+    expect(service.list()[0]?.state).toBe('ready');
+    expect(installer).toHaveBeenCalledTimes(2);
+    storage.repositories.agentDefinitions.delete(ready.agentId!);
+    storage.repositories.agentInstallations.upsert({
+      ...storage.repositories.agentInstallations.get(first.id)!,
+      state: 'failed',
+    });
+    service.retry(first.id);
+    await service.settle();
+    expect(service.list()[0]?.state).toBe('ready');
+    expect(installer).toHaveBeenCalledTimes(2);
+    const legacy = {
+      ...storage.repositories.agentInstallations.get(first.id)!,
+      state: 'failed' as const,
+    };
+    delete legacy.package;
+    storage.repositories.agentInstallations.upsert(legacy);
+    service.retry(first.id);
+    await service.settle();
+    expect(service.list()[0]?.state).toBe('ready');
+    expect(storage.repositories.agentInstallations.get(first.id)?.package?.origin).toBe(
+      'registered-entry',
+    );
   } finally {
     await service.settle();
     await runtime.close();

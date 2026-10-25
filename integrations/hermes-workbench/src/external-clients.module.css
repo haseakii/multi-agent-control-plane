@@ -132,6 +132,7 @@
   margin-bottom: 22px;
 }
 .dialog fieldset {
+  min-inline-size: 0;
   border: 0;
   margin: 0 0 18px;
   padding: 0;
@@ -306,4 +307,112 @@
   .result {
     padding: 20px;
   }
+}
+.projectField {
+  min-inline-size: 0;
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 20px;
+}
+.projectList {
+  grid-template-columns: minmax(0, 1fr);
+  display: grid;
+  gap: 7px;
+  max-height: 245px;
+  overflow: auto;
+  padding: 2px;
+}
+.dialog label.projectChoice {
+  min-width: 0;
+  box-sizing: border-box;
+  flex-direction: row;
+  align-items: flex-start;
+  margin: 0;
+  padding: 10px;
+  gap: 9px;
+  border: 1px solid var(--h-line, #ddd8ce);
+  border-radius: 8px;
+}
+.projectChoice input {
+  width: 14px;
+  height: 14px;
+  margin: 2px 0 0;
+  flex: 0 0 14px;
+  accent-color: #ca673f;
+}
+.projectChoice span {
+  flex: 1;
+  min-width: 0;
+}
+.projectChoice strong {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.projectChoice small {
+  display: block;
+  margin-top: 5px;
+  font-size: 10px;
+  color: var(--h-text-3, #777);
+  overflow-wrap: anywhere;
+}
+.editing {
+  padding: 12px;
+  border-left: 3px solid #ca673f;
+  background: var(--h-bg-soft, #f5f3ee);
+  margin-bottom: 18px;
+}
+.editing small {
+  display: block;
+  margin: 7px 0;
+  font-size: 11px;
+  color: var(--h-text-3, #777);
+}
+.editingHeading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.editingHeading strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.editingHeading button {
+  flex-shrink: 0;
+  padding: 6px 8px;
+  font-size: 11px;
+}
+.submitBox {
+  position: sticky;
+  bottom: -24px;
+  background: var(--h-bg-pane, #fff);
+  padding: 12px 0 0;
+}
+.setup {
+  max-height: calc(100dvh - 245px);
+  overflow: auto;
+}
+@media (max-width: 720px) {
+  .setup {
+    max-height: none;
+    overflow: visible;
+  }
+  .submitBox {
+    position: static;
+  }
+}
+.history {
+  margin-top: 16px;
+  font-size: 12px;
+  color: var(--h-text-3, #777);
+}
+.history summary {
+  cursor: pointer;
+  padding: 12px 0;
 }

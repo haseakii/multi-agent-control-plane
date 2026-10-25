@@ -89,7 +89,7 @@ describe('durable agent session settings', () => {
         expect(
           storage.sqlite.prepare('SELECT count(*) AS n FROM __drizzle_migrations').get(),
         ).toEqual({
-          n: 21,
+          n: 22,
         });
         expect(settings.getDefaults('agent')).toEqual({
           agentId: 'agent',

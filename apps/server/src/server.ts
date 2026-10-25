@@ -1,5 +1,6 @@
 import { registerAgentCatalogRoutes, type AgentCatalogService } from './agent-catalog.js';
 import { registerWebUi } from './web-ui.js';
+import { registerAgentMemberRoutes, type AgentMembersService } from './agent-members.js';
 import { registerHttpShutdown } from './http-shutdown.js';
 import Fastify, { type FastifyServerOptions } from 'fastify';
 import {
@@ -33,6 +34,7 @@ export type ControlCenterProvider = (
 export type BuildServerOptions = {
   externalClients?: ExternalClientsService;
   agentInstallations?: AgentInstallationsService;
+  agentMembers?: AgentMembersService;
   deployment?: DeploymentContext;
   fastify?: FastifyServerOptions;
   webRoot?: string;
@@ -100,6 +102,7 @@ export function buildServer(options: BuildServerOptions = {}) {
   if (options.clientGateway) registerClientGateway(app, options.clientGateway);
   if (options.externalClients) registerExternalClientRoutes(app, options.externalClients);
   if (options.agentInstallations) registerAgentInstallationRoutes(app, options.agentInstallations);
+  if (options.agentMembers) registerAgentMemberRoutes(app, options.agentMembers);
   if (options.agentControl) {
     registerAgentControlRoutes(app, options.agentControl);
     if (options.agentCatalog)

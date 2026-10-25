@@ -7,6 +7,8 @@ import type { SqliteStorage } from '@control-plane/storage';
 import {
   ExternalClientRecordSchema,
   ExternalClientTargetSchema,
+  ExternalClientAccessSchema,
+  AuditEventSchema,
   type ExternalClientRecord,
 } from '@control-plane/core';
 import { ClientAccessFileSchema, clientToolDefinitions } from '@control-plane/fleet-mcp';
@@ -14,17 +16,37 @@ import type { ControlPlaneRuntime } from './runtime-composition.js';
 import { TaskControlError } from './task-control.js';
 import { installCodexClient, codexCliPath } from './external-client-install.js';
 
+const ProjectsSchema = ExternalClientAccessSchema.shape.projects.refine(
+  (values) => new Set(values.map((value) => value.projectId)).size === values.length,
+  'Duplicate project grant',
+);
 export const CreateExternalClientSchema = z
   .object({
     requestId: z.string().uuid(),
     name: z.string().trim().min(1).max(128),
     target: ExternalClientTargetSchema,
     profile: z.enum(['read', 'collaborate']),
-    projectId: z.string().min(1).max(128),
+    projectId: z.string().min(1).max(128).optional(),
     workspaceConfirmation: z
       .object({ workspaceId: z.string(), rootPath: z.string(), version: z.string() })
       .strict()
       .optional(),
+    projects: ProjectsSchema.optional(),
+  })
+  .strict()
+  .refine(
+    (value) =>
+      value.projects
+        ? value.projectId === undefined && value.workspaceConfirmation === undefined
+        : !!value.projectId,
+    'Choose projects or the legacy project field',
+  );
+export const UpdateExternalClientGrantsSchema = z
+  .object({
+    expectedRevision: z.number().int().nonnegative(),
+    requestId: z.string().uuid(),
+    projects: ProjectsSchema,
+    profile: z.enum(['read', 'collaborate']),
   })
   .strict();
 type CreateInput = z.infer<typeof CreateExternalClientSchema>;
@@ -42,7 +64,7 @@ export class ExternalClientsService {
   ) {
     this.repo = options.storage.repositories;
   }
-  readAccess = () => {
+  private allAccess = () => {
     const legacy = ClientAccessFileSchema.parse(this.options.readLegacy()).clients;
     const records = this.repo.externalClients.list();
     return {
@@ -53,6 +75,52 @@ export class ExternalClientsService {
       ],
     };
   };
+  readAccess = () => ({
+    version: 1,
+    clients: this.allAccess().clients.filter((client) => client.enabled),
+  });
+  private validateProjects(projects: z.infer<typeof ProjectsSchema>) {
+    const available = this.projects();
+    for (const grant of projects) {
+      if (!available.some((project) => project.id === grant.projectId))
+        throw new TaskControlError(409, '所选项目目录不可用，请重新核对项目授权。');
+      this.options.runtime.resolveClientWorkspaceConfirmation(
+        grant.projectId,
+        grant.workspaceConfirmation,
+      );
+    }
+  }
+  private audit(
+    access: z.infer<typeof ExternalClientAccessSchema>,
+    operation: string,
+    revision: number,
+    previousProjects?: string[],
+  ) {
+    for (const projectId of new Set([
+      ...(previousProjects ?? []),
+      ...access.projects.map((project) => project.projectId),
+    ])) {
+      if (!this.repo.projects.get(projectId)) continue;
+      this.repo.events.append(
+        AuditEventSchema.parse({
+          id: 'event-' + randomUUID(),
+          projectId,
+          type: 'client.access.' + operation,
+          actor: { type: 'user', id: 'local-owner' },
+          payload: {
+            clientId: access.id,
+            projectIds: access.projects.map((p) => p.projectId),
+            ...(previousProjects ? { previousProjectIds: previousProjects } : {}),
+            tools: access.tools,
+            revision,
+            enforcementMode: 'enforced',
+            boundary: 'client-gateway',
+          },
+          occurredAt: new Date().toISOString(),
+        }),
+      );
+    }
+  }
   private installation() {
     const file = this.options.installationFile;
     const state = z
@@ -102,7 +170,7 @@ export class ExternalClientsService {
   }
   list() {
     const records = this.repo.externalClients.list();
-    return this.readAccess().clients.map((access) => {
+    return this.allAccess().clients.map((access) => {
       const row = records.find((value) => value.id === access.id);
       const uses = access.projects
         .flatMap((p) =>
@@ -122,9 +190,16 @@ export class ExternalClientsService {
         projectIds: access.projects.map((p) => p.projectId),
         tools: access.tools,
         target: row?.target ?? 'generic',
-        profile: row?.profile ?? 'collaborate',
+        profile:
+          row?.profile ??
+          (access.tools.some((name) =>
+            clientToolDefinitions.some((tool) => tool.name === name && !tool.readOnly),
+          )
+            ? 'collaborate'
+            : 'read'),
         createdAt: row?.createdAt,
         configuredAt: row?.configuredAt,
+        revision: row?.revision ?? 0,
         lastUsedAt: uses.sort((a, b) => b.occurredAt.localeCompare(a.occurredAt))[0]?.occurredAt,
         managed: !!row && /^client-[a-f0-9-]{36}$/.test(row.id),
         connectionAvailable:
@@ -134,23 +209,40 @@ export class ExternalClientsService {
   }
   create(raw: unknown) {
     const input = CreateExternalClientSchema.parse(raw);
-    const requestHash = createHash('sha256').update(JSON.stringify(input)).digest('hex');
+    const projects = [
+      ...(input.projects ?? [
+        {
+          projectId: input.projectId!,
+          ...(input.workspaceConfirmation
+            ? { workspaceConfirmation: input.workspaceConfirmation }
+            : {}),
+        },
+      ]),
+    ].sort((a, b) => a.projectId.localeCompare(b.projectId));
+    const requestHash = createHash('sha256')
+      .update(
+        JSON.stringify({
+          name: input.name,
+          target: input.target,
+          profile: input.profile,
+          projects,
+        }),
+      )
+      .digest('hex');
     const existing = this.repo.externalClients
       .list()
       .find((row) => row.requestId === input.requestId);
     if (existing) {
-      if (existing.requestHash !== requestHash)
+      if (
+        existing.requestHash !== requestHash &&
+        existing.requestHash !== createHash('sha256').update(JSON.stringify(input)).digest('hex')
+      )
         throw new TaskControlError(409, '请求内容已改变，请重新确认接入。');
       return this.configuration(existing.id);
     }
     if (this.readAccess().clients.length >= 64)
       throw new TaskControlError(409, '接入数量已达上限。请先整理旧接入。');
-    this.options.runtime.resolveClientWorkspaceConfirmation(
-      input.projectId,
-      input.workspaceConfirmation,
-    );
-    if (!this.projects().some((p) => p.id === input.projectId))
-      throw new TaskControlError(409, '项目目录不可用，请重新选择。');
+    this.validateProjects(projects);
     const id = 'client-' + randomUUID(),
       token = randomBytes(32).toString('hex');
     const installed = this.installation(),
@@ -171,54 +263,111 @@ export class ExternalClientsService {
       }),
       { flag: 'wx', mode: 0o600 },
     );
-    this.repo.externalClients.upsert(
-      ExternalClientRecordSchema.parse({
-        id,
-        requestId: input.requestId,
-        requestHash,
-        target: input.target,
-        profile: input.profile,
-        createdAt: new Date().toISOString(),
-        access: {
+    this.repo.transaction(() => {
+      this.repo.externalClients.upsert(
+        ExternalClientRecordSchema.parse({
           id,
-          name: input.name,
-          enabled: true,
-          tokenSha256: createHash('sha256').update(token).digest('hex'),
-          projects: [
-            {
-              projectId: input.projectId,
-              ...(input.workspaceConfirmation
-                ? { workspaceConfirmation: input.workspaceConfirmation }
-                : {}),
-            },
-          ],
-          tools: clientToolDefinitions
-            .filter((t) => input.profile === 'collaborate' || t.readOnly)
-            .map((t) => t.name),
-        },
-      }),
-    );
+          requestId: input.requestId,
+          requestHash,
+          target: input.target,
+          profile: input.profile,
+          createdAt: new Date().toISOString(),
+          access: {
+            id,
+            name: input.name,
+            enabled: true,
+            tokenSha256: createHash('sha256').update(token).digest('hex'),
+            projects,
+            tools: clientToolDefinitions
+              .filter((t) => input.profile === 'collaborate' || t.readOnly)
+              .map((t) => t.name),
+          },
+        }),
+      );
+      this.audit(this.repo.externalClients.get(id)!.access, 'created', 1);
+    });
     return this.configuration(id);
+  }
+  updateGrants(id: string, raw: unknown) {
+    const input = UpdateExternalClientGrantsSchema.parse(raw);
+    const projects = [...input.projects].sort((a, b) => a.projectId.localeCompare(b.projectId));
+    const requestHash = createHash('sha256')
+      .update(JSON.stringify({ projects, profile: input.profile }))
+      .digest('hex');
+    return this.repo.transaction(() => {
+      const row = this.repo.externalClients.get(id),
+        access = this.allAccess().clients.find((client) => client.id === id);
+      if (!access?.enabled) throw new TaskControlError(409, '接入不存在或已撤销，请重新创建授权。');
+      if (row?.lastUpdate?.requestId === input.requestId) {
+        if (row.lastUpdate.requestHash !== requestHash)
+          throw new TaskControlError(409, '请求内容已改变，请重新确认项目授权。');
+        return { id, revision: row.revision };
+      }
+      if ((row?.revision ?? 0) !== input.expectedRevision)
+        throw new TaskControlError(409, '项目授权已在其他位置更新，请刷新后再保存。');
+      this.validateProjects(projects);
+      const record: ExternalClientRecord = row ?? {
+        id,
+        access,
+        target: 'generic',
+        profile: 'collaborate',
+        requestId: randomUUID(),
+        requestHash: '0'.repeat(64),
+        createdAt: new Date().toISOString(),
+        revision: 0,
+      };
+      const next = {
+        ...record,
+        access: {
+          ...access,
+          projects,
+          tools: clientToolDefinitions
+            .filter((tool) => input.profile === 'collaborate' || tool.readOnly)
+            .map((tool) => tool.name),
+        },
+        profile: input.profile,
+        revision: record.revision + 1,
+        lastUpdate: { requestId: input.requestId, requestHash },
+      };
+      this.repo.externalClients.upsert(next);
+      // Audit both removed and retained project scopes without granting removed scopes.
+      this.audit(
+        next.access,
+        'updated',
+        next.revision,
+        access.projects.map((project) => project.projectId),
+      );
+      return { id, revision: next.revision };
+    });
   }
   revoke(id: string) {
     const row = this.repo.externalClients.get(id);
-    const access = this.readAccess().clients.find((client) => client.id === id);
+    const access = this.allAccess().clients.find((client) => client.id === id);
     if (!access) throw new TaskControlError(404, '接入不存在。');
+    if (!access.enabled) return { id, enabled: false };
     const now = new Date().toISOString();
-    this.repo.externalClients.upsert(
-      row
-        ? { ...row, revokedAt: now, access: { ...row.access, enabled: false } }
-        : {
-            id,
-            access: { ...access, enabled: false },
-            target: 'generic',
-            profile: 'collaborate',
-            createdAt: now,
-            revokedAt: now,
-            requestId: randomUUID(),
-            requestHash: '0'.repeat(64),
-          },
-    );
+    this.repo.transaction(() => {
+      this.repo.externalClients.upsert(
+        row
+          ? {
+              ...row,
+              revision: row.revision + 1,
+              revokedAt: now,
+              access: { ...row.access, enabled: false },
+            }
+          : {
+              id,
+              access: { ...access, enabled: false },
+              target: 'generic',
+              profile: 'collaborate',
+              createdAt: now,
+              revokedAt: now,
+              requestId: randomUUID(),
+              requestHash: '0'.repeat(64),
+            },
+      );
+      this.audit(access, 'revoked', (row?.revision ?? 0) + 1);
+    });
     return { id, enabled: false };
   }
   configuration(id: string) {
@@ -314,6 +463,17 @@ export function registerExternalClientRoutes(
   );
   app.post('/api/external-clients', (request, reply) =>
     guarded(() => service.create(request.body))(request, reply),
+  );
+  app.patch('/api/external-clients/:id/grants', (request, reply) =>
+    guarded(() =>
+      service.updateGrants(
+        z
+          .object({ id: z.string().min(1).max(128) })
+          .strict()
+          .parse(request.params).id,
+        request.body,
+      ),
+    )(request, reply),
   );
   const id = z.object({ id: z.string().min(1).max(128) }).strict();
   app.get('/api/external-clients/:id/config', (request, reply) =>

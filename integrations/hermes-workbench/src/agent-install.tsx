@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { z } from 'zod';
 import { Download, LoaderCircle, RefreshCw, ArrowRight } from 'lucide-react';
 import s from './agent-connections.module.css';
+import { AgentMemberCreate } from './agent-member-create';
 const Plan = z.object({
   entryId: z.string(),
   name: z.string(),
@@ -26,9 +27,16 @@ const Installation = z.object({
   message: z.string(),
   agentId: z.string().optional(),
   updatedAt: z.string(),
+  installed: z.boolean().default(false),
+  members: z.array(z.object({ id: z.string(), name: z.string() })).default([]),
 });
 const Records = z.object({ installations: z.array(Installation), busy: z.boolean() });
-async function api<T>(url: string, schema: z.ZodType<T>, body?: unknown, signal?: AbortSignal) {
+async function api<S extends z.ZodTypeAny>(
+  url: string,
+  schema: S,
+  body?: unknown,
+  signal?: AbortSignal,
+): Promise<z.output<S>> {
   const response = await fetch(url, {
     ...(body === undefined
       ? {}
@@ -144,7 +152,7 @@ export function AgentInstall({
   }
   const visible = records?.installations.filter((row) => !entryId || row.entryId === entryId) ?? [];
   if (!entryId && !visible.length) return null;
-  const installed = visible.find((row) => row.state === 'ready');
+  const installed = visible.find((row) => row.installed && row.version === plan?.version);
   return (
     <section className={s.installPanel} aria-label="安装 ACP 成员">
       <h4>
@@ -202,11 +210,19 @@ export function AgentInstall({
                 {row.state === 'needs-attention' ? '重试连接' : '重试安装'}
               </button>
             )}
-            {row.agentId && (
-              <button onClick={() => onExisting(row.agentId)}>
+            {row.members.map((member) => (
+              <button key={member.id} onClick={() => onExisting(member.id)}>
                 <ArrowRight size={14} />
-                {row.state === 'ready' ? '打开成员并登录' : '查看成员诊断'}
+                {member.name} · 打开成员
               </button>
+            ))}
+            {row.installed && (
+              <AgentMemberCreate
+                endpoint={'/api/agent-installations/' + row.id + '/members'}
+                defaultName={(plan?.name ?? row.entryId) + ' · 新成员'}
+                disabled={busy || !!records?.busy}
+                onCreated={(id) => onExisting(id)}
+              />
             )}
           </div>
         </article>

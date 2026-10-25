@@ -20,6 +20,7 @@ import { warmStartupAgents } from './startup-agents.js';
 import { deploymentContext, waitForDeployment } from './deployment-context.js';
 import { ExternalClientsService } from './external-clients.js';
 import { AgentInstallationsService } from './agent-installations.js';
+import { AgentMembersService } from './agent-members.js';
 
 const bundleRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 async function startRelease(args: string[]) {
@@ -85,6 +86,7 @@ async function startRelease(args: string[]) {
       new FileCatalogCache(join(config.dataDir, 'cache/agent-catalog.json')),
       runtime.network.fetch,
     );
+    const agentMembers = new AgentMembersService(storage, runtime.agentControl);
     const agentInstallations = deployment
       ? new AgentInstallationsService({
           storage,
@@ -93,9 +95,11 @@ async function startRelease(args: string[]) {
           network: runtime.network,
           root: join(dirname(deployment.operationFile), 'agents'),
           releaseRoot: bundleRoot,
+          members: agentMembers,
         })
       : undefined;
     app = buildServer({
+      agentMembers,
       ...(externalClients ? { externalClients } : {}),
       ...(agentInstallations ? { agentInstallations } : {}),
       ...(deployment ? { deployment } : {}),

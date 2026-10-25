@@ -3,6 +3,7 @@ import type {
   AgentDefinition,
   ExternalClientRecord,
   AgentInstallation,
+  AgentMemberOrigin,
   AgentMessage,
   Approval,
   ApprovalReadResult,
@@ -29,6 +30,7 @@ import type {
 import {
   ExternalClientRecordSchema,
   AgentInstallationSchema,
+  AgentMemberOriginSchema,
   AgentDefinitionSchema,
   AgentMessageSchema,
   ApprovalSchema,
@@ -333,6 +335,7 @@ class SqliteEventRepository implements EventRepository {
 export type StorageRepositories = {
   externalClients: EntityRepository<ExternalClientRecord>;
   agentInstallations: EntityRepository<AgentInstallation>;
+  agentMemberOrigins: EntityRepository<AgentMemberOrigin>;
   agentReferences: AgentReferenceReader;
   projects: EntityRepository<Project>;
   agentDefinitions: EntityRepository<AgentDefinition>;
@@ -432,6 +435,11 @@ export function createRepositories(sqlite: Database.Database): StorageRepositori
       sqlite,
       'agent_installations',
       AgentInstallationSchema,
+    ),
+    agentMemberOrigins: new SqliteJsonRepository(
+      sqlite,
+      'agent_member_origins',
+      AgentMemberOriginSchema,
     ),
     bossAssignments: new SqliteJsonRepository(
       sqlite,

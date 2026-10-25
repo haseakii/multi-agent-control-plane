@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { RuntimeDefinitionSchema } from './domain.js';
+import { AgentCatalogSourceInputSchema } from './agent-catalog-source.js';
 
 const Id = z.string().trim().min(1).max(128);
 export const ExternalClientAccessSchema = z
@@ -50,10 +52,37 @@ export const ExternalClientRecordSchema = z
     createdAt: z.string().datetime(),
     revokedAt: z.string().datetime().optional(),
     configuredAt: z.string().datetime().optional(),
+    revision: z.number().int().positive().default(1),
+    lastUpdate: z
+      .object({ requestId: z.string().uuid(), requestHash: z.string().regex(/^[a-f0-9]{64}$/) })
+      .strict()
+      .optional(),
   })
   .strict()
   .refine((value) => value.id === value.access.id, 'Client identity mismatch');
 export type ExternalClientRecord = z.infer<typeof ExternalClientRecordSchema>;
+
+export const InstalledAgentPackageSchema = z
+  .object({
+    runtime: RuntimeDefinitionSchema,
+    source: AgentCatalogSourceInputSchema,
+    origin: z.enum(['installation', 'registered-entry']),
+  })
+  .strict();
+export type InstalledAgentPackage = z.infer<typeof InstalledAgentPackageSchema>;
+export const AgentMemberOriginSchema = z
+  .object({
+    id: Id,
+    requestId: z.string().uuid(),
+    requestHash: z.string().regex(/^[a-f0-9]{64}$/),
+    sourceAgentId: Id.optional(),
+    installationId: z.string().uuid().optional(),
+    runtimeFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    createdAt: z.string().datetime(),
+  })
+  .strict()
+  .refine((value) => !!value.sourceAgentId !== !!value.installationId, 'Choose one member source');
+export type AgentMemberOrigin = z.infer<typeof AgentMemberOriginSchema>;
 
 export const AgentInstallationSchema = z
   .object({
@@ -72,6 +101,7 @@ export const AgentInstallationSchema = z
     ]),
     message: z.string().max(1000),
     agentId: Id.optional(),
+    package: InstalledAgentPackageSchema.optional(),
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
   })

@@ -509,3 +509,17 @@
   font-size: 12px;
   line-height: 1.8;
 }
+.memberCreate {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 14px 0;
+  padding: 16px;
+  border: 1px solid var(--h-line, #ddd8ce);
+  border-radius: 10px;
+  background: var(--h-bg-soft, #f5f3ee);
+}
+.memberCreate > strong {
+  display: block;
+  font-size: 13px;
+  margin-bottom: 12px;
+}

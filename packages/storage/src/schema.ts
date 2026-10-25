@@ -502,3 +502,7 @@ export const agentInstallations = sqliteTable('agent_installations', {
   id: text('id').primaryKey().notNull(),
   payload: payload(),
 });
+export const agentMemberOrigins = sqliteTable('agent_member_origins', {
+  id: text('id').primaryKey().notNull(),
+  payload: payload(),
+});

@@ -36,6 +36,10 @@ try {
   });
   // Connect stdio immediately; engine warmup happens on demand and after outages.
   await createClientMcpServer({
+    getTools: async () => {
+      await lifecycle.ensure();
+      return transport.getTools!();
+    },
     invoke: async (name, input) => {
       await lifecycle.ensure();
       // Never replay an uncertain mutation. Retain the task/idempotency key.
