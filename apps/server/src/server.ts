@@ -20,12 +20,19 @@ import type { ControlPlaneRuntime } from './runtime-composition.js';
 import { registerNetworkSettingsRoutes } from './network-settings-routes.js';
 import { registerInputAttachmentRoutes } from './input-attachment-routes.js';
 import { deploymentMaintenance, type DeploymentContext } from './deployment-context.js';
+import { registerExternalClientRoutes, type ExternalClientsService } from './external-clients.js';
+import {
+  registerAgentInstallationRoutes,
+  type AgentInstallationsService,
+} from './agent-installations.js';
 
 export type ControlCenterProvider = (
   options?: ControlCenterReadOptions,
 ) => Promise<ControlCenterSnapshot> | ControlCenterSnapshot;
 
 export type BuildServerOptions = {
+  externalClients?: ExternalClientsService;
+  agentInstallations?: AgentInstallationsService;
   deployment?: DeploymentContext;
   fastify?: FastifyServerOptions;
   webRoot?: string;
@@ -91,10 +98,17 @@ export function buildServer(options: BuildServerOptions = {}) {
     registerFleetBridgeGateway(app, options.fleetGateway);
   }
   if (options.clientGateway) registerClientGateway(app, options.clientGateway);
+  if (options.externalClients) registerExternalClientRoutes(app, options.externalClients);
+  if (options.agentInstallations) registerAgentInstallationRoutes(app, options.agentInstallations);
   if (options.agentControl) {
     registerAgentControlRoutes(app, options.agentControl);
     if (options.agentCatalog)
-      registerAgentCatalogRoutes(app, options.agentCatalog, options.agentControl);
+      registerAgentCatalogRoutes(
+        app,
+        options.agentCatalog,
+        options.agentControl,
+        !!options.agentInstallations,
+      );
   }
   if (options.taskControl) {
     registerTaskControlRoutes(app, options.taskControl);

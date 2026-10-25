@@ -1,6 +1,8 @@
 import { SqliteAgentReferenceReader, type AgentReferenceReader } from './agent-references.js';
 import type {
   AgentDefinition,
+  ExternalClientRecord,
+  AgentInstallation,
   AgentMessage,
   Approval,
   ApprovalReadResult,
@@ -25,6 +27,8 @@ import type {
   ProjectPolicy,
 } from '@control-plane/core';
 import {
+  ExternalClientRecordSchema,
+  AgentInstallationSchema,
   AgentDefinitionSchema,
   AgentMessageSchema,
   ApprovalSchema,
@@ -327,6 +331,8 @@ class SqliteEventRepository implements EventRepository {
 }
 
 export type StorageRepositories = {
+  externalClients: EntityRepository<ExternalClientRecord>;
+  agentInstallations: EntityRepository<AgentInstallation>;
   agentReferences: AgentReferenceReader;
   projects: EntityRepository<Project>;
   agentDefinitions: EntityRepository<AgentDefinition>;
@@ -417,6 +423,16 @@ export function createRepositories(sqlite: Database.Database): StorageRepositori
       }),
     ),
     agentDefinitions: new SqliteJsonRepository(sqlite, 'agent_definitions', AgentDefinitionSchema),
+    externalClients: new SqliteJsonRepository(
+      sqlite,
+      'external_clients',
+      ExternalClientRecordSchema,
+    ),
+    agentInstallations: new SqliteJsonRepository(
+      sqlite,
+      'agent_installations',
+      AgentInstallationSchema,
+    ),
     bossAssignments: new SqliteJsonRepository(
       sqlite,
       'boss_assignments',

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import {
+  ExternalClientAccessSchema,
   SessionSettingValuesSchema,
   InputAttachmentIdsSchema,
   InputAttachmentSchema,
@@ -175,30 +176,7 @@ export const ClientToolRequestSchema = z
   .object({ toolName: ClientToolNameSchema, input: z.unknown() })
   .strict();
 
-export const ClientAccessSchema = z
-  .object({
-    id: Id,
-    name: z.string().trim().min(1).max(128),
-    enabled: z.boolean(),
-    tokenSha256: z.string().regex(/^[a-f0-9]{64}$/),
-    projects: z
-      .array(
-        z
-          .object({
-            projectId: Id,
-            // Consent is tied to the registered source identity, not a guessed path.
-            workspaceConfirmation: z
-              .object({ workspaceId: Id, rootPath: z.string().min(1).max(4096), version: Id })
-              .strict()
-              .optional(),
-          })
-          .strict(),
-      )
-      .min(1)
-      .max(128),
-    tools: z.array(ClientToolNameSchema).min(1),
-  })
-  .strict();
+export const ClientAccessSchema = ExternalClientAccessSchema;
 export type ClientAccess = z.infer<typeof ClientAccessSchema>;
 export const ClientAccessFileSchema = z
   .object({ version: z.literal(1), clients: z.array(ClientAccessSchema).max(64) })

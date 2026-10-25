@@ -237,6 +237,14 @@ function operations(file) {
     },
     inspect: async (target) => {
       const snapshot = await httpJson(target, '/api/control-center');
+      // Earlier releases have no member installer; only a 404 means absent.
+      const installing = await fetch(
+        new URL('/api/agent-installations', `http://127.0.0.1:${configFor(target).port}`),
+        { signal: AbortSignal.timeout(5000), redirect: 'error' },
+      );
+      if (installing.ok) {
+        if ((await installing.json()).busy) throw Error('还有成员正在安装，请完成后再升级。');
+      } else if (installing.status !== 404) throw Error('无法确认成员安装状态，原版本保持运行。');
       if (
         (snapshot.executionAttempts ?? []).some((attempt) =>
           ['running', 'waiting', 'queued'].includes(attempt.state),

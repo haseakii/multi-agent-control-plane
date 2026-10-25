@@ -20,6 +20,10 @@ You can reopen a task using its workbench URL (`/?task=...`), including links fr
 
 ## Use the same engine from Codex or another MCP client
 
+In the workbench, choose **接入应用**, select a project and client, then authorize **任务与追问** or **只查看**. Copy a complete generated configuration, use the Cursor/VS Code install link, or click **安装到 Codex** to register through an existing native Codex CLI. Each client has an independent grant and can be revoked here without deleting tasks or attachments. Configurations use the fixed installation entry, so upgrades do not require editing client paths. This stdio flow is for clients on this computer.
+
+To add an ACP member, open **协作成员 → 添加成员 → 产品目录**. Supported Windows ZIP distributions and pinned npm adapters offer **确认安装并接入**: packages stay inside the installation directory, npm install scripts are disabled, and connection checks send no model prompt. After installation, open the member and use its own login entry. Failed installs and interrupted checks can be retried from the same catalog. Unsupported distributions still offer an existing-local-entry flow. MCP client grants do not grant provider login, approval, merge or push authority.
+
 The `local_collaboration` stdio MCP service exposes project/agent discovery, task submission,
 incremental progress, artifacts, follow-up, cancellation and preparation of a fixed code review.
 It is registered in this machine's Codex configuration and can start the local engine in the

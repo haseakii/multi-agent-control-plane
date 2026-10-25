@@ -494,3 +494,11 @@ export const workspaceReviews = sqliteTable(
   },
   (table) => [index('workspace_reviews_task_idx').on(table.taskId)],
 );
+export const externalClients = sqliteTable('external_clients', {
+  id: text('id').primaryKey().notNull(),
+  payload: payload(),
+});
+export const agentInstallations = sqliteTable('agent_installations', {
+  id: text('id').primaryKey().notNull(),
+  payload: payload(),
+});

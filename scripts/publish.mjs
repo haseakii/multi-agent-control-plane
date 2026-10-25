@@ -42,7 +42,7 @@ for (const name of packages)
 for (const name of ['server', 'web'])
   run('node_modules/typescript/bin/tsc', ['-p', 'apps/' + name + '/tsconfig.json']);
 const evidence = output + '-validation';
-fs.mkdirSync(evidence);
+fs.mkdirSync(evidence, { recursive: true });
 run('node_modules/vitest/vitest.mjs', [
   'run',
   '--maxWorkers=4',

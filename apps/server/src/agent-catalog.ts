@@ -305,12 +305,14 @@ export function registerAgentCatalogRoutes(
   app: FastifyInstance,
   catalog: AgentCatalogService,
   agents: AgentControlService,
+  installationSupported = false,
 ) {
   const localStatus = new AgentCatalogStatus();
   const catalogView = () => {
     const snapshot = catalog.snapshot();
     return {
       ...snapshot,
+      installationSupported,
       memberStatuses: localStatus.summaries(snapshot.entries, snapshot.platform, agents.list()),
     };
   };

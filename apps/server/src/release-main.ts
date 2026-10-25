@@ -18,6 +18,8 @@ import { readClientAccessFile } from './client-gateway.js';
 import { createInstanceControl, stopInstance } from './instance-control.js';
 import { warmStartupAgents } from './startup-agents.js';
 import { deploymentContext, waitForDeployment } from './deployment-context.js';
+import { ExternalClientsService } from './external-clients.js';
+import { AgentInstallationsService } from './agent-installations.js';
 
 const bundleRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 async function startRelease(args: string[]) {
@@ -67,23 +69,48 @@ async function startRelease(args: string[]) {
     });
     const activeRuntime = runtime;
     const activeStorage = storage;
+    const readLegacy = config.clientAccessFile
+      ? readClientAccessFile(config.clientAccessFile)
+      : () => ({ version: 1, clients: [] });
+    const externalClients = deployment
+      ? new ExternalClientsService({
+          storage,
+          runtime,
+          installationFile: join(dirname(deployment.operationFile), 'installation.json'),
+          baseUrl: `http://${config.host}:${config.port}`,
+          readLegacy,
+        })
+      : undefined;
+    const agentCatalog = new AgentCatalogService(
+      new FileCatalogCache(join(config.dataDir, 'cache/agent-catalog.json')),
+      runtime.network.fetch,
+    );
+    const agentInstallations = deployment
+      ? new AgentInstallationsService({
+          storage,
+          catalog: agentCatalog,
+          agents: runtime.agentControl,
+          network: runtime.network,
+          root: join(dirname(deployment.operationFile), 'agents'),
+          releaseRoot: bundleRoot,
+        })
+      : undefined;
     app = buildServer({
+      ...(externalClients ? { externalClients } : {}),
+      ...(agentInstallations ? { agentInstallations } : {}),
       ...(deployment ? { deployment } : {}),
       fastify: { logger: { level: config.logLevel, stream: log } },
       webRoot,
       agentControl: runtime.agentControl,
-      agentCatalog: new AgentCatalogService(
-        new FileCatalogCache(join(config.dataDir, 'cache/agent-catalog.json')),
-        runtime.network.fetch,
-      ),
+      agentCatalog,
       taskControl: runtime,
       fleetGateway: runtime.fleetGateway,
-      ...(config.clientAccessFile
+      ...(config.clientAccessFile || externalClients
         ? {
             clientGateway: {
               storage,
               runtime,
-              readAccess: readClientAccessFile(config.clientAccessFile),
+              readAccess: externalClients?.readAccess ?? readLegacy,
             },
           }
         : {}),

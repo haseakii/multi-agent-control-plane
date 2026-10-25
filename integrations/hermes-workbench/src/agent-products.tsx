@@ -12,6 +12,7 @@ import { parseAgentCommand, sameAgentRuntime } from './agent-quick-config';
 import type { CatalogSelectionData } from './agent-onboarding-draft';
 import { prepareProductEntry } from './product-entry';
 import { AgentArguments } from './agent-arguments';
+import { AgentInstall } from './agent-install';
 import { SnapshotRefresh } from './snapshot-refresh';
 import {
   clearProductEntryDraft,
@@ -430,7 +431,8 @@ export function AgentProducts({
   return (
     <section className={s.editor} aria-label="选择 ACP 产品">
       <h3>{selected ? `接入 ${selected.name}` : '选择要接入的产品'}</h3>
-      <p className={s.hint}>选择产品 → 确认本机入口 → 检查连接与登录</p>
+      <p className={s.hint}>选择产品 → 安装或使用已有入口 → 成员自己登录</p>
+      <AgentInstall entryId={selected?.id} onExisting={onExisting} />
       {!selected ? (
         <>
           <div className={s.actions}>

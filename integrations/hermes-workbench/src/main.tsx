@@ -66,6 +66,7 @@ import { MemberActivity, recentMemberTask } from './member-history';
 import { MemberWorkHint } from './member-work-hint';
 import { WorkbenchHelp } from './workbench-help';
 import { SystemSettings } from './system-settings';
+import { ExternalClients } from './external-clients';
 import { composerDrafts } from './composer-drafts';
 import { followUpSubmissions } from './followup-submissions';
 import { goalSubmissions } from './goal-submissions';
@@ -430,6 +431,7 @@ function Workbench() {
   const [connectionsOpen, setConnectionsOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [systemSettingsOpen, setSystemSettingsOpen] = useState(false);
+  const [externalClientsOpen, setExternalClientsOpen] = useState(false);
   const [networkVersion, setNetworkVersion] = useState(0);
   const [networkMemberId, setNetworkMemberId] = useState<string>();
   const [connectionTarget, setConnectionTarget] = useState<string>();
@@ -965,6 +967,7 @@ function Workbench() {
         <button disabled={sending} onClick={() => openConnections()}>
           <Users size={16} /> 协作成员
         </button>
+        <button onClick={() => setExternalClientsOpen(true)}>接入应用</button>
         <button disabled={sending} onClick={() => setHelpOpen(true)}>
           使用说明
         </button>
@@ -1863,6 +1866,15 @@ function Workbench() {
           busy={sending}
           onDecide={(id, decision) => void action(() => decideApproval(id, decision))}
           onClose={() => setApprovalTarget(undefined)}
+        />
+      )}
+      {externalClientsOpen && (
+        <ExternalClients
+          projectId={
+            root?.projectId ??
+            (goalWorkspace.kind === 'saved-project' ? goalWorkspace.projectId : undefined)
+          }
+          onClose={() => setExternalClientsOpen(false)}
         />
       )}
       {connectionsOpen && (

@@ -255,6 +255,11 @@ if (hermes) copyFileSync(join(webDist, 'LICENSE-HERMES.txt'), join(output, 'LICE
 mkdirSync(join(output, 'runtime'));
 copyFileSync(nodeSource, join(output, 'runtime/node.exe'));
 copyFileSync(nodeLicense, join(output, 'runtime/LICENSE'));
+// Reuse the npm shipped with the verified local Node distribution. No package
+// manager is installed globally; member installs stay under installation/agents.
+const bundledNpm = join(dirname(nodeSource), 'node_modules/npm');
+if (existsSync(join(bundledNpm, 'bin/npm-cli.js')))
+  copyTree(bundledNpm, join(output, 'runtime/npm'));
 writeFileSync(
   join(output, 'package.json'),
   JSON.stringify(

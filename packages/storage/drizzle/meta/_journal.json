@@ -141,6 +141,13 @@
       "when": 1792584013000,
       "tag": "0019_input_attachments",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "6",
+      "when": 1792584014000,
+      "tag": "0020_external_clients",
+      "breakpoints": true
     }
   ]
 }
