@@ -5,7 +5,8 @@ import { getDefaultStore, Provider } from 'jotai';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { z } from 'zod';
 import { DEFAULT_THEME_CONFIG, applyPlatformToDOM, applyThemeToDOM } from '@hermes/shared-ui';
-import { GooseComposer } from '@/components/chat/goose-composer';
+import { AttachmentComposer } from './attachment-composer';
+import { sameAttachmentIds, type InputAttachmentData } from './input-attachments';
 import { MessageTimeline } from '@/components/chat/message-timeline';
 import { SubagentPanel } from '@/components/chat/subagent-panel';
 import { PanelHero } from '@/components/panel/panel-hero';
@@ -266,7 +267,9 @@ function FollowUpComposer({
   const draft = useComposerDraft(key);
   return (
     <div className={s.followUp}>
-      <GooseComposer
+      <AttachmentComposer
+        key={key}
+        attachmentKey={key}
         plainTextOnly
         variant="default"
         headerLabel={busy || paused ? '补充要求' : '继续追问'}
@@ -334,12 +337,14 @@ function DraftStorageNotice({ persisted }: { persisted: boolean }) {
 }
 
 function GoalComposer({
+  initialAttachments,
   storageKey,
   initial,
   editing,
   sending,
   onSend,
 }: {
+  initialAttachments?: InputAttachmentData[];
   storageKey: string;
   initial: string;
   editing: boolean;
@@ -350,7 +355,10 @@ function GoalComposer({
   const draft = useComposerDraft(storageKey, initial);
   return (
     <>
-      <GooseComposer
+      <AttachmentComposer
+        key={storageKey}
+        attachmentKey={storageKey}
+        initialAttachments={initialAttachments}
         plainTextOnly
         variant="big"
         headerLabel={editing ? '继续编辑目标' : '这次想完成什么？'}
@@ -725,7 +733,7 @@ function Workbench() {
   };
   const send = async ({ text, attachments }: { text: string; attachments: unknown[] }) => {
     if (!workbench) throw new Error('正在连接协作引擎，草稿已保留，请稍后发送。');
-    if (attachments.length) throw new Error('目前支持文字任务，请使用文字描述要求。');
+    const attachmentIds = attachments.map((item) => (item as { id: string }).id);
     setSending(true);
     try {
       submission.current =
@@ -739,6 +747,7 @@ function Workbench() {
                   : `hermes-${crypto.randomUUID()}`,
               createKey: crypto.randomUUID(),
               creationObjective: text.trim(),
+              creationAttachmentIds: attachmentIds,
               sessionSettings: goalSettings,
               settingsAgentId: bossId,
             });
@@ -753,7 +762,15 @@ function Workbench() {
         if (accepted && accepted.state !== 'draft' && accepted.state !== 'created') {
           submission.current = undefined;
           goalSubmissions.clear(goalDraftKey);
-          if (accepted.objective !== text.trim())
+          if (
+            accepted.objective !== text.trim() ||
+            !sameAttachmentIds(
+              fresh.inputAttachments
+                .find((item) => item.ownerId === accepted.id)
+                ?.attachments.map((a) => a.id),
+              attachmentIds,
+            )
+          )
             throw new Error(
               '上一次目标已启动，当前编辑尚未发送。请打开原会话补充，或再次发送当前目标。',
             );
@@ -774,6 +791,7 @@ function Workbench() {
       // Accepted starts were reconciled above. The still-editable draft can use
       // the current choice; freeze it before the start request is issued.
       submission.current.sessionSettings = goalSettings;
+      submission.current.attachmentIds = attachmentIds;
       submission.current.settingsAgentId = bossId;
       saveProgress();
       if (!editingDraft) {
@@ -815,7 +833,15 @@ function Workbench() {
         if (task && task.state !== 'draft' && task.state !== 'created') {
           submission.current = undefined;
           goalSubmissions.clear(goalDraftKey);
-          if (task.objective !== text.trim())
+          if (
+            task.objective !== text.trim() ||
+            !sameAttachmentIds(
+              data.inputAttachments
+                .find((item) => item.ownerId === task.id)
+                ?.attachments.map((a) => a.id),
+              attachmentIds,
+            )
+          )
             throw new Error(
               '上一次目标已启动，保留在左侧历史中。当前编辑尚未发送，草稿已保留；可打开原任务补充，或再次发送当前目标。',
             );
@@ -839,7 +865,7 @@ function Workbench() {
   const newTask = () => openNewTask(workspaceChoice);
   const followUp = async ({ text, attachments }: { text: string; attachments: unknown[] }) => {
     if (!root || !conversation) throw new Error('请先选择会话。');
-    if (attachments.length) throw new Error('请先使用文字描述要求。');
+    const attachmentIds = attachments.map((item) => (item as { id: string }).id);
     setSending(true);
     try {
       const fresh = await readSnapshot();
@@ -848,7 +874,7 @@ function Workbench() {
       if (!latest) throw new Error('暂时无法读取当前会话，输入已保留，请刷新后重试。');
       const previous = followUpSubmissions.read(conversation.id);
       const source =
-        previous?.text === text.trim()
+        previous?.text === text.trim() && sameAttachmentIds(previous.attachmentIds, attachmentIds)
           ? currentRounds.find((round) => round.id === previous.taskId)
           : undefined;
       if (previous && source) {
@@ -883,6 +909,7 @@ function Workbench() {
         latest.id,
         text,
         canChangeSettings ? followSettings : undefined,
+        attachmentIds,
       );
       await sendChat(
         pending.taskId,
@@ -890,6 +917,7 @@ function Workbench() {
         pending.key,
         confirmation,
         pending.sessionSettings,
+        pending.attachmentIds,
       );
       followUpSubmissions.clear(conversation.id);
       if (canChangeSettings)
@@ -1362,6 +1390,10 @@ function Workbench() {
                 />
               )}
               <GoalComposer
+                initialAttachments={
+                  snapshot?.inputAttachments.find((item) => item.ownerId === editingDraft?.id)
+                    ?.attachments
+                }
                 key={`${editingDraft?.id ?? 'new'}-${nonce}`}
                 storageKey={goalDraftKey}
                 initial={editingDraft?.objective ?? draft}

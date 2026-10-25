@@ -6,6 +6,7 @@ import {
   AgentSessionPresetIdSchema,
   ExecutionWorkspaceModeSchema,
   SessionSettingValuesSchema,
+  InputAttachmentIdsSchema,
 } from '@control-plane/core';
 import {
   PotentialSecretError,
@@ -47,6 +48,7 @@ export const ResumeTaskSchema = z
   .strict();
 export const FollowUpTaskSchema = z
   .object({
+    attachmentIds: InputAttachmentIdsSchema.optional(),
     content: z.string().trim().min(1).max(8000),
     idempotencyKey: z.string().min(1).max(128),
     workspaceConfirmation: WorkspaceConfirmationSchema.optional(),
@@ -60,6 +62,7 @@ export const FollowUpTaskSchema = z
   );
 export const FollowUpLinkSchema = z
   .object({
+    attachmentIds: InputAttachmentIdsSchema.optional(),
     sourceTaskId: z.string().min(1),
     conversationRootTaskId: z.string().min(1),
     settingsHash: z
@@ -71,6 +74,7 @@ export const FollowUpLinkSchema = z
 export const WorkspaceModeUpdateSchema = z.object({ mode: ExecutionWorkspaceModeSchema }).strict();
 export const SubmitGoalSchema = z
   .object({
+    attachmentIds: InputAttachmentIdsSchema.optional(),
     title: z.string().trim().min(1).max(256).optional(),
     objective: z.string().trim().min(1).max(100_000),
     workspaceConfirmation: WorkspaceConfirmationSchema.optional(),

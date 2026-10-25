@@ -147,6 +147,7 @@ const stages: Record<string, string> = {
 };
 const events: Record<string, string> = {
   'execution.session.attached': '成员会话已建立',
+  'execution.inputs.prepared': '已准备用户附件',
   'agent.usage': '成员上报用量与缓存',
   'workspace.preview.saved': '页面预览快照已保存',
   'agent.progress': '成员回复记录',

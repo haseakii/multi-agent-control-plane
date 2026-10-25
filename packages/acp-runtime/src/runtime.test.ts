@@ -21,6 +21,42 @@ function streamPair(): { client: acp.Stream; agent: acp.Stream } {
 }
 
 describe('AcpClientRuntime', () => {
+  it('rejects unsupported native images before a prompt and leaves the session usable for text', async () => {
+    const streams = streamPair();
+    let prompts = 0;
+    const agent = acp
+      .agent({ name: 'text-only-fixture' })
+      .onRequest(acp.methods.agent.initialize, (ctx) => ({
+        protocolVersion: ctx.params.protocolVersion,
+        agentCapabilities: {},
+      }))
+      .onRequest(acp.methods.agent.session.new, () => ({ sessionId: 'text-only' }))
+      .onRequest(acp.methods.agent.session.prompt, () => {
+        prompts++;
+        return { stopReason: 'end_turn' };
+      })
+      .connect(streams.agent);
+    const connection = await new AcpClientRuntime().connect(streams.client);
+    try {
+      await connection.newSession({ cwd: '/synthetic' });
+      const image = async () => {
+        for await (const _ of connection.prompt('text-only', 'image', [
+          { type: 'image', mimeType: 'image/png', data: 'iVBORw0KGgo=' },
+        ])) {
+          /* drain */
+        }
+      };
+      await expect(image()).rejects.toThrow('未声明图片输入能力');
+      expect(prompts).toBe(0);
+      for await (const _ of connection.prompt('text-only', 'text')) {
+        /* drain */
+      }
+      expect(prompts).toBe(1);
+    } finally {
+      connection.close();
+      agent.close();
+    }
+  });
   it('reports a real transport closure as retryable failure, never completion', async () => {
     let cutTransport!: () => void;
     const outbound = new TransformStream<acp.AnyMessage>({

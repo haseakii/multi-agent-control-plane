@@ -275,6 +275,8 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
           const { latestTaskId, diagnostic, network } = runtime.taskRecovery(task.id);
           result = {
             task: card(current),
+            inputAttachments: runtime.taskInputAttachments(task.id).slice(0, 40),
+            inputAttachmentCount: runtime.taskInputAttachments(task.id).length,
             network,
             sessionSettings: runtime.sessionSettings.repository.getTask(task.id) ?? {
               state: 'unavailable',
@@ -337,6 +339,7 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
             task.id,
             {
               content: value.content,
+              ...(value.attachmentIds !== undefined ? { attachmentIds: value.attachmentIds } : {}),
               ...(value.sessionSettings !== undefined
                 ? { sessionSettings: value.sessionSettings }
                 : {}),

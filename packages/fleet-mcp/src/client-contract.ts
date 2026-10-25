@@ -1,10 +1,11 @@
 import { z } from 'zod';
-import { SessionSettingValuesSchema } from '@control-plane/core';
+import { SessionSettingValuesSchema, InputAttachmentIdsSchema } from '@control-plane/core';
 
 const Id = z.string().trim().min(1).max(128);
 const TaskId = z.object({ taskId: Id }).strict();
 export const ClientSubmitSchema = z
   .object({
+    attachmentIds: InputAttachmentIdsSchema.optional(),
     projectId: Id,
     agentId: Id,
     title: z.string().trim().min(1).max(256).optional(),
@@ -20,6 +21,7 @@ export const ClientSubmitSchema = z
   );
 export const ClientContinueSchema = z
   .object({
+    attachmentIds: InputAttachmentIdsSchema.optional(),
     taskId: Id,
     content: z.string().trim().min(1).max(4000),
     idempotencyKey: Id,

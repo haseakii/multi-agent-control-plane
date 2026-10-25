@@ -4,11 +4,14 @@ import { workspaceDraftIntent } from './workspace-draft';
 import type { WorkspaceSelection } from './workspace-api';
 import type { DraftSubmission } from './draft-submission';
 import { SessionSettingValues } from './session-setting-values';
+import { AttachmentIds } from './input-attachments';
 const Saved = z
   .object({
     workspace: z.string().max(16384),
     submission: z
       .object({
+        attachmentIds: AttachmentIds.optional(),
+        creationAttachmentIds: AttachmentIds.optional(),
         projectId: z.string().min(1).max(128),
         taskId: z.string().min(1).max(128).optional(),
         createKey: z.string().uuid().optional(),

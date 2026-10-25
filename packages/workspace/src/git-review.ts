@@ -84,7 +84,11 @@ export class LocalGitReviewAdapter implements WorkspaceReviewAdapter {
       const options = { env: { GIT_INDEX_FILE: join(directory, 'index') } };
       const headRevision = objectId(await this.git.run(workspace.rootPath, ['rev-parse', 'HEAD']));
       await this.git.run(workspace.rootPath, ['read-tree', 'HEAD'], options);
-      await this.git.run(workspace.rootPath, ['add', '-A', '--', '.'], options);
+      await this.git.run(
+        workspace.rootPath,
+        ['add', '-A', '--', '.', ':(exclude).control-plane-inputs'],
+        options,
+      );
       const tree = objectId(await this.git.run(workspace.rootPath, ['write-tree'], options));
       return {
         tree,

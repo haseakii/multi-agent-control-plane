@@ -10,3 +10,4 @@ export * from './session-settings.js';
 export * from './session-presets.js';
 export * from './agent-catalog-sources.js';
 export * from './network-settings.js';
+export * from './input-attachments.js';

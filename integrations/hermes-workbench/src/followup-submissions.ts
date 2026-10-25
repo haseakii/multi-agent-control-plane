@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { composerDrafts, type createComposerDrafts } from './composer-drafts';
+import { AttachmentIds, sameAttachmentIds } from './input-attachments';
 import {
   SessionSettingValues,
   sameSessionValues,
@@ -8,6 +9,7 @@ import {
 
 const Pending = z
   .object({
+    attachmentIds: AttachmentIds.optional(),
     taskId: z.string().min(1).max(128),
     text: z.string().trim().min(1).max(8000),
     key: z.string().uuid(),
@@ -35,11 +37,13 @@ export function createFollowUpSubmissions(
       latestTaskId: string,
       text: string,
       sessionSettings?: SessionSettingValuesData,
+      attachmentIds?: string[],
     ) {
       const previous = read(conversationId);
       const reused =
         !!previous &&
         previous.text === text.trim() &&
+        sameAttachmentIds(previous.attachmentIds, attachmentIds) &&
         taskIds.includes(previous.taskId) &&
         sameSessionValues(previous.sessionSettings, sessionSettings);
       const request = reused
@@ -48,6 +52,7 @@ export function createFollowUpSubmissions(
             taskId: latestTaskId,
             text: text.trim(),
             key: newKey(),
+            ...(attachmentIds?.length ? { attachmentIds } : {}),
             ...(sessionSettings === undefined ? {} : { sessionSettings }),
           });
       const stored = drafts.write(storageKey(conversationId), JSON.stringify(request));

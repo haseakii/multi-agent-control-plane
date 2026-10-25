@@ -26,10 +26,13 @@ import {
   MessageDeliveryViewSchema,
 } from '@control-plane/core';
 import type { SqliteStorage } from '@control-plane/storage';
+import { SqliteInputAttachmentRepository } from '@control-plane/storage';
+import type { InputAttachment } from '@control-plane/core';
 import { SqliteMessageRouterStore, messageDeliveryView } from '@control-plane/message-router';
 import { conversationTaskIds, type ControlCenterReadOptions } from './conversation-snapshot.js';
 
 export type ControlCenterSnapshot = {
+  inputAttachments?: Array<{ taskId: string; ownerId: string; attachments: InputAttachment[] }>;
   generatedAt: string;
   projects: ReturnType<typeof ProjectSchema.parse>[];
   agents: Array<{
@@ -343,6 +346,9 @@ export function readControlCenterSnapshot(
   ).sort((left, right) => left.occurredAt.localeCompare(right.occurredAt));
   return {
     generatedAt,
+    inputAttachments: new SqliteInputAttachmentRepository(storage.sqlite)
+      .messages()
+      .filter((item) => options?.view !== 'conversation' || taskIds.includes(item.taskId)),
     projects,
     agents: repositories.agentDefinitions.list().map((definition) => ({
       definition,

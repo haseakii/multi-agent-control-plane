@@ -113,7 +113,7 @@ it('upgrades seventeen migrations without changing prior payloads and retains as
     storage.close();
     storage = openSqliteStorage({ filename });
     expect(storage.sqlite.prepare('SELECT count(*) AS n FROM __drizzle_migrations').get()).toEqual({
-      n: 19,
+      n: 20,
     });
     let sources = new SqliteAgentCatalogSourcesRepository(storage.sqlite);
     expect(sources.get('agent')).toBeUndefined();

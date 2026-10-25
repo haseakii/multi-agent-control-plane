@@ -21,6 +21,21 @@ function fixture() {
     );
   return { reload };
 }
+it('preserves uploaded attachment identities across a lost receipt and never reuses a key for a changed selection', () => {
+  const f = fixture(),
+    a = '11111111-1111-4111-8111-111111111111',
+    b = '22222222-2222-4222-8222-222222222222';
+  const first = f.reload().prepare('c', ['first'], 'first', 'Read this', undefined, [a]);
+  const retry = f.reload().prepare('c', ['first', 'second'], 'second', 'Read this', undefined, [a]);
+  expect(retry.request).toEqual(first.request);
+  expect(retry.reused).toBe(true);
+  const changed = f
+    .reload()
+    .prepare('c', ['first', 'second'], 'second', 'Read this', undefined, [b]);
+  expect(changed.reused).toBe(false);
+  expect(changed.request.key).not.toBe(first.request.key);
+  expect(changed.request.attachmentIds).toEqual([b]);
+});
 it('reuses the original target and key after reload even if a newer round has appeared', () => {
   const f = fixture();
   const sent = f.reload().prepare('conversation', ['first'], 'first', '  Make it blue  ');

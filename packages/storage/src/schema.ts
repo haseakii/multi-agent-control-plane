@@ -1,5 +1,6 @@
 import {
   index,
+  blob,
   integer,
   primaryKey,
   sqliteTable,
@@ -9,6 +10,23 @@ import {
 import { sql } from 'drizzle-orm';
 
 const payload = () => text('payload').notNull();
+
+export const inputAttachments = sqliteTable('input_attachments', {
+  id: text('id').primaryKey().notNull(),
+  payload: payload(),
+  content: blob('content', { mode: 'buffer' }).notNull(),
+});
+export const inputAttachmentMessages = sqliteTable(
+  'input_attachment_messages',
+  {
+    ownerId: text('owner_id').primaryKey().notNull(),
+    taskId: text('task_id')
+      .notNull()
+      .references(() => tasks.id, { onDelete: 'cascade' }),
+    idsJson: text('ids_json').notNull(),
+  },
+  (table) => [index('input_attachment_messages_task').on(table.taskId)],
+);
 
 export const networkSettings = sqliteTable('network_settings', {
   id: text('id').primaryKey().notNull(),

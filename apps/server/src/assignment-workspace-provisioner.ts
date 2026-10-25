@@ -170,7 +170,16 @@ export class LocalAssignmentWorkspaceProvisioner implements AssignmentWorkspaceP
 
 async function copyTaskFiles(source: string, destination: string) {
   // Task-local rounds carry ordinary project files, not credentials, caches or link targets.
-  const skip = new Set(['.git', 'node_modules', '.env', '.codex', '.aws', '.ssh', '.cache']);
+  const skip = new Set([
+    '.git',
+    'node_modules',
+    '.env',
+    '.codex',
+    '.aws',
+    '.ssh',
+    '.cache',
+    '.control-plane-inputs',
+  ]);
   const files: string[] = [],
     directories: string[] = [];
   let bytes = 0;

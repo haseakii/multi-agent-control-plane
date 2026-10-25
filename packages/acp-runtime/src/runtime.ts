@@ -28,6 +28,7 @@ import type {
   PermissionDecision,
   PermissionRequest,
   SessionRef,
+  PromptAttachment,
 } from './types.js';
 
 type PromptQueue = {
@@ -114,6 +115,20 @@ function toPermissionResponse(decision: PermissionDecision): acp.RequestPermissi
 function normalizeSessionUpdate(params: acp.SessionNotification): AgentEvent {
   const sessionId = String(params.sessionId);
   const update = params.update;
+  if (update.sessionUpdate === 'user_message_chunk' && update.content.type !== 'text') {
+    return {
+      type: 'status',
+      sessionId,
+      updateType: update.sessionUpdate,
+      payload: {
+        sessionUpdate: update.sessionUpdate,
+        content: {
+          type: update.content.type,
+          note: 'Input attachment bytes are retained by the host, not duplicated into events.',
+        },
+      },
+    };
+  }
 
   if (update.sessionUpdate === 'agent_message_chunk' && update.content.type === 'text') {
     return {
@@ -510,7 +525,37 @@ export class AcpRuntimeConnection {
     }
   }
 
-  async *prompt(sessionId: string, text: string): AsyncGenerator<AgentEvent, void, void> {
+  async *prompt(
+    sessionId: string,
+    text: string,
+    attachments: PromptAttachment[] = [],
+  ): AsyncGenerator<AgentEvent, void, void> {
+    if (
+      !Array.isArray(attachments) ||
+      attachments.length > 40 ||
+      attachments.some((item) =>
+        item.type === 'image'
+          ? !['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(item.mimeType) ||
+            typeof item.data !== 'string' ||
+            item.data.length > 28 * 1024 * 1024 ||
+            !/^[a-zA-Z0-9+/]+={0,2}$/.test(item.data)
+          : item.type !== 'resource_link' ||
+            typeof item.uri !== 'string' ||
+            !item.uri.startsWith('file:///') ||
+            typeof item.name !== 'string' ||
+            item.name.length > 255 ||
+            !Number.isSafeInteger(item.size) ||
+            item.size < 1,
+      )
+    )
+      throw new TypeError('Invalid ACP input attachment.');
+    if (
+      attachments.some((a) => a.type === 'image') &&
+      !this.initialized.agentCapabilities?.promptCapabilities?.image
+    )
+      throw new Error(
+        '此成员未声明图片输入能力，未发送模型提示；附件与已有改动仍保留，请选择支持图片的成员。',
+      );
     if (this.changingSettings.has(sessionId))
       throw new AcpSessionSettingsError('busy', this.getSessionSettings(sessionId));
     if (this.invalidSettings.has(sessionId)) this.getSessionSettings(sessionId);
@@ -524,9 +569,10 @@ export class AcpRuntimeConnection {
     this.promptLifetimes.set(sessionId, lifetime);
     this.promptQueues.set(sessionId, queue);
 
+    const prompt: acp.ContentBlock[] = [{ type: 'text', text }, ...attachments];
     const request = this.connection.agent.request(acp.methods.agent.session.prompt, {
       sessionId,
-      prompt: [{ type: 'text', text }],
+      prompt,
     });
 
     void request.then(

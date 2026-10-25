@@ -93,16 +93,16 @@ for (const count of [8, 14])
     await backupStoppedRelease(f.config, f.backup, version);
     const backupBefore = fingerprints(f.backup);
     const verified = await verifyPrivateBackup(f.backup, version);
-    expect(verified.pendingMigrations).toBe(19 - count);
+    expect(verified.pendingMigrations).toBe(20 - count);
     expect(() => inspectSqliteSnapshot(join(f.backup, 'database.sqlite'))).toThrow(
       'Unsupported database migration',
     );
     const target = join(f.root, 'upgraded-restore');
     const result = await restorePrivateBackup(f.backup, target, version);
-    expect(result).toMatchObject({ automaticExecution: false, migrationsApplied: 19 - count });
+    expect(result).toMatchObject({ automaticExecution: false, migrationsApplied: 20 - count });
     expect(
       inspectSqliteSnapshot(join(target, 'data/control-plane.sqlite')).migrations,
-    ).toHaveLength(19);
+    ).toHaveLength(20);
     expect(fingerprints(f.data)).toEqual(sourceBefore);
     expect(fingerprints(f.backup)).toEqual(backupBefore);
     expect(readFileSync(join(target, 'RESTORE-INFO.txt'), 'utf8')).toContain('原备份未修改');
