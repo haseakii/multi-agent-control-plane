@@ -61,3 +61,27 @@ it('preserves retry identity within the page if browser storage is unavailable',
     reused: true,
   });
 });
+it('freezes model settings with the pending prompt across reload and new conversation rounds', () => {
+  const f = fixture();
+  const original = f
+    .reload()
+    .prepare('a', ['one'], 'one', 'Keep working', { model: 'model-a', effort: 'high' });
+  const retry = f
+    .reload()
+    .prepare('a', ['one', 'two'], 'two', 'Keep working', { effort: 'high', model: 'model-a' });
+  expect(retry).toMatchObject({ reused: true, request: original.request });
+  expect(retry.request.sessionSettings).toEqual({ model: 'model-a', effort: 'high' });
+});
+it('does not reuse an idempotency key when the next prompt changes its model settings', () => {
+  const f = fixture();
+  const original = f.reload().prepare('a', ['one'], 'one', 'Keep working', { model: 'model-a' });
+  const changed = f
+    .reload()
+    .prepare('a', ['one', 'two'], 'two', 'Keep working', { model: 'model-b' });
+  expect(changed.reused).toBe(false);
+  expect(changed.request.key).not.toBe(original.request.key);
+  expect(changed.request.sessionSettings).toEqual({ model: 'model-b' });
+  const inherited = f.reload().prepare('a', ['one', 'two'], 'two', 'Keep working');
+  expect(inherited.reused).toBe(false);
+  expect(inherited.request.sessionSettings).toBeUndefined();
+});

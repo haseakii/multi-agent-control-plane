@@ -246,10 +246,11 @@ export const sendChat = (
   content: string,
   idempotencyKey: string,
   workspaceConfirmation?: WorkspaceConfirmation,
+  sessionSettings?: Record<string, string>,
 ) =>
   postJSON(
     `/api/tasks/${encodeURIComponent(id)}/chat`,
-    { content, idempotencyKey, workspaceConfirmation },
+    { content, idempotencyKey, workspaceConfirmation, sessionSettings },
     z.discriminatedUnion('kind', [
       z.object({ kind: z.literal('instruction'), instruction: Instruction }),
       z.object({ kind: z.literal('followup'), task: Task }),
@@ -511,6 +512,7 @@ export async function startTask(
             version,
             ...(mode === 'direct' ? { mode, agentId: bossId } : { bossAgentId: bossId }),
             workspaceConfirmation,
+            sessionSettings: submission.sessionSettings,
           },
           z.object({ task: Task }),
         );

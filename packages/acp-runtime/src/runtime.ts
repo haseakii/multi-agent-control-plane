@@ -1,5 +1,12 @@
 import * as acp from '@agentclientprotocol/sdk';
 import { randomUUID } from 'node:crypto';
+import { SessionSettingValuesSchema, type SessionSettingsSnapshot } from '@control-plane/core';
+import {
+  AcpSessionSettingsError,
+  legacyModelUpdate,
+  sessionSettingsFromResponse,
+  unavailableSessionSettings,
+} from './session-settings.js';
 import { promptUsage } from './usage.js';
 import { AcpTurnFailure, nativeTurnFailure } from './turn-failure.js';
 import { DenyByDefaultPermissionBroker } from './permission.js';
@@ -239,6 +246,9 @@ export class AcpRuntimeConnection {
   private readonly promptLifetimes = new Map<string, AbortController>();
   private stopped = false;
   private authState: AgentReadiness['auth'];
+  private readonly settings = new Map<string, SessionSettingsSnapshot>();
+  private readonly invalidSettings = new Set<string>();
+  private readonly changingSettings = new Set<string>();
 
   constructor(
     private readonly connection: acp.ClientConnection,
@@ -361,9 +371,9 @@ export class AcpRuntimeConnection {
       mcpServers: (input.mcpServers ?? []) as acp.McpServer[],
     });
 
-    return {
-      sessionId: String(response.sessionId),
-    };
+    const sessionId = String(response.sessionId);
+    this.recordSessionSettings(sessionId, response);
+    return { sessionId, settings: this.getSessionSettings(sessionId) };
   }
 
   async resumeSession(sessionId: string, input: NewSessionInput): Promise<SessionRef> {
@@ -371,16 +381,139 @@ export class AcpRuntimeConnection {
       throw new Error('Agent does not advertise loadSession capability.');
     }
 
-    await this.connection.agent.request(acp.methods.agent.session.load, {
+    const response = await this.connection.agent.request(acp.methods.agent.session.load, {
       sessionId,
       cwd: input.cwd,
       mcpServers: (input.mcpServers ?? []) as acp.McpServer[],
     });
 
-    return { sessionId };
+    this.recordSessionSettings(sessionId, response);
+    return { sessionId, settings: this.getSessionSettings(sessionId) };
+  }
+
+  getSessionSettings(sessionId: string): SessionSettingsSnapshot {
+    const snapshot = this.settings.get(sessionId) ?? unavailableSessionSettings();
+    if (this.invalidSettings.has(sessionId))
+      throw new AcpSessionSettingsError('invalid-advertisement', snapshot);
+    return structuredClone(snapshot);
+  }
+
+  async applySessionSettings(
+    sessionId: string,
+    values: Record<string, string>,
+  ): Promise<SessionSettingsSnapshot> {
+    const initial = this.getSessionSettings(sessionId);
+    if (this.stopped) throw new AcpSessionSettingsError('closed', initial);
+    if (this.promptQueues.has(sessionId) || this.changingSettings.has(sessionId))
+      throw new AcpSessionSettingsError('busy', initial);
+    const parsed = SessionSettingValuesSchema.safeParse(values);
+    if (!parsed.success) throw new AcpSessionSettingsError('invalid-values', initial);
+    const entries = Object.entries(parsed.data);
+    for (const [id] of entries)
+      if (!initial.options.some((option) => option.id === id))
+        throw new AcpSessionSettingsError('unsupported-option', initial);
+    entries.sort(([left], [right]) => {
+      const model = (id: string) =>
+        initial.options.find((option) => option.id === id)?.category === 'model' || id === 'model';
+      return Number(model(right)) - Number(model(left));
+    });
+
+    this.changingSettings.add(sessionId);
+    try {
+      for (const [id, value] of entries) {
+        // Changing the model may replace all dependent choices. Never validate a thought
+        // level only against the old model, and never reuse the old options after a reply.
+        const snapshot = this.getSessionSettings(sessionId);
+        const option = snapshot.options.find((candidate) => candidate.id === id);
+        if (!option) throw new AcpSessionSettingsError('unsupported-option', snapshot);
+        if (!option.options.some((candidate) => candidate.value === value))
+          throw new AcpSessionSettingsError('invalid-value', snapshot);
+        if (option.currentValue === value) continue;
+        let response: unknown;
+        try {
+          response =
+            snapshot.source === 'legacy-models'
+              ? await this.connection.agent.request<unknown>('session/set_model', {
+                  sessionId,
+                  modelId: value,
+                })
+              : await this.connection.agent.request(acp.methods.agent.session.setConfigOption, {
+                  sessionId,
+                  configId: id,
+                  value,
+                });
+        } catch {
+          throw new AcpSessionSettingsError('rejected', this.getSessionSettings(sessionId));
+        }
+        let updated: SessionSettingsSnapshot;
+        try {
+          updated = sessionSettingsFromResponse(response);
+        } catch {
+          this.invalidSettings.add(sessionId);
+          throw new AcpSessionSettingsError('invalid-advertisement', snapshot);
+        }
+        if (updated.source !== 'unavailable') this.recordSessionSettings(sessionId, response);
+        if (snapshot.source !== 'legacy-models' && updated.source !== 'config-options')
+          throw new AcpSessionSettingsError('unconfirmed', this.getSessionSettings(sessionId));
+        // Old set_model replies may be empty; only a genuine current_model_update or a
+        // complete models response can confirm them. An acknowledgement is not a readback.
+        const confirmed = this.getSessionSettings(sessionId);
+        if (confirmed.options.find((candidate) => candidate.id === id)?.currentValue !== value)
+          throw new AcpSessionSettingsError('unconfirmed', confirmed);
+      }
+      const confirmed = this.getSessionSettings(sessionId);
+      if (
+        entries.some(
+          ([id, value]) =>
+            confirmed.options.find((candidate) => candidate.id === id)?.currentValue !== value,
+        )
+      )
+        throw new AcpSessionSettingsError('unconfirmed', confirmed);
+      return confirmed;
+    } finally {
+      // Successful earlier changes remain real when a later setting fails. No rollback
+      // is claimed: callers can show the last confirmed state and retry deliberately.
+      this.changingSettings.delete(sessionId);
+    }
+  }
+
+  private recordSessionSettings(sessionId: string, response: unknown): void {
+    try {
+      const snapshot = sessionSettingsFromResponse(response);
+      this.settings.set(sessionId, snapshot);
+      this.invalidSettings.delete(sessionId);
+    } catch {
+      this.invalidSettings.add(sessionId);
+      throw new AcpSessionSettingsError(
+        'invalid-advertisement',
+        this.settings.get(sessionId) ?? unavailableSessionSettings(),
+      );
+    }
+  }
+
+  async handleLegacyModelUpdate(sessionId: string, value: unknown): Promise<void> {
+    const previous = this.settings.get(sessionId);
+    if (!previous || previous.source !== 'legacy-models') return;
+    try {
+      this.settings.set(sessionId, legacyModelUpdate(previous, value));
+      this.invalidSettings.delete(sessionId);
+      const event: AgentEvent = {
+        type: 'status',
+        sessionId,
+        updateType: 'config_option_update',
+        payload: this.getSessionSettings(sessionId),
+      };
+      this.promptQueues.get(sessionId)?.push(event);
+      await this.emit(event);
+    } catch {
+      this.invalidSettings.add(sessionId);
+    }
   }
 
   async *prompt(sessionId: string, text: string): AsyncGenerator<AgentEvent, void, void> {
+    if (this.changingSettings.has(sessionId))
+      throw new AcpSessionSettingsError('busy', this.getSessionSettings(sessionId));
+    if (this.invalidSettings.has(sessionId)) this.getSessionSettings(sessionId);
     if (this.promptQueues.has(sessionId)) {
       throw new Error(`A prompt is already active for session ${sessionId}.`);
     }
@@ -477,6 +610,28 @@ export class AcpRuntimeConnection {
     params: acp.SessionNotification,
     wire?: PermissionWireShape,
   ): Promise<void> {
+    if (params.update.sessionUpdate === 'config_option_update') {
+      let event: AgentEvent;
+      try {
+        this.recordSessionSettings(params.sessionId, params.update);
+        event = {
+          type: 'status',
+          sessionId: params.sessionId,
+          updateType: 'config_option_update',
+          payload: this.getSessionSettings(params.sessionId),
+        };
+      } catch {
+        event = {
+          type: 'status',
+          sessionId: params.sessionId,
+          updateType: 'session_settings_invalid',
+          payload: { code: 'invalid-advertisement' },
+        };
+      }
+      this.promptQueues.get(event.sessionId)?.push(event);
+      await this.emit(event);
+      return;
+    }
     if (
       this.promptLifetimes.get(params.sessionId)?.signal.aborted === false &&
       ['tool_call', 'tool_call_update'].includes(params.update.sessionUpdate)
@@ -588,6 +743,23 @@ export class AcpClientRuntime {
             }
             if ('method' in message && message.method === 'session/update') {
               const params = message.params as acp.SessionNotification;
+              // The current SDK no longer accepts this legacy notification variant.
+              // Consume it before SDK validation, retaining only the public model ID.
+              const update = params?.update as unknown as Record<string, unknown> | undefined;
+              if (update?.sessionUpdate === 'config_option_update') {
+                // SDK permissive parsing can skip malformed individual selectors. Validate
+                // the complete raw snapshot instead, so partial metadata never looks complete.
+                if (typeof params.sessionId === 'string' && params.sessionId.length <= 256)
+                  void runtimeConnection?.handleSessionUpdate(params).catch(() => undefined);
+                return;
+              }
+              if (update?.sessionUpdate === 'current_model_update') {
+                if (typeof params.sessionId === 'string' && params.sessionId.length <= 256)
+                  void runtimeConnection
+                    ?.handleLegacyModelUpdate(params.sessionId, update.currentModelId)
+                    .catch(() => undefined);
+                return;
+              }
               if (
                 params?.update &&
                 ['tool_call', 'tool_call_update'].includes(params.update.sessionUpdate)

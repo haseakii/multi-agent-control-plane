@@ -77,7 +77,7 @@ it('preserves legacy assignment directories through migration, reopen and backup
     expect(storage.sqlite.pragma('foreign_key_check')).toEqual([]);
     storage.close();
     await createConsistentSqliteSnapshot(filename, join(root, 'snapshot.sqlite'));
-    expect(inspectSqliteSnapshot(join(root, 'snapshot.sqlite')).migrations).toHaveLength(15);
+    expect(inspectSqliteSnapshot(join(root, 'snapshot.sqlite')).migrations).toHaveLength(16);
     storage = openSqliteStorage({ filename: join(root, 'snapshot.sqlite') });
     expect(storage.repositories.assignmentWorkspaces.get('a')?.workspaceId).toBe('w');
   } finally {

@@ -88,4 +88,5 @@ export type NewSessionInput = {
 
 export type SessionRef = {
   sessionId: string;
+  settings?: import('@control-plane/core').SessionSettingsSnapshot;
 };

@@ -1,5 +1,9 @@
 import * as acp from '@agentclientprotocol/sdk';
-import type { AgentDefinition } from '@control-plane/core';
+import {
+  SessionSettingValuesSchema,
+  type AgentDefinition,
+  type SessionSettingsSnapshot,
+} from '@control-plane/core';
 import type { ProcessHandle, Runner } from '@control-plane/runner';
 import { AcpClientRuntime, type AcpRuntimeConnection } from './runtime.js';
 import type { AgentReadiness, AgentNegotiation } from './types.js';
@@ -20,6 +24,11 @@ export type AgentRuntimeObservation = {
 export interface AgentRuntimeControl {
   probe(definition: AgentDefinition): Promise<AgentRuntimeObservation>;
   authenticate(definition: AgentDefinition, methodId: string): Promise<AgentRuntimeObservation>;
+  sessionSettings?(
+    definition: AgentDefinition,
+    cwd: string,
+    values?: Record<string, string>,
+  ): Promise<SessionSettingsSnapshot>;
   close?(): void;
 }
 
@@ -130,6 +139,20 @@ export class ProcessAgentRuntimeControl implements AgentRuntimeControl {
         );
       }
       return observation(connection);
+    });
+  }
+
+  async sessionSettings(
+    definition: AgentDefinition,
+    cwd: string,
+    values: Record<string, string> = {},
+  ): Promise<SessionSettingsSnapshot> {
+    const settings = SessionSettingValuesSchema.parse(values);
+    return this.withConnection(definition, this.probeTimeoutMs, async (connection) => {
+      // This discovery/validation session has no MCP servers and no active prompt;
+      // runtime permission handling therefore refuses every permission request.
+      const session = await connection.newSession({ cwd, mcpServers: [] });
+      return connection.applySessionSettings(session.sessionId, settings);
     });
   }
 

@@ -1,7 +1,11 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { AcpClientRuntime, type AcpRuntimeConnection } from '@control-plane/acp-runtime';
+import {
+  AcpClientRuntime,
+  AcpSessionSettingsError,
+  type AcpRuntimeConnection,
+} from '@control-plane/acp-runtime';
 import {
   createFleetMcpHttpProxyServer,
   type FleetControlServices,
@@ -61,6 +65,12 @@ async function fixture(persistent = false) {
     return {
       capabilities: {},
       newSession: async () => ({ sessionId: String(processNumber) }),
+      getSessionSettings: () => ({ source: 'unavailable' as const, options: [] }),
+      applySessionSettings: async (_sessionId: string, values: Record<string, string>) => {
+        // Delivery peers have no configurable model controls; native defaults remain valid.
+        if (Object.keys(values).length) throw new AcpSessionSettingsError('unsupported-option');
+        return { source: 'unavailable' as const, options: [] };
+      },
       close: () => closed.resolve(),
       prompt: async function* (_sessionId: string, text: string) {
         const release = gate();
@@ -1102,7 +1112,7 @@ it('C5 repairs a committed non-child result after SQLite reopen without replayin
   ).toHaveLength(2);
   expect(
     storage.sqlite.prepare('select count(*) as count from __drizzle_migrations').get(),
-  ).toEqual({ count: 15 });
+  ).toEqual({ count: 16 });
   const notifyAgain = resumed as unknown as typeof notifier;
   await notifyAgain.notifyParent(resumed.getTask('task-b'), 'b');
   expect(
@@ -1459,7 +1469,7 @@ it('C6 preserves per-task idempotency through SQLite reopen and a new sender att
   ).toHaveLength(1);
   expect(
     storage.sqlite.prepare('select count(*) as count from __drizzle_migrations').get(),
-  ).toEqual({ count: 15 });
+  ).toEqual({ count: 16 });
   f.prompts[3]!.release.resolve();
   await sender.completion;
 });

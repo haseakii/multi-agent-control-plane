@@ -3,6 +3,7 @@ import { composerDrafts, type createComposerDrafts } from './composer-drafts';
 import { workspaceDraftIntent } from './workspace-draft';
 import type { WorkspaceSelection } from './workspace-api';
 import type { DraftSubmission } from './draft-submission';
+import { SessionSettingValues } from './session-setting-values';
 const Saved = z
   .object({
     workspace: z.string().max(16384),
@@ -12,6 +13,8 @@ const Saved = z
         taskId: z.string().min(1).max(128).optional(),
         createKey: z.string().uuid().optional(),
         creationObjective: z.string().min(1).max(100000).optional(),
+        sessionSettings: SessionSettingValues.optional(),
+        settingsAgentId: z.string().min(1).max(128).optional(),
       })
       .strict(),
   })

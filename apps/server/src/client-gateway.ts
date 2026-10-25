@@ -14,6 +14,7 @@ import {
 import type { SqliteStorage } from '@control-plane/storage';
 import type { ControlPlaneRuntime } from './runtime-composition.js';
 import { TaskControlError } from './task-control.js';
+import { SessionSettingsError } from './session-settings.js';
 
 export type ClientGatewayOptions = {
   storage: SqliteStorage;
@@ -126,6 +127,8 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
           break;
         }
         case 'collaboration_list_agents': {
+          const value = clientToolDefinitions[1].schema.parse(input);
+          if (value.projectId) authorize(value.projectId, ['control_discover_agents']);
           if (
             !identity.projects.some(
               (p) =>
@@ -134,14 +137,24 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
             )
           )
             throw new TaskControlError(403, 'Current project policy denies agent discovery.');
+          if (value.refreshSettings)
+            await runtime.sessionSettings.inspect(value.agentId!, value.projectId!);
           result = {
-            agents: repo.agentDefinitions.list().map((a) => ({
-              id: a.id,
-              name: a.name,
-              enabled: a.enabled,
-              capabilities: a.capabilities,
-              readiness: runtime.agentControl.state(a.id).readiness,
-            })),
+            agents: repo.agentDefinitions
+              .list()
+              .filter((a) => !value.agentId || a.id === value.agentId)
+              .map((a) => {
+                const observed = runtime.sessionSettings.read(a.id, value.projectId);
+                return {
+                  id: a.id,
+                  name: a.name,
+                  enabled: a.enabled,
+                  capabilities: a.capabilities,
+                  readiness: runtime.agentControl.state(a.id).readiness,
+                  settings: observed.settings,
+                  defaults: observed.defaults,
+                };
+              }),
           };
           break;
         }
@@ -253,6 +266,9 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
           const { latestTaskId, diagnostic } = runtime.taskRecovery(task.id);
           result = {
             task: card(current),
+            sessionSettings: runtime.sessionSettings.repository.getTask(task.id) ?? {
+              state: 'unavailable',
+            },
             executionActive,
             nextTaskId: following,
             latestAttempt: latestAttempt
@@ -311,6 +327,9 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
             task.id,
             {
               content: value.content,
+              ...(value.sessionSettings !== undefined
+                ? { sessionSettings: value.sessionSettings }
+                : {}),
               idempotencyKey: digest(JSON.stringify([identity.id, value.idempotencyKey])),
               workspaceConfirmation: runtime.resolveClientWorkspaceConfirmation(
                 task.projectId,
@@ -392,6 +411,8 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
     } catch (error) {
       audit(error instanceof TaskControlError && error.statusCode === 403 ? 'denied' : 'failed');
       if (error instanceof TaskControlError)
+        return reply.code(error.statusCode).send({ error: error.message });
+      if (error instanceof SessionSettingsError)
         return reply.code(error.statusCode).send({ error: error.message });
       if (error instanceof z.ZodError)
         return reply.code(400).send({ error: 'Invalid collaboration request.' });

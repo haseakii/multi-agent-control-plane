@@ -360,7 +360,10 @@ describe('AcpClientRuntime', () => {
     expect(connection.capabilities.loadSession).toBe(true);
 
     const session = await connection.newSession({ cwd: '/workspace' });
-    expect(session).toEqual({ sessionId: 'session-1' });
+    expect(session).toEqual({
+      sessionId: 'session-1',
+      settings: { source: 'unavailable', options: [] },
+    });
 
     const promptEvents: AgentEvent[] = [];
     for await (const event of connection.prompt(session.sessionId, 'hello')) {

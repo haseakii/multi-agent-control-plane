@@ -3,6 +3,23 @@ import { sql } from 'drizzle-orm';
 
 const payload = () => text('payload').notNull();
 
+export const agentSessionDefaults = sqliteTable('agent_session_defaults', {
+  agentId: text('agent_id').primaryKey().notNull(),
+  revision: integer('revision').notNull(),
+  valuesJson: text('values_json').notNull(),
+});
+
+export const taskSessionSettings = sqliteTable(
+  'task_session_settings',
+  {
+    taskId: text('task_id').primaryKey().notNull(),
+    agentId: text('agent_id').notNull(),
+    state: text('state').notNull(),
+    payload: payload(),
+  },
+  (table) => [index('task_session_settings_agent_idx').on(table.agentId)],
+);
+
 export const workspaceCleanups = sqliteTable(
   'workspace_cleanups',
   {

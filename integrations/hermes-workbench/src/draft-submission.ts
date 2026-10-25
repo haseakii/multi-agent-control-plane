@@ -4,6 +4,8 @@ export interface DraftSubmission {
   taskId?: string;
   createKey?: string;
   creationObjective?: string;
+  sessionSettings?: Record<string, string>;
+  settingsAgentId?: string;
 }
 
 interface DraftTask {

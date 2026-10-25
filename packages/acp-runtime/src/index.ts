@@ -6,5 +6,6 @@ export * from './native-permission-resolver.js';
 export * from './registry.js';
 export * from './runtime.js';
 export * from './types.js';
+export * from './session-settings.js';
 export * from './usage.js';
 export * from './turn-failure.js';

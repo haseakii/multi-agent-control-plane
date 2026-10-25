@@ -118,6 +118,37 @@ const decide = (f: Awaited<ReturnType<typeof fixture>>, id: string, action = 'ap
   f.app.inject({ method: 'POST', url: `/api/approvals/${id}/${action}`, payload: {} });
 
 describe('durable ACP approval ownership', () => {
+  it('automatically approves an exact large native create with bounded fingerprints under the existing workspace policy', async () => {
+    const f = await fixture(undefined, true);
+    const { id, revision, updatedAt, ...rules } = f.runtime.getProjectPolicy('project');
+    f.runtime.setProjectPolicy('project', {
+      ...rules,
+      expectedRevision: revision,
+      agentPermissions: { workspaceFiles: 'auto', commands: 'ask', outsideWorkspace: 'ask' },
+    });
+    const submitted = f.runtime.submitGoal('project', { objective: 'native-create-large' });
+    await expect
+      .poll(() => f.runtime.getTask(submitted.task.id).state, { timeout: 6000 })
+      .toBe('completed');
+    const approval = f.storage.repositories.approvals
+      .list()
+      .find((a) => a.taskId === submitted.task.id)!;
+    expect(approval).toMatchObject({
+      state: 'approved',
+      decisionActor: 'project-policy:1',
+      enforcementMode: 'cooperative',
+      acp: { review: { status: 'complete', tool: 'create_file', action: 'file.write' } },
+    });
+    expect(JSON.stringify(approval.acp?.review)).toContain('file-content bytes=');
+    expect(readFileSync(join(executionDirectory(f.storage), 'auto-policy.txt'), 'utf8')).toBe(
+      '<p>New page content</p>\n'.repeat(1600),
+    );
+    expect(f.runtime.getProjectPolicy('project').agentPermissions).toEqual({
+      workspaceFiles: 'auto',
+      commands: 'ask',
+      outsideWorkspace: 'ask',
+    });
+  });
   it('automatically approves a complete large native edit and stores bounded fingerprints', async () => {
     const f = await fixture(undefined, true);
     const { id, revision, updatedAt, ...rules } = f.runtime.getProjectPolicy('project');

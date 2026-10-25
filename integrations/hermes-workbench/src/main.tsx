@@ -85,6 +85,14 @@ import {
 import '@/styles/global.css';
 import s from './workbench.module.css';
 import { AgentConnections } from './agent-connections';
+import { ComposerRuntimeSettings, TaskRuntimeSettings } from './agent-session-settings';
+import {
+  canApplyNextSessionSettings,
+  sameSessionValues,
+  type SessionSettingValuesData,
+} from './session-setting-values';
+import { readTaskExecutionActive } from './session-settings';
+import { conversationControlKeys } from './conversation-control-keys';
 import { AgentPermissions } from './agent-permissions';
 import { ExecutionDetails } from './execution-details';
 import { TaskFeedback } from './task-feedback';
@@ -386,6 +394,9 @@ function Workbench() {
     writeExecutionPreferences(next);
   }, []);
   const [sending, setSending] = useState(false);
+  const [runtimeOverrides, setRuntimeOverrides] = useState<
+    Record<string, SessionSettingValuesData | undefined>
+  >({});
   const [submissionPersisted, setSubmissionPersisted] = useState(true);
   const [content, setContent] = useState<Record<string, string>>({});
   const [previewErrors, setPreviewErrors] = useState<Record<string, string>>({});
@@ -567,6 +578,29 @@ function Workbench() {
     ? { kind: 'saved-project', projectId: editingDraft.projectId }
     : workspaceChoice;
   const conversation = rounds[0];
+  const controlKeys =
+    root && conversation ? conversationControlKeys(root.id, conversation.id) : undefined;
+  const goalSettingsKey = `${goalDraftKey}:${bossId}:${JSON.stringify(goalWorkspace)}`;
+  const savedGoalSettings = goalSubmissions.read(goalDraftKey, goalWorkspace);
+  const goalSettings = Object.prototype.hasOwnProperty.call(runtimeOverrides, goalSettingsKey)
+    ? runtimeOverrides[goalSettingsKey]
+    : savedGoalSettings?.settingsAgentId === bossId
+      ? savedGoalSettings.sessionSettings
+      : undefined;
+  const followSettingsKey = conversation ? `follow:${conversation.id}` : '';
+  const followSettings = Object.prototype.hasOwnProperty.call(runtimeOverrides, followSettingsKey)
+    ? runtimeOverrides[followSettingsKey]
+    : conversation
+      ? followUpSubmissions.read(conversation.id)?.sessionSettings
+      : undefined;
+  const currentAgentId =
+    root?.ownerAgentId ??
+    snapshot?.assignments
+      .filter((assignment) => assignment.taskId === root?.id)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]?.agentId;
+  const currentAgentName =
+    snapshot?.agents.find((agent) => agent.definition.id === currentAgentId)?.definition.name ??
+    currentAgentId;
   const currentProject = snapshot?.projects.find((project) => project.id === root?.projectId);
   const roots = snapshot ? conversationList(snapshot) : [];
   const indexedConversations = roots.map((task) => {
@@ -700,6 +734,8 @@ function Workbench() {
                   : `hermes-${crypto.randomUUID()}`,
               createKey: crypto.randomUUID(),
               creationObjective: text.trim(),
+              sessionSettings: goalSettings,
+              settingsAgentId: bossId,
             });
       const saveProgress = () => {
         const saved = goalSubmissions.write(goalDraftKey, goalWorkspace, submission.current!);
@@ -730,6 +766,11 @@ function Workbench() {
             : '暂时没有符合当前执行方式的成员。请在“协作成员”中检查连接和登录，草稿已保留。',
         );
       }
+      // Accepted starts were reconciled above. The still-editable draft can use
+      // the current choice; freeze it before the start request is issued.
+      submission.current.sessionSettings = goalSettings;
+      submission.current.settingsAgentId = bossId;
+      saveProgress();
       if (!editingDraft) {
         await resolveWorkspaceProject(
           workspaceChoice,
@@ -814,6 +855,9 @@ function Workbench() {
             throw new Error('发送回执与当前内容不一致，请核对会话记录；当前文字尚未发送。');
           followUpSubmissions.clear(conversation.id);
           composerDrafts.clear(`hermes-followup-${conversation.id}`);
+          if (!sameSessionValues(previous.sessionSettings, followSettings))
+            setActionError('上一条追问已被接收。新选择的运行设置仍保留，供下一次发送使用。');
+          else setRuntimeOverrides((saved) => ({ ...saved, [followSettingsKey]: undefined }));
           await refresh();
           return;
         }
@@ -821,6 +865,10 @@ function Workbench() {
       // An in-flight instruction uses the already approved workspace. A new
       // follow-up execution still requires the existing directory confirmation.
       const target = source ?? latest;
+      const canChangeSettings = canApplyNextSessionSettings(
+        terminal(target),
+        terminal(target) ? await readTaskExecutionActive(target.id) : true,
+      );
       const confirmation = terminal(target)
         ? await confirmForProject(target.projectId, '发送')
         : undefined;
@@ -829,9 +877,22 @@ function Workbench() {
         currentRounds.map((round) => round.id),
         latest.id,
         text,
+        canChangeSettings ? followSettings : undefined,
       );
-      await sendChat(pending.taskId, pending.text, pending.key, confirmation);
+      await sendChat(
+        pending.taskId,
+        pending.text,
+        pending.key,
+        confirmation,
+        pending.sessionSettings,
+      );
       followUpSubmissions.clear(conversation.id);
+      if (canChangeSettings)
+        setRuntimeOverrides((previous) => ({ ...previous, [followSettingsKey]: undefined }));
+      else if (followSettings)
+        setActionError(
+          '补充要求已按本轮设置发送；你选择的下轮设置已保留，执行结束后的追问再使用。',
+        );
       composerDrafts.clear(`hermes-followup-${conversation.id}`);
       await refresh();
     } catch (e) {
@@ -1273,6 +1334,20 @@ function Workbench() {
                   onInspect={() => openConnections(bossId)}
                 />
               )}
+              {bossId && (
+                <ComposerRuntimeSettings
+                  agentId={bossId}
+                  agentName={selectedMemberName}
+                  projectId={
+                    goalWorkspace.kind === 'saved-project' ? goalWorkspace.projectId : undefined
+                  }
+                  values={goalSettings}
+                  disabled={sending}
+                  onChange={(values) =>
+                    setRuntimeOverrides((previous) => ({ ...previous, [goalSettingsKey]: values }))
+                  }
+                />
+              )}
               <GoalComposer
                 key={`${editingDraft?.id ?? 'new'}-${nonce}`}
                 storageKey={goalDraftKey}
@@ -1619,9 +1694,27 @@ function Workbench() {
                       </button>
                     )}
                   </div>
+                  {conversation && currentAgentId && currentAgentName && (
+                    <TaskRuntimeSettings
+                      key={controlKeys!.runtimeSettings}
+                      taskId={root.id}
+                      agentId={currentAgentId}
+                      agentName={currentAgentName}
+                      projectId={root.projectId}
+                      values={followSettings}
+                      disabled={sending}
+                      settingsLocked={!terminal(root)}
+                      onChange={(values) =>
+                        setRuntimeOverrides((previous) => ({
+                          ...previous,
+                          [followSettingsKey]: values,
+                        }))
+                      }
+                    />
+                  )}
                   {conversation && (
                     <FollowUpComposer
-                      key={conversation.id}
+                      key={controlKeys!.followUpComposer}
                       conversationId={conversation.id}
                       busy={busy}
                       paused={!terminal(root) && (root.state === 'blocked' || recoverable)}
@@ -1729,6 +1822,10 @@ function Workbench() {
           initialAdd={connectionAdd}
           selectedMemberId={!root || editingDraft ? bossId : undefined}
           selectingForDraft={!root || !!editingDraft}
+          projectId={
+            root?.projectId ??
+            (goalWorkspace.kind === 'saved-project' ? goalWorkspace.projectId : undefined)
+          }
           onClose={() => setConnectionsOpen(false)}
           onChanged={refresh}
           onOpenTask={(taskId) => {

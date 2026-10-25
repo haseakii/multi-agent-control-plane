@@ -6,3 +6,4 @@ export * from './secrets.js';
 export * from './backup.js';
 export * from './context-search.js';
 export * from './agent-references.js';
+export * from './session-settings.js';

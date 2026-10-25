@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { SessionSettingValuesSchema } from '@control-plane/core';
 
 const Id = z.string().trim().min(1).max(128);
 const TaskId = z.object({ taskId: Id }).strict();
@@ -9,6 +10,7 @@ export const ClientSubmitSchema = z
     title: z.string().trim().min(1).max(256).optional(),
     objective: z.string().trim().min(1).max(32_000),
     idempotencyKey: Id,
+    sessionSettings: SessionSettingValuesSchema.optional(),
   })
   .strict();
 export const ClientContinueSchema = z
@@ -16,6 +18,7 @@ export const ClientContinueSchema = z
     taskId: Id,
     content: z.string().trim().min(1).max(4000),
     idempotencyKey: Id,
+    sessionSettings: SessionSettingValuesSchema.optional(),
   })
   .strict();
 
@@ -31,8 +34,18 @@ export const clientToolDefinitions = [
   {
     name: 'collaboration_list_agents',
     description:
-      'Discover registered collaboration agents and current readiness. Agent names are choices, not domain roles. Does not log in or send a model prompt.',
-    schema: z.object({}).strict(),
+      'Discover registered collaboration agents, readiness, advertised model controls and saved defaults. Use projectId and agentId with refreshSettings=true to read real ACP settings without logging in or sending a prompt. Only advertised controls are selectable; permission modes remain unchanged.',
+    schema: z
+      .object({
+        projectId: Id.optional(),
+        agentId: Id.optional(),
+        refreshSettings: z.boolean().optional(),
+      })
+      .strict()
+      .refine(
+        (value) => !value.refreshSettings || !!(value.projectId && value.agentId),
+        'Refreshing agent settings requires a projectId and an agentId.',
+      ),
     readOnly: true,
   },
   {
@@ -46,7 +59,7 @@ export const clientToolDefinitions = [
   {
     name: 'collaboration_submit_task',
     description:
-      'Delegate a real task directly to an eligible ACP agent in an authorized project. Returns promptly with a durable task ID; use get_task to follow progress. Use a new idempotencyKey per intended submission and reuse it only for retries. Source code is merged only through the existing human review workflow.',
+      'Delegate a real task directly to an eligible ACP agent in an authorized project. Optional sessionSettings contains only advertised model controls read with list_agents. Returns promptly with a durable task ID; use get_task to follow progress and confirmed settings. Use a new idempotencyKey per intended submission and reuse it only for retries. Source code is merged only through the existing human review workflow.',
     schema: ClientSubmitSchema,
     readOnly: false,
   },

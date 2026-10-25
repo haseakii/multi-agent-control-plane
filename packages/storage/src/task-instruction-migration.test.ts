@@ -60,7 +60,7 @@ it('upgrades a real seven-migration database, preserves task history and persist
     storage = openSqliteStorage({ filename });
     expect(
       storage.sqlite.prepare('SELECT COUNT(*) AS count FROM __drizzle_migrations').get(),
-    ).toEqual({ count: 15 });
+    ).toEqual({ count: 16 });
     expect(storage.sqlite.prepare('SELECT payload FROM tasks').all()).toEqual(original);
     expect(storage.sqlite.prepare('SELECT payload FROM events').all()).toEqual(events);
     storage.repositories.taskInstructions.upsert({
@@ -99,7 +99,7 @@ it('upgrades a real seven-migration database, preserves task history and persist
     expect(storage.sqlite.pragma('foreign_key_check')).toEqual([]);
     storage.close();
     await createConsistentSqliteSnapshot(filename, join(root, 'snapshot.sqlite'));
-    expect(inspectSqliteSnapshot(join(root, 'snapshot.sqlite')).migrations).toHaveLength(15);
+    expect(inspectSqliteSnapshot(join(root, 'snapshot.sqlite')).migrations).toHaveLength(16);
     storage = openSqliteStorage({ filename: join(root, 'snapshot.sqlite') });
     expect(storage.repositories.taskInstructions.get('instruction-test')?.content).toBe(
       'Durable input',

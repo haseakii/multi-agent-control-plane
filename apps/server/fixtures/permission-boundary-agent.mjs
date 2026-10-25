@@ -50,6 +50,12 @@ acp
         call.content[0].newText = call.rawInput.ReplacementContent;
       }
       writeFileSync(target,'before');
+      if (mode === 'native-create-large') {
+        call.title = 'Run create_file?';
+        call.rawInput = {TargetFile: target, CodeContent: '<p>New page content</p>\n'.repeat(1600),
+          Overwrite: true, Description: 'Create a large static page'};
+        call.content = [{type:'diff', path:target, newText:call.rawInput.CodeContent, _meta:{kind:'add'}}];
+      }
     }
     if (mode === 'sdk-filter') {
       call.title = 42;
@@ -97,7 +103,7 @@ acp
         : undefined;
     const response = await request;
     if(process.argv.includes('--native-edit') && response.outcome.outcome==='selected')
-      writeFileSync(join(cwd,'auto-policy.txt'),call.rawInput.ReplacementContent);
+      writeFileSync(join(cwd,'auto-policy.txt'),call.rawInput.ReplacementContent ?? call.rawInput.CodeContent);
     if (concurrent)
       appendFileSync(
         join(cwd, 'permission-ack.jsonl'),

@@ -2,7 +2,7 @@ import { TaskInstructionError, ProjectMemoryError } from '@control-plane/task-en
 import { WorkspaceReviewError } from '@control-plane/workspace';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
-import { ExecutionWorkspaceModeSchema } from '@control-plane/core';
+import { ExecutionWorkspaceModeSchema, SessionSettingValuesSchema } from '@control-plane/core';
 import {
   PotentialSecretError,
   SensitiveApprovalReadError,
@@ -14,6 +14,7 @@ import type { ControlPlaneRuntime } from './runtime-composition.js';
 import { registerProjectEventStream } from './project-event-stream.js';
 
 import { TaskControlError } from './task-control-error.js';
+import { SessionSettingsError } from './session-settings.js';
 export { TaskControlError } from './task-control-error.js';
 
 export const CreateProjectSchema = z
@@ -45,12 +46,17 @@ export const FollowUpTaskSchema = z
     content: z.string().trim().min(1).max(8000),
     idempotencyKey: z.string().min(1).max(128),
     workspaceConfirmation: WorkspaceConfirmationSchema.optional(),
+    sessionSettings: SessionSettingValuesSchema.optional(),
   })
   .strict();
 export const FollowUpLinkSchema = z
   .object({
     sourceTaskId: z.string().min(1),
     conversationRootTaskId: z.string().min(1),
+    settingsHash: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
   })
   .strict();
 export const WorkspaceModeUpdateSchema = z.object({ mode: ExecutionWorkspaceModeSchema }).strict();
@@ -59,6 +65,7 @@ export const SubmitGoalSchema = z
     title: z.string().trim().min(1).max(256).optional(),
     objective: z.string().trim().min(1).max(100_000),
     workspaceConfirmation: WorkspaceConfirmationSchema.optional(),
+    sessionSettings: SessionSettingValuesSchema.optional(),
   })
   .strict();
 const ApprovalDecisionSchema = z
@@ -66,6 +73,8 @@ const ApprovalDecisionSchema = z
   .strict();
 
 function sendError(reply: FastifyReply, error: unknown) {
+  if (error instanceof SessionSettingsError)
+    return reply.code(error.statusCode).send({ error: error.message });
   if (error instanceof WorkspaceReviewError) return reply.code(409).send({ error: error.message });
   if (error instanceof ProjectMemoryError) return reply.code(409).send({ error: error.message });
   if (error instanceof TaskInstructionError)
@@ -95,6 +104,53 @@ export function registerTaskControlRoutes(
   service: ControlPlaneRuntime,
 ): void {
   registerProjectEventStream(app, (projectId) => service.projectEvents(projectId));
+  const memberSettingsParams = z.object({ id: z.string().min(1).max(128) }).strict();
+  const memberSettingsQuery = z
+    .object({ projectId: z.string().min(1).max(128).optional() })
+    .strict();
+  app.get('/api/agents/:id/session-settings', async (request, reply) => {
+    try {
+      const { id } = memberSettingsParams.parse(request.params);
+      const { projectId } = memberSettingsQuery.parse(request.query);
+      reply.header('cache-control', 'no-store');
+      return service.sessionSettings.read(id, projectId);
+    } catch (error) {
+      return sendError(reply, error);
+    }
+  });
+  app.post('/api/agents/:id/session-settings', async (request, reply) => {
+    try {
+      const { id } = memberSettingsParams.parse(request.params);
+      const { projectId, values } = z
+        .object({
+          projectId: z.string().min(1).max(128).optional(),
+          values: SessionSettingValuesSchema.optional(),
+        })
+        .strict()
+        .parse(request.body ?? {});
+      return await service.sessionSettings.inspect(id, projectId, values);
+    } catch (error) {
+      return sendError(reply, error);
+    }
+  });
+  app.put('/api/agents/:id/session-settings/defaults', async (request, reply) => {
+    try {
+      const { id } = memberSettingsParams.parse(request.params);
+      return service.sessionSettings.saveDefaults(id, request.body);
+    } catch (error) {
+      return sendError(reply, error);
+    }
+  });
+  app.get('/api/tasks/:id/session-settings', async (request, reply) => {
+    try {
+      const { id } = memberSettingsParams.parse(request.params);
+      service.getTask(id);
+      reply.header('cache-control', 'no-store');
+      return service.sessionSettings.repository.getTask(id) ?? { state: 'unavailable' };
+    } catch (error) {
+      return sendError(reply, error);
+    }
+  });
   app.get('/api/tasks/:id/recovery', async (request, reply) => {
     try {
       const { id } = z.object({ id: z.string().min(1).max(128) }).parse(request.params);

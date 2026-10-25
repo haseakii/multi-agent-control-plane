@@ -24,6 +24,7 @@ import {
 } from './agent-editor-draft';
 import { AgentQuickAdd } from './agent-quick-add';
 import { AgentManagement } from './agent-management';
+import { SessionSettingsControl } from './agent-session-settings';
 import { MemberOverviewReader } from './member-overview-reader';
 import { selectableAgents, type ExecutionMode } from './agent-selection';
 import { filterMembers, memberStatus, type MemberFilter } from './member-list';
@@ -79,6 +80,7 @@ export type AgentConnectionsProps = {
   onUse: (agentId: string, mode: ExecutionMode) => void;
   onOpenTask: (taskId: string) => void;
   activeAgentIds?: readonly string[];
+  projectId?: string;
 };
 
 /** Connection actions are deliberate user actions; opening this drawer only reads state. */
@@ -92,6 +94,7 @@ export function AgentConnections({
   onUse,
   onOpenTask,
   activeAgentIds,
+  projectId,
 }: AgentConnectionsProps) {
   const dialog = useRef<HTMLDialogElement>(null);
   const actionInFlight = useRef(false);
@@ -281,19 +284,27 @@ export function AgentConnections({
               刷新状态
             </button>
           </div>
-          {!editing && (
+          <nav className={s.views} aria-label="成员管理视图">
             <button
               type="button"
-              className={s.addMember}
+              aria-pressed={editing !== 'new'}
+              disabled={pending !== null || configBusy}
+              onClick={() => setEditing(null)}
+            >
+              已接入 <span>{agents.length}</span>
+            </button>
+            <button
+              type="button"
+              aria-pressed={editing === 'new'}
               disabled={loading || pending !== null || configBusy}
               onClick={() => {
                 setManual(false);
                 setEditing('new');
               }}
             >
-              {hasOnboardingDraft ? '继续接入草稿' : '＋ 接入本机协作者'}
+              {hasOnboardingDraft ? '添加成员 · 有草稿' : '＋ 添加成员'}
             </button>
-          )}
+          </nav>
           {error && (
             <p className={s.error} role="alert">
               {error}
@@ -408,7 +419,12 @@ export function AgentConnections({
               )}
             </section>
           )}
-          {(editing ? agents : visibleMembers).map((agent) => {
+          {(editing === 'new'
+            ? []
+            : editing
+              ? agents.filter((agent) => agent.definition.id === editing.definition.id)
+              : visibleMembers
+          ).map((agent) => {
             const id = agent.definition.id;
             const busy = active.has(id);
             const working = pending?.id === id;
@@ -517,6 +533,14 @@ export function AgentConnections({
                     )}
                   </div>
                 )}
+                <div className={s.actions}>
+                  <SessionSettingsControl
+                    agentId={id}
+                    agentName={agent.definition.name}
+                    projectId={projectId}
+                    disabled={disabled || editing !== null}
+                  />
+                </div>
                 <dl className={s.status}>
                   <div>
                     <dt>连接</dt>
@@ -655,7 +679,9 @@ export function AgentConnections({
           })}
         </div>
         <footer className={s.footer}>
-          选择成员后回到工作台填写目标；点击发送才开始执行。连接检查不会发送任务提示。
+          {editing === 'new'
+            ? '从产品目录选择或导入启动入口；接入后查看登录状态，再开始使用。'
+            : '选择成员后回到工作台填写目标；运行设置可为每位成员保存模型偏好。'}
         </footer>
       </div>
     </dialog>

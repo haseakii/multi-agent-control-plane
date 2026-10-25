@@ -44,7 +44,7 @@ it('upgrades existing event history with indexed selection, stable order and no 
       raw,
     );
     expect(storage.sqlite.prepare('SELECT COUNT(*) AS n FROM __drizzle_migrations').get()).toEqual({
-      n: 15,
+      n: 16,
     });
     expect(
       storage.repositories.events

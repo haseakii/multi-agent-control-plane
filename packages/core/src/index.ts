@@ -11,3 +11,4 @@ export * from './workspace-push.js';
 export * from './workspace-cleanup.js';
 export * from './message-delivery-view.js';
 export * from './task-record.js';
+export * from './session-settings.js';

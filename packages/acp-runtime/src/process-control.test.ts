@@ -26,6 +26,24 @@ function definition() {
 }
 
 describe('ProcessAgentRuntimeControl', () => {
+  it('discovers and validates model settings without prompts or MCP access, and releases the process', async () => {
+    const runner = new LocalRunner({ defaultStopGracePeriodMs: 100 });
+    const stop = vi.spyOn(runner, 'stop');
+    const control = new ProcessAgentRuntimeControl(runner, { probeTimeoutMs: 5_000 });
+    const snapshot = await control.sessionSettings(definition(), process.cwd(), { model: 'large' });
+    expect(snapshot).toMatchObject({
+      source: 'config-options',
+      options: [{ id: 'model', currentValue: 'large' }],
+    });
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(runner.status(stop.mock.calls[0]![0]).state).not.toBe('running');
+    await expect(
+      control.sessionSettings(definition(), process.cwd(), { model: 'unavailable' }),
+    ).rejects.toMatchObject({ code: 'invalid-value' });
+    expect(stop.mock.calls.every(([handle]) => runner.status(handle).state !== 'running')).toBe(
+      true,
+    );
+  });
   it('cancels pending authentication during shutdown and retains connection evidence on timeout', async () => {
     const runner = new LocalRunner({ defaultStopGracePeriodMs: 100 });
     const stop = vi.spyOn(runner, 'stop');
