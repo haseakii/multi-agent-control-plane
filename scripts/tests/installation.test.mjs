@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { expect, it, vi } from 'vitest';
 import {
   atomicJson,
@@ -11,6 +12,29 @@ import {
   operationFile,
   parseInstallation,
 } from '../lib/installation.mjs';
+it('copies a release from Unicode directories without aborting the Windows process', () => {
+  const root = fs.mkdtempSync(path.join(tmpdir(), 'release-copy-'));
+  try {
+    const source = path.join(root, '中文 发行包');
+    const target = path.join(root, '新机器 用户', 'version');
+    fs.mkdirSync(path.join(source, 'nested'), { recursive: true });
+    const bytes = Buffer.from('original release bytes');
+    fs.writeFileSync(path.join(source, 'nested', 'proof.txt'), bytes);
+    const code = `import {copyReleaseDirectory} from ${JSON.stringify(new URL('../lib/installation.mjs', import.meta.url).href)}; copyReleaseDirectory(process.argv[1],process.argv[2]);`;
+    const child = spawnSync(process.execPath, ['--input-type=module', '-e', code, source, target], {
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 10000,
+    });
+    expect(child.status, child.stderr || child.error?.message).toBe(0);
+    expect(fs.readFileSync(path.join(target, 'nested', 'proof.txt'))).toEqual(bytes);
+    expect(fs.readFileSync(path.join(source, 'nested', 'proof.txt'))).toEqual(bytes);
+  } finally {
+    if (!path.resolve(root).startsWith(path.resolve(tmpdir()) + path.sep + 'release-copy-'))
+      throw Error('Unexpected release copy fixture path');
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 function fixture() {
   const root = fs.mkdtempSync(path.join(tmpdir(), 'installation-flow-')),
     file = path.join(root, 'installation.json');

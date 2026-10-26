@@ -1,4 +1,4 @@
-Control Plane 本机使用与恢复说明（Windows x64，2026-10-25）
+Control Plane 本机使用与恢复说明（Windows x64，2026-10-26）
 
 日常入口（优先使用）
 1. 完整包首次使用双击“打开工作台.cmd”，准备私有安装目录并在后台打开网页。无需安装系统 Node、IDE 或 pnpm。
@@ -59,6 +59,9 @@ legacy-run 必须直接包含 server.json 和 data/state.sqlite。只在私有�
 升级时保留旧程序、旧数据和停机一致备份，在新目录准备目标版本；恢复工具检查迁移哈希兼容性。不要直接覆盖现有运行目录或假定可以回退。禁止旧包直接打开新版本数据库；不保证任意跨版本恢复。
 
 故障处理
+- Unexpected release file: data/...：当前副本已包含运行数据，不能直接当作干净安装包。保留整个原目录，从原 ZIP 重新完整解压到新文件夹后安装，不要删除 data。
+- 首装中断后目标目录已有文件但无完整安装记录：原件继续保留，可通过“打开工作台.cmd --directory 新的空安装目录”选择其他位置；不手工覆盖旧目录。
+- CP_LAUNCH_FAILED：按随包 STARTUP-HELP.zh-CN.txt 检查包内 node.exe 及直接启动命令，提供完整输出和目录路径；错误提示本身不代表必须使用管理员权限。
 - 端口占用：保留原服务，修改本次配置的 port 后重试；程序不终止占用进程。
 - CP_RUNTIME_MISSING / CP_ENTRY_MISSING：重新复制完整交付目录，保留 STARTUP-HELP.zh-CN.txt；不会自动下载或安装。
 - 目录不可写或锁定：改用新的可写私有 dataDir，保留原数据；不要关闭安全保护或修改 ACL 绕过问题。

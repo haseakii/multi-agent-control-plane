@@ -63,6 +63,12 @@ run('scripts/build-windows-release.mjs', [
   web,
 ]);
 const verified = validatePackage(output);
+run('scripts/verify-windows-installation.mjs', [
+  '--directory',
+  output,
+  '--evidence',
+  path.join(evidence, 'first-install'),
+]);
 fs.writeFileSync(
   path.join(evidence, 'release.json'),
   JSON.stringify(

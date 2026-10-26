@@ -15,6 +15,7 @@ import {
   operationFile,
   parseOperation,
   inside,
+  copyReleaseDirectory,
 } from './lib/installation.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -213,7 +214,7 @@ function operations(file) {
         const staging = path.join(versions, '.incoming-' + randomUUID());
         fs.mkdirSync(staging);
         fs.writeFileSync(path.join(staging, 'NOT-A-RELEASE'), 'Incomplete copy');
-        fs.cpSync(pack.root, staging, { recursive: true, errorOnExist: true, force: false });
+        copyReleaseDirectory(pack.root, staging);
         validatePackage(staging, { copyInProgress: true });
         fs.unlinkSync(path.join(staging, 'NOT-A-RELEASE'));
         // Only a complete verified new directory receives the stable content address.
@@ -335,9 +336,14 @@ async function install(flags) {
     return { file, existing: true };
   }
   if (inside(source, root) || inside(root, source)) throw Error('安装目录与新版文件夹必须分开。');
+  console.log('正在校验完整发布包…');
   const pack = validatePackage(source, { legacy: !!flags['--config'] });
   fs.mkdirSync(root, { recursive: true });
-  if (fs.readdirSync(root).length) throw Error('请选择新的空安装目录。');
+  if (fs.readdirSync(root).length)
+    throw Error(
+      '安装目录已有文件但尚无完整安装记录，已保留原件。请通过 --directory 选择另一个新的空安装目录后重试。',
+    );
+  console.log('正在准备安装目录并复制程序文件…');
   fs.mkdirSync(path.join(root, 'runtime'));
   fs.copyFileSync(path.join(source, 'runtime/node.exe'), path.join(root, 'runtime/node.exe'));
   fs.copyFileSync(path.join(source, 'runtime/LICENSE'), path.join(root, 'runtime/LICENSE'));
@@ -348,7 +354,10 @@ async function install(flags) {
   );
   const versionDir = path.join(root, 'versions', pack.releaseId);
   fs.mkdirSync(path.dirname(versionDir), { recursive: true });
-  fs.cpSync(pack.root, versionDir, { recursive: true, errorOnExist: true, force: false });
+  copyReleaseDirectory(pack.root, versionDir);
+  const copied = validatePackage(versionDir, { legacy: !!flags['--config'] });
+  if (copied.releaseId !== pack.releaseId)
+    throw Error('安装副本校验不一致，未启动程序；原文件和失败副本均已保留。');
   if (!pack.manifest.files) {
     fs.mkdirSync(path.join(versionDir, 'launcher/lib'), { recursive: true });
     for (const name of ['control-plane.mjs', 'installed-entry.mjs'])
@@ -438,7 +447,7 @@ async function main() {
     const result = await install(flags);
     console.log('工作台安装入口已准备。');
     if (command === 'install') return;
-    return start(result.file, true);
+    return start(result.file, !flags['--headless']);
   }
   const file = path.resolve(flags['--installation'] ?? path.join(here, '../installation.json'));
   const state = parseInstallation(readJson(file)),

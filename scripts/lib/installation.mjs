@@ -61,6 +61,23 @@ export function regular(file) {
     throw Error('Expected a regular installation file: ' + file);
   return stat;
 }
+export function copyReleaseDirectory(source, destination) {
+  if (
+    !absolute(source) ||
+    !absolute(destination) ||
+    inside(source, destination) ||
+    inside(destination, source)
+  )
+    throw Error('Release copy requires separate absolute directories.');
+  fs.cpSync(source, destination, {
+    recursive: true,
+    errorOnExist: true,
+    force: false,
+    // Node 22.22.2's native Windows directory-copy path aborts on Unicode
+    // directories (0xC0000409). A filter selects its supported JS traversal.
+    ...(process.platform === 'win32' ? { filter: () => true } : {}),
+  });
+}
 export function validatePackage(directory, { legacy = false, copyInProgress = false } = {}) {
   const root = fs.realpathSync(directory);
   const manifestFile = path.join(root, 'release-manifest.json');
@@ -122,7 +139,13 @@ export function validatePackage(directory, { legacy = false, copyInProgress = fa
             name !== 'release-manifest.json' &&
             !(copyInProgress && name === 'NOT-A-RELEASE'))
         )
-          throw Error('Unexpected release file: ' + name);
+          throw Error(
+            'Unexpected release file: ' +
+              name +
+              (name.startsWith('data/')
+                ? '\n该发布目录已包含运行数据。请保留整个原目录，从原 ZIP 重新完整解压到一个新文件夹后再安装；不要删除 data。'
+                : ''),
+          );
       }
     };
     visit(root);
