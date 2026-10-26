@@ -43,6 +43,10 @@ it('isolates install, retries a failed install and interrupted check, reuses reg
     ),
   );
   await catalog.refresh();
+  // This lifecycle fixture describes a Windows binary; host platform selection
+  // is covered by packagePlan tests rather than by the machine running Vitest.
+  const snapshot = catalog.snapshot();
+  vi.spyOn(catalog, 'snapshot').mockReturnValue({ ...snapshot, platform: 'windows-x86_64' });
   const installer = vi
     .fn<typeof installAgentPackage>()
     .mockImplementationOnce(async ({ directory, phase, progress }) => {
@@ -87,6 +91,9 @@ it('isolates install, retries a failed install and interrupted check, reuses reg
     expect(service.start(input).id).toBe(first.id);
     await service.settle();
     expect(service.list()[0]?.state).toBe('failed');
+    expect(installer).toHaveBeenCalledWith(
+      expect.objectContaining({ nodeExecutable: process.execPath }),
+    );
     const failedDirectory = service.list()[0]?.directory;
     expect(failedDirectory).toContain(first.id);
     expect(service.list()[0]?.progress).toBeUndefined();

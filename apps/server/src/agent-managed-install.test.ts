@@ -57,6 +57,54 @@ function remove(root: string) {
   rmSync(root, { recursive: true, force: true });
 }
 
+it('locates npm beside Windows Node and under a POSIX Node prefix without searching PATH', () => {
+  const root = mkdtempSync(join(tmpdir(), 'acp-managed-'));
+  try {
+    for (const layout of ['windows', 'posix']) {
+      const prefix = join(root, layout);
+      const node = join(prefix, layout === 'windows' ? 'node.exe' : 'bin/node');
+      const npm = join(
+        prefix,
+        layout === 'windows'
+          ? 'node_modules/npm/bin/npm-cli.js'
+          : 'lib/node_modules/npm/bin/npm-cli.js',
+      );
+      mkdirSync(dirname(node), { recursive: true });
+      mkdirSync(dirname(npm), { recursive: true });
+      writeFileSync(node, 'inert fixture');
+      writeFileSync(npm, 'inert fixture');
+      expect(npmRuntime(prefix, node)).toBe(npm);
+    }
+  } finally {
+    remove(root);
+  }
+});
+
+it('runs an installation-owned launcher without a compiled server or server package imports', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'acp-managed-'));
+  try {
+    const script = join(root, 'entry.mjs');
+    writeFileSync(
+      script,
+      'console.log(JSON.stringify({mode:process.env.FIXTURE_MODE,args:process.argv.slice(2)}));',
+    );
+    const runtime = managedAgentRuntime({
+      directory: root,
+      command: process.execPath,
+      prefixArgs: [script],
+      args: ['--acp'],
+      environment: { FIXTURE_MODE: 'local' },
+    });
+    expect(readFileSync(runtime.args[0]!, 'utf8')).not.toContain('agent-launcher.js');
+    const { stdout } = await promisify(execFile)(runtime.command, runtime.args, {
+      windowsHide: true,
+    });
+    expect(JSON.parse(stdout)).toEqual({ mode: 'local', args: ['--acp'] });
+  } finally {
+    remove(root);
+  }
+});
+
 it('plans fixed Python packages and non-secret catalog settings without granting host overrides', () => {
   for (const source of ['fixture==1.2.3', 'fixture@1.2.3']) {
     expect(

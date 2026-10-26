@@ -1,5 +1,6 @@
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { createRequire } from 'node:module';
 import { existsSync } from 'node:fs';
 import type { Runner } from '@control-plane/runner';
 import type { TerminalAuthenticationHandler } from '@control-plane/acp-runtime';
@@ -15,13 +16,25 @@ export function windowsTerminalAuthentication(
   );
   if (process.platform !== 'win32' || !existsSync(powershell)) return undefined;
   const sibling = new URL('./terminal-auth-main.js', import.meta.url);
-  const entry = fileURLToPath(
+  let entry = fileURLToPath(
     existsSync(sibling) ? sibling : new URL('../dist/terminal-auth-main.js', import.meta.url),
   );
-  if (!existsSync(entry)) return undefined;
+  let loader: string | undefined;
+  if (!existsSync(entry)) {
+    // Foreground development runs TypeScript directly and has no server dist.
+    // Resolve the development loader here; do not depend on the agent's cwd/PATH.
+    entry = fileURLToPath(new URL('./terminal-auth-main.ts', import.meta.url));
+    if (!existsSync(entry)) return undefined;
+    try {
+      loader = pathToFileURL(createRequire(import.meta.url).resolve('tsx/esm')).href;
+    } catch {
+      return undefined;
+    }
+  }
   const script = [
     "$ErrorActionPreference='Stop'",
     "$arguments=@(('\"'+$env:CP_AUTH_ENTRY+'\"'))",
+    'if($env:CP_AUTH_LOADER){$arguments=@("--import", (\'"\'+$env:CP_AUTH_LOADER+\'"\'))+$arguments}',
     '$process=Start-Process -FilePath $env:CP_AUTH_NODE -ArgumentList $arguments -WindowStyle $env:CP_AUTH_WINDOW_STYLE -Wait -PassThru',
     'exit $process.ExitCode',
   ].join('\n');
@@ -47,6 +60,7 @@ export function windowsTerminalAuthentication(
       cwd: request.cwd,
       env: {
         CP_AUTH_ENTRY: entry,
+        CP_AUTH_LOADER: loader ?? '',
         CP_AUTH_NODE: process.execPath,
         CP_AUTH_WINDOW_STYLE: options.windowStyle ?? 'Normal',
         CP_AUTH_INVOCATION: payload,
