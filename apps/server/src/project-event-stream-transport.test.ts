@@ -266,3 +266,73 @@ it('validates cursors and reports missing projects before hijacking the response
   expect(missing.reply.status).toBe(404);
   expect(missing.reply.hijack).not.toHaveBeenCalled();
 });
+
+it('pauses at an accepted buffered frame and resumes from that frame after drain', async () => {
+  const f = fixture(),
+    raw = new Response();
+  let buffered = false;
+  raw.write.mockImplementation((text) => {
+    raw.chunks.push(text);
+    if (!buffered && text.includes('event: control-event')) {
+      buffered = true;
+      return false;
+    }
+    return true;
+  });
+  f.reader.readAfter.mockImplementation((_project, query) => ({
+    status: 'events',
+    events:
+      query.after === 'head'
+        ? [notice('first'), notice('second')]
+        : query.after === 'first'
+          ? [notice('second')]
+          : [],
+  }));
+  const client = f.connect('p', undefined, raw);
+  await client.done;
+  await flush();
+  expect(events(raw)).toHaveLength(1);
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(f.reader.readAfter).toHaveBeenCalledOnce();
+  expect(raw.destroy).not.toHaveBeenCalled();
+  raw.emit('drain');
+  await vi.advanceTimersByTimeAsync(500);
+  expect(f.reader.readAfter).toHaveBeenLastCalledWith('p', { after: 'first', limit: 100 });
+  expect(events(raw)).toHaveLength(2);
+  expect(events(raw)[1]).toContain('id: second\n');
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(raw.destroy).not.toHaveBeenCalled();
+  expect(raw.listenerCount('drain')).toBe(0);
+});
+
+it('does not wait for a blocked peer during shutdown and clears its drain deadline', async () => {
+  const f = fixture(),
+    raw = new Response();
+  raw.write.mockReturnValue(false);
+  const client = f.connect('p', undefined, raw);
+  await client.done;
+  await flush();
+  expect(raw.destroy).not.toHaveBeenCalled();
+  expect(raw.listenerCount('drain')).toBe(1);
+  await f.stop();
+  expect(raw.destroy).toHaveBeenCalledOnce();
+  expect(raw.end).not.toHaveBeenCalled();
+  expect(raw.listenerCount('drain')).toBe(0);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it('disposes a connection when even its read-failure notice cannot drain', async () => {
+  const f = fixture(),
+    raw = new Response();
+  f.reader.readAfter.mockRejectedValue(Error('read failed'));
+  raw.write.mockImplementation((text) => {
+    raw.chunks.push(text);
+    return !text.includes('event: unavailable');
+  });
+  const client = f.connect('p', undefined, raw);
+  await client.done;
+  await flush();
+  expect(raw.destroy).toHaveBeenCalledOnce();
+  expect(raw.end).not.toHaveBeenCalled();
+  expect(vi.getTimerCount()).toBe(0);
+});

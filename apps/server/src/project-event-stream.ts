@@ -15,6 +15,7 @@ type Subscriber = {
   reply: FastifyReply;
   heartbeatAt: number;
   reading: boolean;
+  backpressure?: { timer: ReturnType<typeof setTimeout>; drain: () => void };
 };
 
 /** Bounded durable notifications; reconnects replay from the last received event ID. */
@@ -26,13 +27,18 @@ export function registerProjectEventStream(app: FastifyInstance, reader: Project
 
   function remove(client: Subscriber) {
     const removed = subscribers.delete(client);
+    if (client.backpressure) {
+      clearTimeout(client.backpressure.timer);
+      client.reply.raw.off('drain', client.backpressure.drain);
+      delete client.backpressure;
+    }
     if (!subscribers.size && timer) {
       clearInterval(timer);
       timer = undefined;
     }
     return removed;
   }
-  function finish(client: Subscriber, abrupt = false) {
+  function finish(client: Subscriber, abrupt = !!client.backpressure) {
     if (!remove(client)) return;
     try {
       if (abrupt) client.reply.raw.destroy();
@@ -47,21 +53,34 @@ export function registerProjectEventStream(app: FastifyInstance, reader: Project
     }
   }
   function write(client: Subscriber, text: string) {
-    if (!subscribers.has(client)) return false;
+    if (!subscribers.has(client) || client.backpressure) return false;
     try {
       const raw = client.reply.raw;
-      if (!raw.destroyed && !raw.writableEnded && raw.write(text)) return true;
+      if (!raw.destroyed && !raw.writableEnded) {
+        if (!raw.write(text)) {
+          // false means accepted but buffered. Pause before reading another page;
+          // destroying immediately can discard the entire batch before a healthy peer receives it.
+          const drain = () => {
+            if (!client.backpressure) return;
+            clearTimeout(client.backpressure.timer);
+            delete client.backpressure;
+          };
+          const timer = setTimeout(() => finish(client, true), 5_000);
+          client.backpressure = { timer, drain };
+          raw.once('drain', drain);
+        }
+        return true;
+      }
     } catch {
       /* A disconnect can race any write. */
     }
-    // Never wait for a slow peer to flush its buffered output during shutdown.
     finish(client, true);
     return false;
   }
-  function frame(client: Subscriber, event: string, data: unknown, id?: string) {
+  function frame(client: Subscriber, event: string, data: unknown, id?: string, prefix = '') {
     return write(
       client,
-      `${id === undefined ? '' : `id: ${encodeURIComponent(id)}\n`}event: ${event}\ndata: ${JSON.stringify(data)}\n\n`,
+      `${prefix}${id === undefined ? '' : `id: ${encodeURIComponent(id)}\n`}event: ${event}\ndata: ${JSON.stringify(data)}\n\n`,
     );
   }
   async function deliver(client: Subscriber, read: Promise<ProjectEventPage>) {
@@ -76,9 +95,14 @@ export function registerProjectEventStream(app: FastifyInstance, reader: Project
         for (const event of page.events) {
           if (!frame(client, 'control-event', event, event.id)) break;
           client.cursor = event.id;
+          if (client.backpressure) break;
         }
       }
-      if (subscribers.has(client) && Date.now() - client.heartbeatAt >= 15_000) {
+      if (
+        subscribers.has(client) &&
+        !client.backpressure &&
+        Date.now() - client.heartbeatAt >= 15_000
+      ) {
         if (write(client, ': heartbeat\n\n')) client.heartbeatAt = Date.now();
       }
     } catch {
@@ -94,7 +118,7 @@ export function registerProjectEventStream(app: FastifyInstance, reader: Project
     if (stopping) return;
     const pages = new Map<string, Promise<ProjectEventPage>>();
     for (const client of subscribers) {
-      if (client.reading) continue;
+      if (client.reading || client.backpressure) continue;
       const key = JSON.stringify([client.projectId, client.cursor]);
       let read = pages.get(key);
       if (!read) {
@@ -181,9 +205,16 @@ export function registerProjectEventStream(app: FastifyInstance, reader: Project
       finish(client, true);
       return;
     }
-    if (!write(client, 'retry: 1000\n\n')) return;
     // A reconnect must not advance Last-Event-ID until its gap has been replayed.
-    if (!frame(client, 'ready', { projectId }, cursor === undefined ? client.cursor : undefined))
+    if (
+      !frame(
+        client,
+        'ready',
+        { projectId },
+        cursor === undefined ? client.cursor : undefined,
+        'retry: 1000\n\n',
+      )
+    )
       return;
     poll();
     if (subscribers.size && !timer) timer = setInterval(poll, 500);
@@ -192,6 +223,6 @@ export function registerProjectEventStream(app: FastifyInstance, reader: Project
     stopping = true;
     if (timer) clearInterval(timer);
     timer = undefined;
-    for (const client of subscribers) finish(client);
+    for (const client of subscribers) finish(client, !!client.backpressure);
   });
 }

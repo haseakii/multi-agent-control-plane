@@ -51,7 +51,7 @@ A subscription starts at the current append tail. Reconnection uses the last rec
 
 Migration 0022 adds a project index whose implicit SQLite rowid supports bounded cursor scans. It changes no audit payloads or event IDs. The sequence stays internal; clients retain their existing event IDs across upgrades and restarts.
 
-The transport supports synchronous or asynchronous readers, allows one pending page per subscriber, shares matching reads within a polling round, and counts pending opens against the 16-connection limit. Backpressure or socket errors dispose of the affected stream. Late reads after disconnect/shutdown are ignored; they never write to a closed response or prevent other projects from being polled.
+The transport supports synchronous or asynchronous readers, allows one pending page per subscriber, shares matching reads within a polling round, and counts pending opens against the 16-connection limit. Backpressure pauses further reads until the transport drains; a five-second drain timeout or socket error disposes of the affected stream. Shutdown immediately disposes of blocked streams. Late reads after disconnect/shutdown are ignored; they never write to a closed response or prevent other projects from being polled.
 
 ## Artifact store
 Artifacts are immutable and content-addressed.
