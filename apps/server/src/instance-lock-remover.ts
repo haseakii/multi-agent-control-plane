@@ -64,7 +64,7 @@ function nativeRemove(
       {
         encoding: 'utf8',
         windowsHide: true,
-        timeout: 10_000,
+        timeout: 30_000,
         maxBuffer: 16_384,
         env: {
           SystemRoot: systemRoot,

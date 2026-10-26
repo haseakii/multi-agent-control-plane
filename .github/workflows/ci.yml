@@ -51,3 +51,13 @@ jobs:
 
       - name: Browser smoke test
         run: pnpm test:e2e
+
+      - name: Retain failed browser evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-evidence-${{ matrix.os }}
+          path: |
+            test-results/
+            playwright-report/
+          if-no-files-found: ignore

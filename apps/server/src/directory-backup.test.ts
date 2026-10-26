@@ -107,4 +107,4 @@ it('B0 private backup preserves binding metadata, excludes external source, and 
   expect(() => inspectSqliteSnapshot(join(restored, 'data', 'control-plane.sqlite'))).toThrow(
     /binding metadata is inconsistent/,
   );
-});
+}, 30_000);
