@@ -15,6 +15,7 @@ import { createControlPlaneRuntime } from '../apps/server/src/runtime-compositio
 import { AgentCatalogService } from '../apps/server/src/agent-catalog.js';
 import { AgentInstallationsService } from '../apps/server/src/agent-installations.js';
 import { installAgentPackage } from '../apps/server/src/agent-package-install.js';
+import { runInstallProcess } from '../apps/server/src/agent-install-process.js';
 
 // Explicit live acceptance run: real public packages and ACP initialization; no model prompts or login.
 const ids = process.argv.slice(2);
@@ -79,7 +80,18 @@ const service = new AgentInstallationsService({
   releaseRoot,
   installPackage: async (options) => {
     try {
-      return await installAgentPackage(options);
+      return await installAgentPackage({
+        ...options,
+        ...(process.env.ACP_TEST_NPM_CACHE
+          ? {
+              run: (command, args, config) =>
+                runInstallProcess(command, args, {
+                  ...config,
+                  env: { ...config.env, npm_config_cache: process.env.ACP_TEST_NPM_CACHE },
+                }),
+            }
+          : {}),
+      });
     } catch (error) {
       // Local opt-in diagnostics only, never forwarded through the product API.
       const failure = error as Error & { code?: string };

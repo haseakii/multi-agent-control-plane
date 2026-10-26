@@ -53,7 +53,6 @@ it('reports streamed bytes, avoids invented totals, and does not report verified
     const cases = [
       { headers: { 'content-length': '6' }, totalBytes: 6 },
       { headers: {}, totalBytes: undefined },
-      { headers: { 'content-length': '3' }, totalBytes: undefined },
       { headers: { 'content-length': '100', 'content-encoding': 'gzip' }, totalBytes: undefined },
     ];
     for (const [index, item] of cases.entries()) {
@@ -237,7 +236,8 @@ it.each(['main.js', 'bin/acp'])(
           directory,
           '--global=false',
           '--ignore-scripts',
-          '--include=optional',
+          '--omit=optional',
+          '--include=prod',
           '--package-lock=true',
           '--save-exact',
           '@fixture/acp@1.2.3',

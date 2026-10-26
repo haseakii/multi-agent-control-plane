@@ -1,6 +1,13 @@
 import type { ExecFileOptions } from 'node:child_process';
 import { LocalRunner } from '@control-plane/runner';
 
+export class InstallProcessError extends Error {
+  constructor(readonly retryable: boolean) {
+    super('Installer process did not complete successfully.');
+    this.name = 'InstallProcessError';
+  }
+}
+
 /** Bounded installer output with owned process-tree cancellation (including npm/uv children). */
 export async function runInstallProcess(command: string, args: string[], options: ExecFileOptions) {
   options.signal?.throwIfAborted();
@@ -39,7 +46,11 @@ export async function runInstallProcess(command: string, args: string[], options
     const status = await runner.wait(handle);
     options.signal?.throwIfAborted();
     if (status.state !== 'exited' || status.exitCode !== 0)
-      throw new Error('Installer process did not complete successfully.');
+      throw new InstallProcessError(
+        /\b(?:ECONNRESET|ECONNREFUSED|ETIMEDOUT|ESOCKETTIMEDOUT|EAI_AGAIN|ENOTFOUND|E408|E429|E5\d\d)\b/.test(
+          stderr,
+        ),
+      );
     return { stdout, stderr };
   } finally {
     await runner.stop(handle, { gracePeriodMs: 0 });

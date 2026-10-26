@@ -52,6 +52,20 @@ it('restores locked host native and JS optional dependencies, replacing incomple
     };
     await restoreNpmOptionalPackages(options);
     expect(fetch).toHaveBeenCalledTimes(2);
+    // Matching versions cannot hide missing or same-size corrupted native files.
+    writeFileSync(
+      join(root, 'node_modules/native/native.exe'),
+      'x'.repeat('complete inert native fixture'.length),
+    );
+    rmSync(join(root, 'node_modules/js-wrapper/native.exe'));
+    await restoreNpmOptionalPackages(options);
+    expect(fetch).toHaveBeenCalledTimes(2); // Reuse only checksum-verified cached archives.
+    expect(readFileSync(join(root, 'node_modules/native/native.exe'), 'utf8')).toContain(
+      'complete inert',
+    );
+    expect(readFileSync(join(root, 'node_modules/js-wrapper/native.exe'), 'utf8')).toContain(
+      'complete inert',
+    );
     for (const name of ['native', 'js-wrapper'])
       expect(readFileSync(join(root, 'node_modules', name, 'native.exe'), 'utf8')).toContain(
         'complete inert',

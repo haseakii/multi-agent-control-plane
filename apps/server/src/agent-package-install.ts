@@ -1,11 +1,11 @@
 import { createHash } from 'node:crypto';
-import { runInstallProcess } from './agent-install-process.js';
+import { InstallProcessError, runInstallProcess } from './agent-install-process.js';
 import { existsSync, lstatSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { installedPackageEntries } from './agent-installed-package.js';
 import { verifyNpmPlatformPackages } from './agent-npm-integrity.js';
 import { restoreNpmOptionalPackages } from './agent-npm-recovery.js';
-import { reviewedNpmAdapter, adapterRuntimeEnvironment } from './agent-install-adapters.js';
+import { adapterRuntimeEnvironment } from './agent-install-adapters.js';
 import type { CatalogEntry } from './agent-catalog.js';
 import { applyNetworkEnvironment, type NetworkSettingsService } from './network-settings.js';
 import { TaskControlError } from './task-control.js';
@@ -228,7 +228,6 @@ export async function installAgentPackage(options: {
   }
   env.npm_config_cache = join(directory, 'cache');
   env.npm_config_registry = 'https://registry.npmjs.org/';
-  const adapter = reviewedNpmAdapter(plan.entryId, distribution.source);
   const install = () =>
     (options.run ?? runInstallProcess)(
       process.execPath,
@@ -241,7 +240,8 @@ export async function installAgentPackage(options: {
         '--workspaces=false',
         '--ignore-scripts',
         '--omit=dev',
-        ...(adapter ? ['--omit=optional', '--include=prod'] : ['--include=optional']),
+        '--omit=optional',
+        '--include=prod',
         '--package-lock=true',
         '--no-audit',
         '--no-fund',
@@ -262,20 +262,19 @@ export async function installAgentPackage(options: {
     await install();
   } catch (error) {
     options.signal?.throwIfAborted();
-    if (!adapter) throw error;
+    if (!(error instanceof InstallProcessError) || !error.retryable) throw error;
     options.phase('installing', '下载未完成，正在自动恢复安装…');
     await install();
   }
   options.signal?.throwIfAborted();
-  if (adapter)
-    await restoreNpmOptionalPackages({
-      directory,
-      npmCli: cli,
-      network,
-      phase: options.phase,
-      progress: options.progress,
-      signal: options.signal,
-    });
+  await restoreNpmOptionalPackages({
+    directory,
+    npmCli: cli,
+    network,
+    phase: options.phase,
+    progress: options.progress,
+    signal: options.signal,
+  });
   verifyNpmPlatformPackages(directory);
   const match = ExactPackage.exec(distribution.source)!;
   const packageRoot = ownedPackagePath(join(directory, 'node_modules'), match[1]!);
@@ -285,7 +284,7 @@ export async function installAgentPackage(options: {
       '安装包没有可自动确定的 ACP 入口，或版本不符。请使用已有本机入口。',
     );
   const bin = entries[0]!.script;
-  const bindings = adapterRuntimeEnvironment(adapter, directory, bin);
+  const bindings = await adapterRuntimeEnvironment(match[1]!, directory, bin, options.signal);
   return /\.exe$/i.test(bin)
     ? adapt(bin)
     : adapt(options.nodeExecutable ?? process.execPath, [bin], bindings);

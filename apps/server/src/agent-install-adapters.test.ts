@@ -4,14 +4,52 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, statSync } from 'node:fs
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { expect, it, vi } from 'vitest';
-import { adapterRuntimeEnvironment, reviewedNpmAdapter } from './agent-install-adapters.js';
+import { adapterRuntimeEnvironment } from './agent-install-adapters.js';
 import { managedAgentRuntime } from './agent-launcher.js';
 import { installAgentPackage, packagePlan } from './agent-package-install.js';
 import type { NetworkSettingsService } from './network-settings.js';
+import { InstallProcessError } from './agent-install-process.js';
+
+it.skipIf(process.platform !== 'win32')(
+  'binds Claude terminal login and SDK execution to the same installation-owned native CLI',
+  async () => {
+    const root = mkdtempSync(join(tmpdir(), 'acp-adapter-'));
+    try {
+      const entry = join(root, 'node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js');
+      const sdk = join(root, 'node_modules/@anthropic-ai/claude-agent-sdk');
+      const native = join(
+        root,
+        'node_modules/@anthropic-ai/claude-agent-sdk-win32-' + process.arch,
+      );
+      mkdirSync(dirname(entry), { recursive: true });
+      writeFileSync(entry, 'inert');
+      mkdirSync(sdk, { recursive: true });
+      writeFileSync(
+        join(sdk, 'package.json'),
+        JSON.stringify({ name: '@anthropic-ai/claude-agent-sdk', main: 'sdk.mjs' }),
+      );
+      writeFileSync(join(sdk, 'sdk.mjs'), 'inert');
+      mkdirSync(native, { recursive: true });
+      writeFileSync(join(native, 'package.json'), '{}');
+      writeFileSync(join(native, 'claude.exe'), 'inert native');
+      const env = await adapterRuntimeEnvironment(
+        '@agentclientprotocol/claude-agent-acp',
+        root,
+        entry,
+      );
+      expect(env).toEqual({ CLAUDE_CODE_EXECUTABLE: join(root, 'runtime/claude.exe') });
+      expect(statSync(join(root, 'runtime/claude.exe')).ino).toBe(
+        statSync(join(native, 'claude.exe')).ino,
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
 
 it.skipIf(process.platform !== 'win32')(
   'binds Codex to its own short native entry instead of a global CLI',
-  () => {
+  async () => {
     const root = mkdtempSync(join(tmpdir(), 'acp-adapter-'));
     try {
       const entry = join(root, 'node_modules/@agentclientprotocol/codex-acp/dist/index.js');
@@ -34,18 +72,25 @@ it.skipIf(process.platform !== 'win32')(
         writeFileSync(file, 'inert fixture');
       }
       writeFileSync(join(native, 'package.json'), '{}');
-      const binding = adapterRuntimeEnvironment('codex-acp', root, entry);
+      const binding = await adapterRuntimeEnvironment(
+        '@agentclientprotocol/codex-acp',
+        root,
+        entry,
+      );
       expect(binding.CODEX_PATH).toBe(join(root, 'runtime/bin/codex.exe'));
       expect(statSync(binding.CODEX_PATH!).ino).toBe(statSync(binary).ino);
       expect(statSync(join(root, 'runtime/path/rg.exe')).ino).toBe(statSync(helper).ino);
-      expect(reviewedNpmAdapter('codebuddy-code', '@untrusted/codebuddy@1.0.0')).toBeUndefined();
-      expect(() =>
+      expect(await adapterRuntimeEnvironment('@untrusted/codex-acp', root, entry)).toEqual({});
+      expect(
+        await adapterRuntimeEnvironment('@agentclientprotocol/codex-acp', root, entry),
+      ).toEqual(binding);
+      await expect(
         adapterRuntimeEnvironment(
-          'codex-acp',
+          '@agentclientprotocol/codex-acp',
           join(root, 'node_modules/@agentclientprotocol'),
           entry,
         ),
-      ).toThrow('本次目录');
+      ).rejects.toThrow('本次目录');
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -82,7 +127,7 @@ it('keeps the installed runtime binding during terminal auth while dropping cata
   }
 }, 15000);
 
-it('automatically retries a reviewed base install and prepares optional dependencies separately', async () => {
+it('automatically retries a generic base install without requiring a reviewed product ID', async () => {
   const root = mkdtempSync(join(tmpdir(), 'acp-adapter-'));
   try {
     mkdirSync(join(root, 'runtime/npm/bin'), { recursive: true });
@@ -90,7 +135,7 @@ it('automatically retries a reviewed base install and prepares optional dependen
     const directory = join(root, 'installed');
     const run = vi
       .fn()
-      .mockRejectedValueOnce(new Error('network interrupted'))
+      .mockRejectedValueOnce(new InstallProcessError(true))
       .mockImplementationOnce(async () => {
         const pkg = join(directory, 'node_modules/@tencent-ai/codebuddy-code');
         mkdirSync(join(pkg, 'bin'), { recursive: true });
@@ -111,7 +156,7 @@ it('automatically retries a reviewed base install and prepares optional dependen
     const phase = vi.fn();
     const plan = packagePlan(
       {
-        id: 'codebuddy-code',
+        id: 'custom-product-id',
         name: 'CodeBuddy',
         description: 'fixture',
         license_url: 'https://example.com/LICENSE',
@@ -135,6 +180,35 @@ it('automatically retries a reviewed base install and prepares optional dependen
     );
     expect(phase).toHaveBeenCalledWith('installing', expect.stringContaining('自动恢复'));
     expect(result.args.at(-1)).toBe('--acp');
+    const permanent = vi.fn().mockRejectedValue(new InstallProcessError(false));
+    await expect(
+      installAgentPackage({
+        plan,
+        directory: join(root, 'permanent'),
+        releaseRoot: root,
+        network: { effective: () => ({ mode: 'unmanaged' }) } as unknown as NetworkSettingsService,
+        phase,
+        run: permanent,
+      }),
+    ).rejects.toBeInstanceOf(InstallProcessError);
+    expect(permanent).toHaveBeenCalledTimes(1);
+    const cancelled = new AbortController();
+    const cancelRun = vi.fn().mockImplementation(async () => {
+      cancelled.abort();
+      throw new InstallProcessError(true);
+    });
+    await expect(
+      installAgentPackage({
+        plan,
+        directory: join(root, 'cancelled'),
+        releaseRoot: root,
+        network: { effective: () => ({ mode: 'unmanaged' }) } as unknown as NetworkSettingsService,
+        phase,
+        run: cancelRun,
+        signal: cancelled.signal,
+      }),
+    ).rejects.toThrow();
+    expect(cancelRun).toHaveBeenCalledTimes(1);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

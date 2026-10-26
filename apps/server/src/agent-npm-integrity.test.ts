@@ -114,5 +114,5 @@ it('rejects an npm success result with a missing host dependency before returnin
       phase: () => undefined,
       run: async () => undefined,
     }),
-  ).rejects.toThrow('依赖安装不完整');
+  ).rejects.toThrow('官方包信息');
 });
