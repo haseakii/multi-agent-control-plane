@@ -2,6 +2,7 @@ import { statSync } from 'node:fs';
 import { posix, win32 } from 'node:path';
 import { AgentDefinitionSchema } from '@control-plane/core';
 import { windowsWrapperIssue } from './windows-command.js';
+import { isNodeEntrypoint } from './node-entrypoint.js';
 
 type Issue = { code: string; message: string };
 type InspectionOptions = {
@@ -62,11 +63,10 @@ export function inspectAgentConfiguration(input: unknown, options: InspectionOpt
     }
     if (/^node(?:\.exe)?$/i.test(paths.basename(runtime.command))) {
       const entry = runtime.args[0];
-      if (!entry || !paths.isAbsolute(entry) || !/\.(?:c|m)?js$/i.test(entry)) {
+      if (!entry || !paths.isAbsolute(entry)) {
         issues.push({
           code: 'NODE_ENTRY_REQUIRED',
-          message:
-            'For this Node adapter example, args[0] must be an absolute .js/.mjs/.cjs entrypoint.',
+          message: 'args[0] must be an absolute Node entrypoint.',
         });
       } else if (options.localOnly && !localPath(entry)) {
         issues.push({
@@ -77,6 +77,11 @@ export function inspectAgentConfiguration(input: unknown, options: InspectionOpt
         issues.push({
           code: 'NODE_ENTRY_NOT_FILE',
           message: 'Node adapter entrypoint is missing or is not a regular file.',
+        });
+      } else if (!isNodeEntrypoint(entry)) {
+        issues.push({
+          code: 'NODE_ENTRY_REQUIRED',
+          message: 'Choose a .js/.mjs/.cjs entrypoint or an extensionless Node shebang script.',
         });
       }
     }

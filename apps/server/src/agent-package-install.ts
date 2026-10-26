@@ -1,8 +1,11 @@
 import { createHash } from 'node:crypto';
-import { runInstallProcess } from './agent-install-process.js';
+import { InstallProcessError, runInstallProcess } from './agent-install-process.js';
 import { existsSync, lstatSync, mkdirSync, realpathSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { installedPackageEntries } from './agent-installed-package.js';
+import { verifyNpmPlatformPackages } from './agent-npm-integrity.js';
+import { restoreNpmOptionalPackages } from './agent-npm-recovery.js';
+import { adapterRuntimeEnvironment } from './agent-install-adapters.js';
 import type { CatalogEntry } from './agent-catalog.js';
 import { applyNetworkEnvironment, type NetworkSettingsService } from './network-settings.js';
 import { TaskControlError } from './task-control.js';
@@ -150,13 +153,18 @@ export async function installAgentPackage(options: {
   options.signal?.throwIfAborted();
   mkdirSync(directory, { recursive: true });
   const distribution = plan.distribution;
-  const adapt = (command: string, prefixArgs: string[] = []) =>
+  const adapt = (
+    command: string,
+    prefixArgs: string[] = [],
+    runtimeEnvironment: Record<string, string> = {},
+  ) =>
     managedAgentRuntime({
       directory,
       command,
       prefixArgs,
       args: distribution.args,
       environment: distribution.environment,
+      runtimeEnvironment,
       nodeExecutable: options.nodeExecutable,
     });
   if (distribution.kind === 'uv') {
@@ -222,33 +230,54 @@ export async function installAgentPackage(options: {
   }
   env.npm_config_cache = join(directory, 'cache');
   env.npm_config_registry = 'https://registry.npmjs.org/';
-  await (options.run ?? runInstallProcess)(
-    process.execPath,
-    [
-      cli,
-      'install',
-      '--prefix',
-      directory,
-      '--global=false',
-      '--workspaces=false',
-      '--ignore-scripts',
-      '--omit=dev',
-      '--no-audit',
-      '--no-fund',
-      '--save-exact',
-      '--',
-      distribution.source,
-    ],
-    {
-      cwd: directory,
-      windowsHide: true,
-      timeout: 300_000,
-      maxBuffer: 512_000,
-      env,
-      ...(options.signal ? { signal: options.signal } : {}),
-    },
-  );
+  const install = () =>
+    (options.run ?? runInstallProcess)(
+      process.execPath,
+      [
+        cli,
+        'install',
+        '--prefix',
+        directory,
+        '--global=false',
+        '--workspaces=false',
+        '--ignore-scripts',
+        '--omit=dev',
+        '--omit=optional',
+        '--include=prod',
+        '--package-lock=true',
+        '--no-audit',
+        '--no-fund',
+        '--save-exact',
+        '--',
+        distribution.source,
+      ],
+      {
+        cwd: directory,
+        windowsHide: true,
+        timeout: 900_000,
+        maxBuffer: 512_000,
+        env,
+        ...(options.signal ? { signal: options.signal } : {}),
+      },
+    );
+  try {
+    await install();
+  } catch (error) {
+    options.signal?.throwIfAborted();
+    if (!(error instanceof InstallProcessError) || !error.retryable) throw error;
+    options.phase('installing', '下载未完成，正在自动恢复安装…');
+    await install();
+  }
   options.signal?.throwIfAborted();
+  await restoreNpmOptionalPackages({
+    directory,
+    npmCli: cli,
+    network,
+    phase: options.phase,
+    progress: options.progress,
+    signal: options.signal,
+  });
+  verifyNpmPlatformPackages(directory);
   const match = ExactPackage.exec(distribution.source)!;
   const packageRoot = ownedPackagePath(join(directory, 'node_modules'), match[1]!);
   const entries = installedPackageEntries(packageRoot, match[1]!, true);
@@ -257,7 +286,8 @@ export async function installAgentPackage(options: {
       '安装包没有可自动确定的 ACP 入口，或版本不符。请使用已有本机入口。',
     );
   const bin = entries[0]!.script;
+  const bindings = await adapterRuntimeEnvironment(match[1]!, directory, bin, options.signal);
   return /\.exe$/i.test(bin)
     ? adapt(bin)
-    : adapt(options.nodeExecutable ?? process.execPath, [bin]);
+    : adapt(options.nodeExecutable ?? process.execPath, [bin], bindings);
 }

@@ -1,14 +1,9 @@
-import { createHash } from 'node:crypto';
 import { runInstallProcess } from './agent-install-process.js';
-import { createWriteStream, readdirSync } from 'node:fs';
-import { Readable, Transform } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
+import { readdirSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep, win32 } from 'node:path';
-import type { NetworkSettingsService } from './network-settings.js';
-
-export class AgentPackageInstallError extends Error {}
-
-export type DownloadProgress = { receivedBytes: number; totalBytes?: number };
+import { AgentPackageInstallError } from './agent-package-error.js';
+export { AgentPackageInstallError } from './agent-package-error.js';
+export { downloadPackageFile, type DownloadProgress } from './agent-package-download.js';
 
 export function ownedPackagePath(root: string, name: string) {
   const result = resolve(root, name),
@@ -23,84 +18,6 @@ export function ownedPackagePath(root: string, name: string) {
   )
     throw new AgentPackageInstallError('程序包路径越界，未解压或启动。');
   return result;
-}
-
-/** HTTPS downloads stay bounded and never forward credentials to redirect targets. */
-export async function downloadPackageFile(options: {
-  source: string;
-  destination: string;
-  network: Pick<NetworkSettingsService, 'fetch'>;
-  sha256?: string | undefined;
-  maxBytes?: number;
-  progress?: ((progress: DownloadProgress) => void) | undefined;
-  signal?: AbortSignal | undefined;
-}) {
-  let url = new URL(options.source),
-    response: Response | undefined;
-  const origin = url.origin,
-    signal = AbortSignal.any([
-      AbortSignal.timeout(180_000),
-      ...(options.signal ? [options.signal] : []),
-    ]);
-  signal.throwIfAborted();
-  for (let hop = 0; hop < 6; hop++) {
-    if (
-      url.protocol !== 'https:' ||
-      url.username ||
-      url.password ||
-      (url.origin !== origin &&
-        ![
-          'release-assets.githubusercontent.com',
-          'objects.githubusercontent.com',
-          'github.com',
-        ].includes(url.hostname))
-    )
-      throw new AgentPackageInstallError('下载重定向不受支持，原文件保留。');
-    response = await options.network.fetch(url, { redirect: 'manual', signal });
-    if (![301, 302, 303, 307, 308].includes(response.status)) break;
-    const location = response.headers.get('location');
-    await response.body?.cancel();
-    if (!location) throw new Error('Missing download redirect.');
-    url = new URL(location, url);
-  }
-  if (!response?.ok || !response.body) throw new Error('Package download failed.');
-  const hash = createHash('sha256');
-  const length = Number(response.headers.get('content-length'));
-  // fetch may decompress the body; encoded Content-Length then measures different bytes.
-  let totalBytes =
-    !response.headers.get('content-encoding') && Number.isSafeInteger(length) && length > 0
-      ? length
-      : undefined;
-  let bytes = 0;
-  let lastReport = performance.now();
-  const report = () =>
-    options.progress?.({ receivedBytes: bytes, ...(totalBytes ? { totalBytes } : {}) });
-  report();
-  await pipeline(
-    Readable.fromWeb(response.body as import('node:stream/web').ReadableStream),
-    new Transform({
-      transform(block: Buffer, _encoding, callback) {
-        bytes += block.byteLength;
-        if (bytes > (options.maxBytes ?? 512 * 1024 * 1024)) {
-          callback(new AgentPackageInstallError('程序包超过下载大小限制，未执行安装。'));
-          return;
-        }
-        hash.update(block);
-        if (totalBytes && bytes > totalBytes) totalBytes = undefined;
-        if (performance.now() - lastReport >= 250) {
-          lastReport = performance.now();
-          report();
-        }
-        callback(null, block);
-      },
-    }),
-    createWriteStream(options.destination, { flags: 'wx' }),
-    { signal },
-  );
-  if (!bytes || (options.sha256 && options.sha256.toLowerCase() !== hash.digest('hex')))
-    throw new AgentPackageInstallError('程序包内容为空或 SHA-256 校验失败，未解压或启动。');
-  if (totalBytes !== bytes) totalBytes = undefined;
-  report();
 }
 
 /** No archive entry is treated as a shell command. */

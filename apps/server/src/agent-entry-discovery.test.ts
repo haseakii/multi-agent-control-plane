@@ -101,69 +101,78 @@ it('finds package subdirectory binaries and current user npm prefixes without sc
   expect(result.candidates.map((candidate) => candidate.source)).toEqual(['directory', 'path']);
 });
 
-it('finds an installed package from an explicit install folder and PATH without running its entry', () => {
-  const root = mkdtempSync(join(tmpdir(), 'acp-installed-'));
-  try {
-    const packageRoot = join(root, 'node_modules', '@example', 'adapter');
-    mkdirSync(join(packageRoot, 'dist'), { recursive: true });
-    const script = join(packageRoot, 'dist', 'index.js');
-    const marker = join(root, 'executed');
-    writeFileSync(
-      script,
-      `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'unexpected');`,
-    );
-    writeFileSync(
-      join(packageRoot, 'package.json'),
-      JSON.stringify({
-        name: '@example/adapter',
-        version: '2.0.0',
-        bin: { missing: 'optional-missing.js', adapter: 'dist/index.js' },
-        scripts: { postinstall: 'never-run' },
-      }),
-    );
-    const product = {
-      ...entry,
-      distribution: {
-        npx: { package: '@example/adapter@2.1.0', args: ['--acp'], env: { TOKEN: 'never-import' } },
-      },
-    };
-    for (const options of [
-      { directory: root, path: '' },
-      { directory: packageRoot, path: '' },
-      { path: root },
-    ]) {
-      const result = discoverAgentEntries(product, 'windows-x86_64', [], options);
-      expect(result.candidates).toEqual([
-        expect.objectContaining({
-          source: 'package',
-          packageName: '@example/adapter',
-          packageVersion: '2.0.0',
-          runtime: { type: 'acp-stdio', command: process.execPath, args: [script] },
+it.each(['dist/index.js', 'dist/adapter'])(
+  'discovers the installed Node entry %s without executing it',
+  (entrypoint) => {
+    const root = mkdtempSync(join(tmpdir(), 'acp-installed-'));
+    try {
+      const packageRoot = join(root, 'node_modules', '@example', 'adapter');
+      mkdirSync(join(packageRoot, 'dist'), { recursive: true });
+      const script = join(packageRoot, entrypoint);
+      const marker = join(root, 'executed');
+      writeFileSync(
+        script,
+        `#!/usr/bin/env node\nrequire('node:fs').writeFileSync(${JSON.stringify(marker)}, 'unexpected');`,
+      );
+      writeFileSync(
+        join(packageRoot, 'package.json'),
+        JSON.stringify({
+          name: '@example/adapter',
+          version: '2.0.0',
+          bin: { missing: 'optional-missing.js', adapter: entrypoint },
+          scripts: { postinstall: 'never-run' },
         }),
-      ]);
-      expect(JSON.stringify(result)).not.toContain('never-import');
+      );
+      const product = {
+        ...entry,
+        distribution: {
+          npx: {
+            package: '@example/adapter@2.1.0',
+            args: ['--acp'],
+            env: { TOKEN: 'never-import' },
+          },
+        },
+      };
+      for (const options of [
+        { directory: root, path: '' },
+        { directory: packageRoot, path: '' },
+        { path: root },
+      ]) {
+        const result = discoverAgentEntries(product, 'windows-x86_64', [], options);
+        expect(result.candidates).toEqual([
+          expect.objectContaining({
+            source: 'package',
+            packageName: '@example/adapter',
+            packageVersion: '2.0.0',
+            runtime: { type: 'acp-stdio', command: process.execPath, args: [script] },
+          }),
+        ]);
+        expect(JSON.stringify(result)).not.toContain('never-import');
+      }
+      expect(existsSync(marker)).toBe(false);
+      // A similarly placed package for a different product cannot impersonate this one.
+      writeFileSync(
+        join(packageRoot, 'package.json'),
+        JSON.stringify({ name: 'different', bin: 'dist/index.js' }),
+      );
+      expect(
+        discoverAgentEntries(product, 'windows-x86_64', [], { directory: root, path: '' })
+          .candidates,
+      ).toEqual([]);
+      writeFileSync(join(root, 'outside.js'), '');
+      writeFileSync(
+        join(packageRoot, 'package.json'),
+        JSON.stringify({ name: '@example/adapter', bin: '../../../outside.js' }),
+      );
+      expect(
+        discoverAgentEntries(product, 'windows-x86_64', [], { directory: root, path: '' })
+          .candidates,
+      ).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
     }
-    expect(existsSync(marker)).toBe(false);
-    // A similarly placed package for a different product cannot impersonate this one.
-    writeFileSync(
-      join(packageRoot, 'package.json'),
-      JSON.stringify({ name: 'different', bin: 'dist/index.js' }),
-    );
-    expect(
-      discoverAgentEntries(product, 'windows-x86_64', [], { directory: root, path: '' }).candidates,
-    ).toEqual([]);
-    writeFileSync(join(root, 'outside.js'), '');
-    writeFileSync(
-      join(packageRoot, 'package.json'),
-      JSON.stringify({ name: '@example/adapter', bin: '../../../outside.js' }),
-    );
-    expect(
-      discoverAgentEntries(product, 'windows-x86_64', [], { directory: root, path: '' }).candidates,
-    ).toEqual([]);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
+  },
+);
 it('reports no local install for package-only products instead of installing a package', () => {
   const isFile = vi.fn(() => true);
   const result = discoverAgentEntries(

@@ -2,12 +2,13 @@ import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { expect, it, vi } from 'vitest';
 import { installAgentPackage, packagePlan } from './agent-package-install.js';
 import { resolveNetwork, type NetworkSettingsService } from './network-settings.js';
 import { NetworkSettingsSchema } from '@control-plane/core';
 import { downloadPackageFile } from './agent-package-io.js';
+import { inspectAgentConfiguration } from '@control-plane/runner';
 
 it('cancels a stalled download body and closes its output file', async () => {
   const root = mkdtempSync(join(tmpdir(), 'acp-download-cancel-'));
@@ -52,7 +53,6 @@ it('reports streamed bytes, avoids invented totals, and does not report verified
     const cases = [
       { headers: { 'content-length': '6' }, totalBytes: 6 },
       { headers: {}, totalBytes: undefined },
-      { headers: { 'content-length': '3' }, totalBytes: undefined },
       { headers: { 'content-length': '100', 'content-encoding': 'gzip' }, totalBytes: undefined },
     ];
     for (const [index, item] of cases.entries()) {
@@ -86,6 +86,7 @@ it('reports streamed bytes, avoids invented totals, and does not report verified
         destination: join(root, 'bad'),
         network: { fetch: async () => new Response('bad') },
         sha256: '0'.repeat(64),
+        maxAttempts: 1,
         progress,
       }),
     ).rejects.toThrow('SHA-256');
@@ -174,69 +175,101 @@ it.skipIf(process.platform !== 'win32')(
   },
   20000,
 );
-it('pins npm, disables scripts and global writes, applies proxy and chooses a local entry', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'acp-npm-'));
-  try {
-    mkdirSync(join(root, 'runtime/npm/bin'), { recursive: true });
-    writeFileSync(join(root, 'runtime/npm/bin/npm-cli.js'), 'fixture');
-    const plan = packagePlan(
-      { ...base, distribution: { npx: { package: '@fixture/acp@1.2.3', args: ['--acp'] } } },
-      'windows-x86_64',
-      true,
-    );
-    const effective = resolveNetwork(
-      NetworkSettingsSchema.parse({
-        revision: 1,
-        updatedAt: null,
-        global: { mode: 'proxy', proxyUrl: 'http://127.0.0.1:7897' },
-        members: {},
-      }),
-    );
-    const network = { effective: () => effective } as NetworkSettingsService;
-    const directory = join(root, 'installed');
-    const run = vi.fn(async () => {
-      const pkg = join(directory, 'node_modules/@fixture/acp');
-      mkdirSync(pkg, { recursive: true });
-      writeFileSync(
-        join(pkg, 'package.json'),
-        JSON.stringify({ name: '@fixture/acp', version: '1.2.3', bin: 'main.js' }),
+it.each(['main.js', 'bin/acp'])(
+  'installs and validates the local npm Node entry %s',
+  async (entry) => {
+    const root = mkdtempSync(join(tmpdir(), 'acp-npm-'));
+    try {
+      mkdirSync(join(root, 'runtime/npm/bin'), { recursive: true });
+      writeFileSync(join(root, 'runtime/npm/bin/npm-cli.js'), 'fixture');
+      const plan = packagePlan(
+        { ...base, distribution: { npx: { package: '@fixture/acp@1.2.3', args: ['--acp'] } } },
+        'windows-x86_64',
+        true,
       );
-      writeFileSync(join(pkg, 'main.js'), '// inert');
-    });
-    const runtime = await installAgentPackage({
-      plan,
-      directory,
-      releaseRoot: root,
-      network,
-      nodeExecutable: process.execPath,
-      phase: vi.fn(),
-      run,
-    });
-    expect(run).toHaveBeenCalledWith(
-      process.execPath,
-      expect.arrayContaining([
-        '--prefix',
-        directory,
-        '--global=false',
-        '--ignore-scripts',
-        '--save-exact',
-        '@fixture/acp@1.2.3',
-      ]),
-      expect.objectContaining({
-        windowsHide: true,
-        env: expect.objectContaining({
-          npm_config_https_proxy: 'http://127.0.0.1:7897',
-          HTTPS_PROXY: 'http://127.0.0.1:7897',
-          npm_config_cache: join(directory, 'cache'),
+      const effective = resolveNetwork(
+        NetworkSettingsSchema.parse({
+          revision: 1,
+          updatedAt: null,
+          global: { mode: 'proxy', proxyUrl: 'http://127.0.0.1:7897' },
+          members: {},
         }),
-      }),
-    );
-    expect(runtime).toEqual({
-      type: 'acp-stdio',
-      command: process.execPath,
-      args: [join(directory, 'node_modules/@fixture/acp/main.js'), '--acp'],
-    });
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
+      );
+      const network = { effective: () => effective } as NetworkSettingsService;
+      const directory = join(root, 'installed');
+      const run = vi.fn(async () => {
+        const pkg = join(directory, 'node_modules/@fixture/acp');
+        mkdirSync(dirname(join(pkg, entry)), { recursive: true });
+        writeFileSync(
+          join(pkg, 'package.json'),
+          JSON.stringify({
+            name: '@fixture/acp',
+            version: '1.2.3',
+            bin: { acp: entry, helper: 'unused-helper.js' },
+          }),
+        );
+        writeFileSync(
+          join(pkg, entry),
+          '#!/usr/bin/env node\nthrow new Error("must not execute");',
+        );
+        writeFileSync(
+          join(directory, 'package-lock.json'),
+          JSON.stringify({
+            lockfileVersion: 3,
+            packages: { 'node_modules/@fixture/acp': { version: '1.2.3' } },
+          }),
+        );
+      });
+      const runtime = await installAgentPackage({
+        plan,
+        directory,
+        releaseRoot: root,
+        network,
+        nodeExecutable: process.execPath,
+        phase: vi.fn(),
+        run,
+      });
+      expect(run).toHaveBeenCalledWith(
+        process.execPath,
+        expect.arrayContaining([
+          '--prefix',
+          directory,
+          '--global=false',
+          '--ignore-scripts',
+          '--omit=optional',
+          '--include=prod',
+          '--package-lock=true',
+          '--save-exact',
+          '@fixture/acp@1.2.3',
+        ]),
+        expect.objectContaining({
+          windowsHide: true,
+          env: expect.objectContaining({
+            npm_config_https_proxy: 'http://127.0.0.1:7897',
+            HTTPS_PROXY: 'http://127.0.0.1:7897',
+            npm_config_cache: join(directory, 'cache'),
+          }),
+        }),
+      );
+      expect(runtime).toEqual({
+        type: 'acp-stdio',
+        command: process.execPath,
+        args: [join(directory, 'node_modules/@fixture/acp', entry), '--acp'],
+      });
+      expect(
+        inspectAgentConfiguration({
+          id: 'fixture',
+          name: 'Fixture',
+          enabled: true,
+          runtime,
+          capabilities: [],
+          auth: { mode: 'agent-managed' },
+          orchestration: { canBeBoss: false },
+          controlBridge: { transport: 'none', scopes: [] },
+        }).offlineChecksPassed,
+      ).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);

@@ -28,6 +28,7 @@ const Config = z
     command: z.string().min(1).max(4096).refine(isAbsolute),
     prefixArgs: z.array(z.string().max(4096)).max(4),
     environment: Environment,
+    runtimeEnvironment: Environment.default({}),
   })
   .strict();
 
@@ -38,10 +39,16 @@ export function managedAgentRuntime(options: {
   prefixArgs?: string[];
   args: string[];
   environment?: Record<string, string> | undefined;
+  runtimeEnvironment?: Record<string, string> | undefined;
   nodeExecutable?: string | undefined;
 }) {
   const environment = catalogEnvironment(options.environment);
-  if (!Object.keys(environment).length && !/\.(cmd|bat)$/i.test(options.command))
+  const runtimeEnvironment = catalogEnvironment(options.runtimeEnvironment);
+  if (
+    !Object.keys(environment).length &&
+    !Object.keys(runtimeEnvironment).length &&
+    !/\.(cmd|bat)$/i.test(options.command)
+  )
     return {
       type: 'acp-stdio' as const,
       command: options.command,
@@ -51,6 +58,7 @@ export function managedAgentRuntime(options: {
     command: options.command,
     prefixArgs: options.prefixArgs ?? [],
     environment,
+    runtimeEnvironment,
   });
   const file = join(options.directory, 'managed-agent.mjs');
   // Installation-owned launcher survives source execution and release replacement.
@@ -72,6 +80,7 @@ const launcherSource = String.raw`
   const environment = {
     ...process.env,
     ...(process.env.CP_TERMINAL_AUTH === '1' ? {} : config.environment),
+    ...config.runtimeEnvironment,
   };
   delete environment.CP_TERMINAL_AUTH;
   const args = [...config.prefixArgs, ...process.argv.slice(2)];

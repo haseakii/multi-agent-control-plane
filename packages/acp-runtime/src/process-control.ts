@@ -125,8 +125,9 @@ export class ProcessAgentRuntimeControl implements AgentRuntimeControl {
     private readonly runner: Runner,
     options: ProcessAgentRuntimeControlOptions = {},
   ) {
-    this.probeTimeoutMs = options.probeTimeoutMs ?? 15_000;
-    this.sessionSettingsTimeoutMs = options.sessionSettingsTimeoutMs ?? 60_000;
+    // Packaged agents may unpack a native runtime on their first Windows start.
+    this.probeTimeoutMs = options.probeTimeoutMs ?? 120_000;
+    this.sessionSettingsTimeoutMs = options.sessionSettingsTimeoutMs ?? 180_000;
     this.authenticationTimeoutMs = options.authenticationTimeoutMs ?? 5 * 60_000;
     this.runtimeFactory = options.runtimeFactory;
     this.terminalAuthentication = options.terminalAuthentication;

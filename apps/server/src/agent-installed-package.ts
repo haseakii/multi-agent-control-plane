@@ -1,6 +1,7 @@
 import { closeSync, fstatSync, openSync, readSync, realpathSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { z } from 'zod';
+import { isNodeEntrypoint } from '@control-plane/runner';
 
 const Manifest = z.object({
   name: z.string().max(214),
@@ -52,8 +53,8 @@ export function installedPackageEntries(root: string, expectedName: string, mana
           rel === '..' ||
           rel.startsWith('..' + sep) ||
           isAbsolute(rel) ||
-          !(/\.(?:c|m)?js$/i.test(script) || (managed && /\.exe$/i.test(script))) ||
-          !statSync(script).isFile()
+          !statSync(script).isFile() ||
+          !(isNodeEntrypoint(script) || (managed && /\.exe$/i.test(script)))
         )
           return [];
         return [
