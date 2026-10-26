@@ -3,6 +3,7 @@ import { runInstallProcess } from './agent-install-process.js';
 import { existsSync, lstatSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { installedPackageEntries } from './agent-installed-package.js';
+import { verifyNpmPlatformPackages } from './agent-npm-integrity.js';
 import type { CatalogEntry } from './agent-catalog.js';
 import { applyNetworkEnvironment, type NetworkSettingsService } from './network-settings.js';
 import { TaskControlError } from './task-control.js';
@@ -231,6 +232,8 @@ export async function installAgentPackage(options: {
       '--workspaces=false',
       '--ignore-scripts',
       '--omit=dev',
+      '--include=optional',
+      '--package-lock=true',
       '--no-audit',
       '--no-fund',
       '--save-exact',
@@ -247,6 +250,7 @@ export async function installAgentPackage(options: {
     },
   );
   options.signal?.throwIfAborted();
+  verifyNpmPlatformPackages(directory);
   const match = ExactPackage.exec(distribution.source)!;
   const packageRoot = ownedPackagePath(join(directory, 'node_modules'), match[1]!);
   const entries = installedPackageEntries(packageRoot, match[1]!, true);

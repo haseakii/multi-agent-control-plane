@@ -160,3 +160,28 @@ it.each(['missing', 'file'])('rejects %s cwd using actual filesystem metadata', 
   expect(value.offlineChecksPassed).toBe(false);
   expect(value.issues).toContainEqual(expect.objectContaining({ code: 'CWD_NOT_DIRECTORY' }));
 });
+
+it.each([
+  ['node', '#!/usr/bin/env node\r\n', true],
+  ['shell', '#!/bin/sh\n', false],
+  ['plain', '// no interpreter declaration\n', false],
+  ['wrong-name', '#!/usr/bin/env nodejs\n', false],
+  ['script.txt', '#!/usr/bin/env node\n', false],
+] as const)('inspects extensionless Node entries without executing %s', (name, header, allowed) => {
+  const directory = mkdtempSync(join(tmpdir(), 'control-plane-node-entry-'));
+  directories.push(directory);
+  const entry = join(directory, name);
+  const marker = join(directory, 'executed');
+  writeFileSync(
+    entry,
+    header + `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'unexpected');`,
+  );
+  const result = inspectAgentConfiguration({
+    ...example,
+    runtime: { type: 'acp-stdio', command: process.execPath, args: [entry, '--acp'] },
+  });
+  expect(result.offlineChecksPassed).toBe(allowed);
+  if (!allowed)
+    expect(result.issues).toContainEqual(expect.objectContaining({ code: 'NODE_ENTRY_REQUIRED' }));
+  expect(existsSync(marker)).toBe(false);
+});
