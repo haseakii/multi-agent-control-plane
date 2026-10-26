@@ -91,7 +91,7 @@ describe('MessageRouter', () => {
     expect(claim1?.message.id).toBe(first.message.id);
     expect(await router.claimNext('agent-b')).toBeUndefined();
 
-    await router.acknowledge(claim1!.delivery.id);
+    await router.acknowledge(claim1!.delivery.id, claim1!.delivery.attemptCount);
     const claim2 = await router.claimNext('agent-b');
     expect(claim2?.message.id).toBe(second.message.id);
     expect(claim2?.delivery.sequence).toBe(2);
@@ -118,7 +118,11 @@ describe('MessageRouter', () => {
 
     const claim = await router.claimNext('agent-b');
     expect(claim?.message.id).toBe(first.message.id);
-    await router.retry(claim!.delivery.id, 'recipient temporarily unavailable');
+    await router.retry(
+      claim!.delivery.id,
+      claim!.delivery.attemptCount,
+      'recipient temporarily unavailable',
+    );
 
     expect(await router.claimNext('agent-b')).toBeUndefined();
     current = '2026-10-20T01:01:30.300Z';
@@ -151,6 +155,72 @@ describe('MessageRouter', () => {
     expect(redelivered?.message.id).toBe(sent.message.id);
     expect(redelivered?.delivery.attemptCount).toBe(2);
     second.storage.close();
+  });
+
+  it('fences stale acknowledgements and retries after a restarted consumer reclaims the lease', async () => {
+    const filename = databasePath();
+    let current = '2026-10-20T01:04:00.000Z';
+    const first = createRouter(filename, () => current);
+    await first.router.send(sender, {
+      toAgentId: 'agent-b',
+      type: 'response',
+      content: 'A durable worker result.',
+    });
+    const stale = (await first.router.claimNext('agent-b'))!;
+    const second = createRouter(filename, () => current);
+    try {
+      current = '2026-10-20T01:04:02.000Z';
+      expect(second.router.recoverExpired()).toBe(1);
+      const reclaimed = (await second.router.claimNext('agent-b'))!;
+      expect(reclaimed.delivery.attemptCount).toBe(stale.delivery.attemptCount + 1);
+
+      await expect(
+        first.router.acknowledge(stale.delivery.id, stale.delivery.attemptCount),
+      ).rejects.toMatchObject({ code: 'STALE_DELIVERY_CLAIM' });
+      await expect(
+        first.router.retry(stale.delivery.id, stale.delivery.attemptCount, 'Late failure'),
+      ).rejects.toMatchObject({ code: 'STALE_DELIVERY_CLAIM' });
+      expect(
+        new SqliteMessageRouterStore(second.storage).getDelivery(stale.delivery.id),
+      ).toMatchObject({ state: 'delivering', attemptCount: reclaimed.delivery.attemptCount });
+
+      await second.router.acknowledge(reclaimed.delivery.id, reclaimed.delivery.attemptCount);
+      // Same-generation ACK is idempotent, but an old consumer must still fail.
+      await second.router.acknowledge(reclaimed.delivery.id, reclaimed.delivery.attemptCount);
+      await expect(
+        first.router.acknowledge(stale.delivery.id, stale.delivery.attemptCount),
+      ).rejects.toMatchObject({ code: 'STALE_DELIVERY_CLAIM' });
+      expect(await second.router.claimNext('agent-b')).toBeUndefined();
+    } finally {
+      second.storage.close();
+      first.storage.close();
+    }
+  });
+
+  it('renews only a live generation, then recovers after renewal stops', async () => {
+    let current = '2026-10-20T01:10:00.000Z';
+    const { storage, router } = createRouter(':memory:', () => current);
+    try {
+      await router.send(sender, { toAgentId: 'agent-b', type: 'message', content: 'long work' });
+      const first = (await router.claimNext('agent-b'))!;
+      for (let tick = 1; tick <= 5; tick++) {
+        current = new Date(Date.parse('2026-10-20T01:10:00.000Z') + tick * 500).toISOString();
+        router.renewClaim(first.delivery.id, first.delivery.attemptCount);
+        expect(router.recoverExpired()).toBe(0);
+      }
+      current = '2026-10-20T01:10:04.000Z';
+      // Even if recovery has not run yet, an expired owner cannot revive itself.
+      expect(() => router.renewClaim(first.delivery.id, first.delivery.attemptCount)).toThrow();
+      expect(router.recoverExpired()).toBe(1);
+      const next = (await router.claimNext('agent-b'))!;
+      expect(() => router.renewClaim(first.delivery.id, first.delivery.attemptCount)).toThrowError(
+        expect.objectContaining({ code: 'STALE_DELIVERY_CLAIM' }),
+      );
+      router.renewClaim(next.delivery.id, next.delivery.attemptCount);
+      await router.acknowledge(next.delivery.id, next.delivery.attemptCount);
+    } finally {
+      storage.close();
+    }
   });
 
   it('preserves correlation and reply chains without routing through a Boss', async () => {

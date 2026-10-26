@@ -9,17 +9,9 @@ export const CapabilityQuerySchema = z
     exact: z.array(z.string().trim().min(1).max(128)).optional(),
     prefixes: z.array(z.string().trim().min(1).max(128)).optional(),
     custom: z.string().trim().min(1).max(256).optional(),
-    limit: z.number().int().positive().max(100).optional(),
+    limit: z.number().int().positive().max(100).default(50),
   })
-  .strict()
-  .superRefine((query, context) => {
-    if (!(query.exact?.length || query.prefixes?.length || query.custom)) {
-      context.addIssue({
-        code: 'custom',
-        message: 'At least one exact capability, prefix, or custom query is required.',
-      });
-    }
-  });
+  .strict();
 
 export type CapabilityQuery = z.input<typeof CapabilityQuerySchema>;
 export type CapabilityQueryContext = Readonly<Record<string, unknown>>;
@@ -121,6 +113,10 @@ export class CapabilitySelector<TContext = CapabilityQueryContext> {
       }
 
       const matchedNames = new Set<string>([
+        // Initial discovery lists candidates before the Boss chooses capabilities.
+        ...(!exact.length && !prefixes.length && !query.custom
+          ? agent.capabilities.map((capability) => capability.name)
+          : []),
         ...matchedExact,
         ...agent.capabilities
           .filter((capability) => prefixes.some((prefix) => capability.name.startsWith(prefix)))

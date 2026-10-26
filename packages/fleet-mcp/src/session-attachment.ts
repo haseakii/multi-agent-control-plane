@@ -1,4 +1,5 @@
 import { isAbsolute } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { McpServer } from '@agentclientprotocol/sdk';
 import type { AgentDefinition, AgentId, BridgeScope } from '@control-plane/core';
 
@@ -28,13 +29,19 @@ export type FleetMcpLaunchConfig = {
   serverName?: string | undefined;
 };
 
-export type FleetBossSessionContext = {
+export function getFleetMcpStdioProxyPath(): string {
+  return fileURLToPath(new URL('./stdio-proxy-main.js', import.meta.url));
+}
+
+export type FleetSessionContext = {
   agent: AgentDefinition;
   projectId: string;
   taskId?: string | undefined;
   scopes: BridgeScope[];
   cwd: string;
 };
+
+export type FleetBossSessionContext = FleetSessionContext;
 
 export type FleetSessionRef = {
   sessionId: string;
@@ -56,20 +63,17 @@ export type FleetAttachedSession = {
   bridgeGrantExpiresAt: string;
 };
 
-function validateContext(context: FleetBossSessionContext): void {
+function validateContext(context: FleetSessionContext): void {
   const { agent, scopes } = context;
 
   if (!agent.enabled) {
-    throw new TypeError('Disabled agents cannot receive a Fleet MCP Boss attachment.');
+    throw new TypeError('Disabled agents cannot receive a Fleet MCP attachment.');
   }
-  if (!agent.orchestration.canBeBoss) {
+  if (scopes.includes('boss.orchestration') && !agent.orchestration.canBeBoss) {
     throw new TypeError('AgentDefinition is not Boss-capable.');
   }
   if (agent.controlBridge.transport !== 'mcp') {
-    throw new TypeError('Boss AgentDefinition must use the MCP control bridge transport.');
-  }
-  if (!scopes.includes('boss.orchestration')) {
-    throw new TypeError('Boss session scopes must include boss.orchestration.');
+    throw new TypeError('AgentDefinition must use the MCP control bridge transport.');
   }
 
   const configured = new Set(agent.controlBridge.scopes);
@@ -86,10 +90,7 @@ function validateLaunch(launch: FleetMcpLaunchConfig): void {
   }
 }
 
-function grantRequest(
-  context: FleetBossSessionContext,
-  sessionId?: string,
-): FleetBridgeGrantRequest {
+function grantRequest(context: FleetSessionContext, sessionId?: string): FleetBridgeGrantRequest {
   return {
     agentId: context.agent.id,
     projectId: context.projectId,
@@ -113,7 +114,7 @@ function mcpServerConfig(launch: FleetMcpLaunchConfig, grant: FleetBridgeGrant):
   } as McpServer;
 }
 
-export class FleetBossSessionAttachment {
+export class FleetSessionAttachment {
   constructor(
     private readonly runtime: FleetSessionRuntime,
     private readonly grantIssuer: FleetBridgeGrantIssuer,
@@ -122,8 +123,12 @@ export class FleetBossSessionAttachment {
     validateLaunch(launch);
   }
 
-  async create(context: FleetBossSessionContext): Promise<FleetAttachedSession> {
+  protected validateContext(context: FleetSessionContext): void {
     validateContext(context);
+  }
+
+  async create(context: FleetSessionContext): Promise<FleetAttachedSession> {
+    this.validateContext(context);
     const grant = await this.grantIssuer.issue(grantRequest(context));
 
     try {
@@ -142,8 +147,8 @@ export class FleetBossSessionAttachment {
     }
   }
 
-  async resume(sessionId: string, context: FleetBossSessionContext): Promise<FleetAttachedSession> {
-    validateContext(context);
+  async resume(sessionId: string, context: FleetSessionContext): Promise<FleetAttachedSession> {
+    this.validateContext(context);
     const grant = await this.grantIssuer.issue(grantRequest(context, sessionId));
 
     try {
@@ -158,6 +163,18 @@ export class FleetBossSessionAttachment {
     } catch (error) {
       await this.grantIssuer.revoke(grant.token);
       throw error;
+    }
+  }
+}
+
+export class FleetBossSessionAttachment extends FleetSessionAttachment {
+  protected override validateContext(context: FleetBossSessionContext): void {
+    super.validateContext(context);
+    if (!context.agent.orchestration.canBeBoss) {
+      throw new TypeError('AgentDefinition is not Boss-capable.');
+    }
+    if (!context.scopes.includes('boss.orchestration')) {
+      throw new TypeError('Boss session scopes must include boss.orchestration.');
     }
   }
 }

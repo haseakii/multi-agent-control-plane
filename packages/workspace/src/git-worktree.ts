@@ -87,7 +87,7 @@ export class GitWorktreeWorkspaceProvider {
             rootPath: targetPath,
             access: 'read-write',
             repositoryId: repositoryPath,
-            baseRevision: parsed.baseRef,
+            baseRevision: parsed.reviewBaseRevision ?? parsed.baseRef,
             branchName: parsed.branchName,
           });
           return this.storage.repositories.workspaces.upsert(workspace);

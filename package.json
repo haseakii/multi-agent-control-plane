@@ -11,10 +11,14 @@
     "dev:server": "pnpm --filter @control-plane/server dev",
     "dev:web": "pnpm --filter @control-plane/web dev",
     "build": "pnpm -r --if-present build",
-    "typecheck": "pnpm --filter @control-plane/core build && pnpm --filter @control-plane/storage build && pnpm --filter @control-plane/runner build && pnpm --filter @control-plane/acp-runtime build && pnpm --filter @control-plane/policy build && pnpm --filter @control-plane/fleet-mcp build && pnpm -r --if-present typecheck",
-    "test": "pnpm --filter @control-plane/core build && pnpm --filter @control-plane/storage build && pnpm --filter @control-plane/runner build && pnpm --filter @control-plane/acp-runtime build && pnpm --filter @control-plane/policy build && pnpm --filter @control-plane/task-engine build && pnpm --filter @control-plane/message-router build && pnpm --filter @control-plane/artifact-store build && pnpm --filter @control-plane/fleet-mcp build && vitest run",
+    "typecheck": "pnpm --filter @control-plane/core build && pnpm --filter @control-plane/storage build && pnpm --filter @control-plane/runner build && pnpm --filter @control-plane/acp-runtime build && pnpm --filter @control-plane/policy build && pnpm --filter @control-plane/task-engine build && pnpm --filter @control-plane/message-router build && pnpm --filter @control-plane/artifact-store build && pnpm --filter @control-plane/fleet-mcp build && pnpm --filter @control-plane/workspace build && pnpm -r --if-present typecheck",
+    "test": "pnpm --filter @control-plane/core build && pnpm --filter @control-plane/storage build && pnpm --filter @control-plane/runner build && pnpm --filter @control-plane/acp-runtime build && pnpm --filter @control-plane/policy build && pnpm --filter @control-plane/task-engine build && pnpm --filter @control-plane/message-router build && pnpm --filter @control-plane/artifact-store build && pnpm --filter @control-plane/fleet-mcp build && pnpm --filter @control-plane/workspace build && vitest run",
     "test:e2e": "playwright test",
-    "lint": "prettier --check \"apps/**/*.{ts,tsx,css,html,json}\" \"packages/**/*.{ts,json}\" \"*.json\" \".github/workflows/*.yml\" \"playwright.config.ts\" \"vitest.config.ts\" \".prettierrc.json\""
+    "test:e2e:live": "playwright test --config playwright.live.config.ts",
+    "lint": "prettier --check \"apps/**/*.{ts,tsx,css,html,json}\" \"packages/**/*.{ts,json}\" \"integrations/hermes-workbench/src/**/*.{ts,tsx,css}\" \"integrations/hermes-workbench/tests/*.{ts,mjs}\" \"*.json\" \".github/workflows/*.yml\" \"playwright.config.ts\" \"vitest.config.ts\" \".prettierrc.json\"",
+    "diagnose:agent": "pnpm --filter @control-plane/core build && tsx packages/runner/src/diagnose-agent.ts",
+    "prepare:collaboration": "pnpm --filter @control-plane/core build && pnpm --filter @control-plane/runner build && node packages/runner/dist/prepare-collaboration.js",
+    "release:windows": "pnpm build && node scripts/build-windows-release.mjs"
   },
   "devDependencies": {
     "@playwright/test": "1.52.0",
@@ -32,7 +36,9 @@
   },
   "pnpm": {
     "onlyBuiltDependencies": [
-      "esbuild",
+      "esbuild"
+    ],
+    "ignoredBuiltDependencies": [
       "better-sqlite3"
     ]
   }

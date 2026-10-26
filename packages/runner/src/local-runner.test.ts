@@ -31,6 +31,41 @@ async function collectEvents(
 }
 
 describe('LocalRunner', () => {
+  it.runIf(process.platform === 'win32')(
+    'stops a launcher with a child that inherits its output pipes',
+    async () => {
+      const runner = new LocalRunner({ id: 'launcher-stop' });
+      const handle = await runner.spawn({
+        command: process.execPath,
+        args: [
+          '-e',
+          `const {spawn}=require('node:child_process'); const child=spawn(process.execPath,['-e',"console.log('child-ready');setInterval(()=>{},1000)"],{stdio:['ignore','inherit','inherit'],windowsHide:true});setInterval(()=>{},1000);`,
+        ],
+        cwd: tempDirectory(),
+        timeoutMs: 10000,
+      });
+      try {
+        for await (const event of runner.events(handle)) {
+          if (event.type === 'process.stdout' && event.chunk.includes('child-ready')) break;
+        }
+        expect((await runner.stop(handle)).state).toBe('exited');
+      } finally {
+        await runner.stop(handle);
+      }
+    },
+    15000,
+  );
+
+  it.runIf(process.platform === 'win32').each(['.cmd', '.bat', '.ps1'])(
+    'rejects a Windows %s wrapper before spawning',
+    async (extension) => {
+      const runner = new LocalRunner();
+      await expect(runner.spawn({ command: `C:/missing/adapter${extension}` })).rejects.toThrow(
+        'Windows .cmd/.bat/.ps1 wrappers cannot run with shell:false',
+      );
+    },
+  );
+
   it('spawns a process and exposes normalized stdout/stderr/exit events with runner identity', async () => {
     const runner = new LocalRunner({ id: 'runner-local-test', labels: ['test'] });
     const handle = await runner.spawn({

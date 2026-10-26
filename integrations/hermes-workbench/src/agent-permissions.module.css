@@ -1,0 +1,46 @@
+.host {
+  position: relative;
+}
+.panel {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 50;
+  width: min(390px, 85vw);
+  padding: 20px;
+  background: var(--h-bg-pane, #fff);
+  color: var(--h-text, #222);
+  border: 1px solid #d5d1c9;
+  border-radius: 12px;
+  box-shadow: 0 12px 40px #0002;
+  text-align: left;
+  max-height: 80vh;
+  overflow: auto;
+}
+.panel header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.panel p {
+  line-height: 1.6;
+  font-size: 13px;
+  margin: 10px 0;
+}
+.panel label {
+  display: grid;
+  gap: 5px;
+  margin: 14px 0;
+  font-size: 13px;
+}
+.panel select {
+  width: 100%;
+  border: 1px solid #bfb9ae;
+  border-radius: 6px;
+  padding: 8px;
+  background: inherit;
+  color: inherit;
+}
+.note {
+  opacity: 0.75;
+}

@@ -1,0 +1,16 @@
+{
+  "id": "codex-acp-local-example",
+  "name": "Codex ACP (disabled preparation example)",
+  "description": "Unverified local integration candidate; replace placeholder paths only after separate adapter-install and connection approval.",
+  "enabled": false,
+  "runtime": {
+    "type": "acp-stdio",
+    "command": "C:/path/to/node.exe",
+    "args": ["C:/path/to/local-adapters/node_modules/@agentclientprotocol/codex-acp/dist/index.js"],
+    "environmentAllowlist": []
+  },
+  "capabilities": [{ "name": "code.review", "source": "configured" }],
+  "auth": { "mode": "agent-managed" },
+  "orchestration": { "canBeBoss": false },
+  "controlBridge": { "transport": "none", "scopes": [] }
+}

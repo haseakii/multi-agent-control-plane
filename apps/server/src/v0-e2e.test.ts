@@ -419,7 +419,7 @@ describe('V0 multi-agent integration path', () => {
     );
     const claimed = await router.claimNext(bossDefinition.id);
     expect(claimed?.message.id).toBe(response.message.id);
-    await router.acknowledge(response.delivery.id);
+    await router.acknowledge(claimed!.delivery.id, claimed!.delivery.attemptCount);
 
     taskEngine.transitionTask('root-task', 'running');
     const bossFinal = await promptText(

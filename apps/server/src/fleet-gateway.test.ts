@@ -122,11 +122,13 @@ describe('Fleet bridge gateway', () => {
 
   it('rejects missing, invalid, and not-yet-bound grants before application dispatch', async () => {
     const execute = vi.fn();
+    const auditDenied = vi.fn(async () => undefined);
     const invalidApp = buildServer({
       fleetGateway: {
         grants: grants(),
         getAgent: () => agent(),
         execute,
+        auditDenied,
       },
     });
 
@@ -154,6 +156,7 @@ describe('Fleet bridge gateway', () => {
         grants: grants(false),
         getAgent: () => agent(),
         execute,
+        auditDenied,
       },
     });
     const pending = await pendingApp.inject({
@@ -164,7 +167,59 @@ describe('Fleet bridge gateway', () => {
     });
     expect(pending.statusCode).toBe(409);
     expect(execute).not.toHaveBeenCalled();
+    expect(auditDenied.mock.calls.map(([record]) => record.reason)).toEqual([
+      'authorization_missing',
+      'authorization_invalid',
+      'session_unbound',
+    ]);
+    expect(JSON.stringify(auditDenied.mock.calls)).not.toContain('valid-grant');
+    expect(JSON.stringify(auditDenied.mock.calls)).not.toContain('wrong');
     await pendingApp.close();
+  });
+
+  it('allows messaging-only worker grants without Boss privileges and rejects escalation', async () => {
+    const worker = AgentDefinitionSchema.parse({
+      ...agent(),
+      orchestration: { canBeBoss: false },
+      controlBridge: { transport: 'mcp', scopes: ['agent.messaging', 'boss.orchestration'] },
+    });
+    let elevated = false;
+    const resolver: FleetBridgeGrantResolver = {
+      resolve: () => ({
+        agentId: worker.id,
+        projectId: 'project-1',
+        taskId: 'task-1',
+        sessionId: 'worker-session',
+        scopes: elevated ? ['boss.orchestration'] : ['agent.messaging'],
+        expiresAt: '2026-10-20T06:00:00.000Z',
+      }),
+    };
+    const auditDenied = vi.fn(async () => undefined);
+    const app = buildServer({
+      fleetGateway: { grants: resolver, getAgent: () => worker, execute: vi.fn(), auditDenied },
+    });
+    const manifest = await app.inject({
+      method: 'GET',
+      url: '/internal/fleet/manifest',
+      headers: { authorization: 'Bearer valid-grant' },
+    });
+    expect(manifest.statusCode).toBe(200);
+    expect(manifest.json().agent.controlBridge.scopes).toEqual(['agent.messaging']);
+    expect(manifest.json().agent.orchestration.canBeBoss).toBe(false);
+    elevated = true;
+    expect(
+      (
+        await app.inject({
+          method: 'GET',
+          url: '/internal/fleet/manifest',
+          headers: { authorization: 'Bearer valid-grant' },
+        })
+      ).statusCode,
+    ).toBe(403);
+    expect(auditDenied).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: 'scope_ineligible' }),
+    );
+    await app.close();
   });
 
   it('rejects grants whose scopes exceed the current AgentDefinition ceiling', async () => {

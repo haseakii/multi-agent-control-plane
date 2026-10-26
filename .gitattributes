@@ -1,0 +1,5 @@
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+# Historical unified diffs contain single-space context lines; preserve them verbatim.
+docs/reviews/*.patch -whitespace

@@ -1,0 +1,23 @@
+{
+  "react-remove-scroll-bar@2.3.8": {
+    "file": "react-remove-scroll-bar-MIT.txt",
+    "sha256": "a79aae0c0f21990d9d963bb3c5a79cdcea9a46f8523ba55c58d7fe776b6ebc84",
+    "license": "MIT",
+    "repository": "https://github.com/theKashey/react-remove-scroll-bar",
+    "source": "https://raw.githubusercontent.com/theKashey/react-remove-scroll-bar/master/LICENSE"
+  },
+  "rehype-katex@7.0.1": {
+    "file": "remark-math-MIT.txt",
+    "sha256": "b4c9077a6fe03b40387623026f4de8c05ad819f1f86e7e0ad3230976bbf3fd90",
+    "license": "MIT",
+    "repository": "https://github.com/remarkjs/remark-math/tree/main/packages/rehype-katex",
+    "source": "https://raw.githubusercontent.com/remarkjs/remark-math/main/license"
+  },
+  "remark-math@6.0.0": {
+    "file": "remark-math-MIT.txt",
+    "sha256": "b4c9077a6fe03b40387623026f4de8c05ad819f1f86e7e0ad3230976bbf3fd90",
+    "license": "MIT",
+    "repository": "https://github.com/remarkjs/remark-math/tree/main/packages/remark-math",
+    "source": "https://raw.githubusercontent.com/remarkjs/remark-math/main/license"
+  }
+}

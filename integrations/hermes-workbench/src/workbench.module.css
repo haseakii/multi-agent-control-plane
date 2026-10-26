@@ -1,0 +1,684 @@
+.app {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--h-bg);
+  color: var(--h-text);
+  font-family: var(--h-font-sans, sans-serif);
+}
+:where(.app) button,
+:where(.app) select {
+  font: inherit;
+  color: inherit;
+}
+.app button {
+  cursor: pointer;
+}
+.app button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.topbar {
+  height: 64px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 32px;
+  border-bottom: 1px solid var(--h-line);
+  padding: 0 24px;
+  background: var(--h-bg-pane);
+}
+.brand {
+  display: flex;
+  flex-direction: column;
+  width: 208px;
+  gap: 4px;
+}
+.brand strong {
+  font-size: 16px;
+}
+.brand small {
+  font-size: 11px;
+  color: var(--h-text-3);
+}
+.activeTab {
+  background: #ff7443;
+  color: white;
+  padding: 8px 20px;
+  font-size: 13px;
+}
+.mode {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--h-text-3);
+}
+.topbar button,
+.taskHeader button {
+  border: 1px solid var(--h-line);
+  background: var(--h-bg-pane);
+  padding: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.layout {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.sidebar {
+  width: 240px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 24px 12px 16px;
+  border-right: 1px solid var(--h-line);
+  background: var(--h-bg-pane);
+}
+.newTask {
+  border: 1px solid var(--h-line);
+  background: var(--h-bg-soft);
+  padding: 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-weight: 600;
+}
+.sectionLabel {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  letter-spacing: 1px;
+  color: var(--h-text-3);
+  padding: 28px 8px 12px;
+}
+.sidebar nav {
+  overflow: auto;
+  flex: 1;
+}
+.taskSearch {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+.taskSearch input,
+.taskSearch select,
+.taskSearch button {
+  min-width: 0;
+  width: 100%;
+  padding: 8px;
+  border: 1px solid var(--h-line);
+  border-radius: 4px;
+  background: var(--h-bg-pane);
+  color: var(--h-text);
+  font: inherit;
+  font-size: 12px;
+}
+.taskSearch :focus-visible {
+  outline: 2px solid #ec6435;
+  outline-offset: 2px;
+}
+.task small[data-state='attention'] {
+  color: #b45c13;
+}
+.taskRow {
+  position: relative;
+}
+.renameButton {
+  position: absolute;
+  top: 10px;
+  right: 4px;
+  padding: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--h-text-3);
+}
+.renameButton:hover,
+.renameButton:focus-visible {
+  color: var(--h-text);
+  background: var(--h-bg-soft);
+}
+.renameForm {
+  padding: 12px 8px;
+  margin-bottom: 4px;
+  border: 1px solid var(--h-line);
+  font-size: 12px;
+}
+.renameForm label {
+  display: grid;
+  gap: 8px;
+}
+.renameForm input {
+  min-width: 0;
+  width: 100%;
+  padding: 7px;
+  border: 1px solid var(--h-line);
+  background: var(--h-bg);
+  color: var(--h-text);
+  font: inherit;
+}
+.renameForm > div {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+.renameForm button {
+  border: 1px solid var(--h-line);
+  padding: 5px 10px;
+  background: var(--h-bg-soft);
+}
+.renameForm p {
+  color: #b54718;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.renameForm small {
+  display: block;
+  color: var(--h-text-2);
+}
+.task {
+  width: 100%;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  padding: 12px 34px 12px 12px;
+  margin-bottom: 4px;
+}
+.task[data-selected='true'] {
+  background: var(--h-bg-soft);
+  border-left: 3px solid #ff7443;
+}
+.task > span {
+  font-size: 13px;
+  line-height: 1.5;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.task small {
+  font-size: 11px;
+  color: var(--h-text-3);
+}
+.taskProject {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.locateTask {
+  display: block;
+  margin-top: 6px;
+  padding: 5px 8px;
+  border: 1px solid var(--h-line);
+  background: var(--h-bg-soft);
+  color: var(--h-text);
+  font: inherit;
+}
+.task small[data-state='completed'] {
+  color: #208762;
+}
+.sidebarHint {
+  font-size: 12px;
+  line-height: 1.8;
+  color: var(--h-text-3);
+  padding: 8px;
+}
+.sidebarFooter {
+  font-size: 11px;
+  color: var(--h-text-2);
+  margin-top: auto;
+  padding: 20px 8px 0;
+  line-height: 2;
+}
+.sidebarFooter small {
+  display: block;
+  color: var(--h-text-3);
+  padding-left: 12px;
+}
+.statusDot {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #2bb88a;
+  margin-right: 5px;
+}
+.main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.home {
+  overflow: auto;
+  flex: 1;
+  padding: 24px max(32px, calc((100% - 960px) / 2));
+}
+.home > div:first-child h1 {
+  font-size: 36px;
+  line-height: 1.15;
+}
+.intro {
+  font-size: 14px;
+  line-height: 1.8;
+  color: var(--h-text-2);
+  margin: 16px 0;
+}
+.selection {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  font-size: 12px;
+  margin: 0 0 12px;
+  color: var(--h-text-3);
+}
+.selection label {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.selection select {
+  background: var(--h-bg-pane);
+  border: 1px solid var(--h-line);
+  padding: 8px 12px;
+  max-width: 300px;
+  color: var(--h-text);
+}
+.examples {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 20px 0 36px;
+  color: var(--h-text-3);
+  font-size: 12px;
+}
+.draftNotice {
+  margin: 12px 0 0;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--h-text-2);
+}
+.examples button {
+  padding: 8px 12px;
+  background: var(--h-bg-pane);
+  border: 1px solid var(--h-line);
+  font-size: 12px;
+}
+.explainer {
+  display: flex;
+  gap: 16px;
+  border-top: 1px solid var(--h-line);
+  padding: 24px 0;
+  color: var(--h-text-2);
+  line-height: 1.8;
+  font-size: 12px;
+}
+.explainer p {
+  margin: 4px 0;
+  max-width: 650px;
+}
+.taskHeader {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  border-bottom: 1px solid var(--h-line);
+  padding: 20px 24px;
+  min-height: 84px;
+}
+.taskHeader > div {
+  flex: 1;
+  min-width: 0;
+}
+.taskHeader h1 {
+  font-size: 16px;
+  margin: 0 0 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.taskHeader small {
+  color: var(--h-text-3);
+  font-size: 12px;
+}
+.projectContext {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding: 8px 24px;
+  border-bottom: 1px solid var(--h-line);
+  color: var(--h-text-3);
+  font-size: 12px;
+}
+.projectContext strong {
+  color: var(--h-text-2);
+  overflow-wrap: anywhere;
+}
+.projectContext button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--h-line);
+  border-radius: 5px;
+  color: var(--h-text);
+  background: var(--h-bg-pane);
+  font: inherit;
+  cursor: pointer;
+}
+.projectContext button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.projectNotice {
+  margin: 0 0 12px;
+  color: var(--h-text-3);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.execution {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.previewMount {
+  width: min(850px, 54%);
+  min-width: 360px;
+  flex-shrink: 0;
+}
+.previewMount[hidden] {
+  display: none;
+}
+.taskHeader button[aria-pressed='true'] {
+  background: var(--h-bg-soft);
+  border-color: #ff7443;
+}
+.conversation {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.steps {
+  display: flex;
+  gap: 16px;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--h-line);
+  font-size: 11px;
+  flex-wrap: wrap;
+  color: var(--h-text-3);
+}
+.steps span[data-done='true'] {
+  color: #248968;
+}
+.timeline {
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+.taskFeedback {
+  flex-shrink: 0;
+  max-height: 28vh;
+  overflow: auto;
+  padding: 12px 24px;
+  border-bottom: 1px solid var(--h-line);
+  background: var(--h-bg-soft);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.taskFeedback article + article {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--h-line);
+}
+.taskFeedback p {
+  margin: 4px 0;
+  color: var(--h-text-2);
+}
+.taskFeedback pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 140px;
+  overflow: auto;
+}
+.taskFeedback article > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.taskFeedback button,
+.draftNotice button {
+  padding: 5px 10px;
+  border: 1px solid var(--h-line);
+  background: var(--h-bg-pane);
+}
+.draftNotice button {
+  margin-left: 12px;
+}
+.instructionReceipt {
+  margin: 6px 0;
+  font-size: 12px;
+  color: var(--h-text-2);
+}
+.connectionHint {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 12px 16px;
+  margin: 0 0 16px;
+  border: 1px solid var(--h-line);
+  background: var(--h-bg-soft);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.connectionHint p {
+  margin: 4px 0 0;
+  color: var(--h-text-2);
+}
+.connectionHint button {
+  padding: 8px 12px;
+  border: 1px solid var(--h-line);
+  background: var(--h-bg-pane);
+}
+.taskFooter {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 24px;
+  border-top: 1px solid var(--h-line);
+  font-size: 12px;
+}
+.followUp {
+  flex-shrink: 0;
+  padding: 0 20px 12px;
+}
+.followUp small {
+  display: block;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--h-text-3);
+}
+.taskFooter > span {
+  flex: 1;
+  color: var(--h-text-3);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.taskFooter button,
+.error button,
+.approvals button {
+  padding: 8px 16px;
+  border: 1px solid var(--h-line);
+  background: var(--h-bg-pane);
+}
+.taskFooter button.primary {
+  background: #ff7443;
+  color: white;
+  border-color: #ff7443;
+}
+.results {
+  width: 340px;
+  border-left: 1px solid var(--h-line);
+  padding: 24px;
+  overflow: auto;
+}
+.results h2 {
+  font-size: 15px;
+  margin: 0 0 24px;
+}
+.results article {
+  padding: 16px 0;
+  border-bottom: 1px solid var(--h-line);
+}
+.results strong {
+  font-size: 13px;
+}
+.results p {
+  font-size: 12px;
+  line-height: 1.8;
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+}
+.results a {
+  font-size: 12px;
+  color: #e06532;
+}
+.error {
+  padding: 12px 24px;
+  background: #fff1e9;
+  color: #7b3a20;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+.error button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.approvals {
+  padding: 20px;
+  border: 1px solid var(--h-line);
+  font-size: 13px;
+}
+.approvals pre {
+  white-space: pre-wrap;
+  font-size: 12px;
+  max-height: 200px;
+  overflow: auto;
+}
+.approvals dl {
+  display: grid;
+  grid-template-columns: 3em minmax(0, 1fr);
+  gap: 6px 12px;
+}
+.approvals dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.approvals small {
+  display: block;
+  margin: 12px 0;
+}
+.approvals button {
+  margin-right: 8px;
+}
+.bottom {
+  display: flex;
+  justify-content: space-between;
+  border-top: 1px solid var(--h-line);
+  padding: 6px 16px;
+  font-size: 10px;
+  color: var(--h-text-3);
+  background: var(--h-bg-pane);
+}
+@media (max-width: 1000px) {
+  .sidebar {
+    width: 200px;
+  }
+  .home {
+    padding: 28px;
+  }
+  .mode {
+    display: none;
+  }
+  .results {
+    width: 280px;
+  }
+  .taskHeader {
+    gap: 8px;
+    padding: 12px;
+  }
+  .steps {
+    gap: 8px;
+    padding: 12px;
+  }
+}
+@media (max-width: 760px) {
+  .sidebar {
+    width: 150px;
+    padding: 16px 8px;
+  }
+  .topbar {
+    padding: 0 12px;
+    gap: 16px;
+  }
+  .brand {
+    width: auto;
+  }
+  .home {
+    padding: 20px;
+  }
+  .selection {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .selection select {
+    max-width: 210px;
+  }
+  .execution {
+    position: relative;
+  }
+  .execution > aside {
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    background: var(--h-bg-pane);
+    z-index: 3;
+    max-width: 90%;
+  }
+  .previewMount {
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 90%;
+    min-width: 0;
+    z-index: 3;
+  }
+  .bottom span {
+    display: none;
+  }
+  .taskHeader button {
+    font-size: 11px;
+  }
+  .taskFooter {
+    flex-wrap: wrap;
+  }
+}

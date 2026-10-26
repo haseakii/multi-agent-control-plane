@@ -1,9 +1,16 @@
-import type { AgentAuthMethodSummary, AgentReadiness } from '@control-plane/acp-runtime';
+import type {
+  AgentAuthMethodSummary,
+  AgentReadiness,
+  AgentNegotiation,
+} from '@control-plane/acp-runtime';
 import { createHash } from 'node:crypto';
 import {
   AgentDefinitionSchema,
   AgentMessageSchema,
   ApprovalSchema,
+  ApprovalReadDiagnosticsSchema,
+  ApprovalViewSchema,
+  ApprovalDecisionEligibilitySchema,
   ArtifactSchema,
   AssignmentSchema,
   AuditEventSchema,
@@ -13,8 +20,14 @@ import {
   RunnerSchema,
   TaskSchema,
   WorkspaceSchema,
+  ProjectWorkspaceConfigSchema,
+  AssignmentWorkspaceSchema,
+  WorkspaceCleanupSchema,
+  MessageDeliveryViewSchema,
 } from '@control-plane/core';
 import type { SqliteStorage } from '@control-plane/storage';
+import { SqliteMessageRouterStore, messageDeliveryView } from '@control-plane/message-router';
+import { conversationTaskIds, type ControlCenterReadOptions } from './conversation-snapshot.js';
 
 export type ControlCenterSnapshot = {
   generatedAt: string;
@@ -23,16 +36,30 @@ export type ControlCenterSnapshot = {
     definition: ReturnType<typeof AgentDefinitionSchema.parse>;
     readiness: AgentReadiness;
     authMethods: AgentAuthMethodSummary[];
+    negotiation?: AgentNegotiation;
+    localEntry?: { offlineChecksPassed: boolean; issues: Array<{ code: string; message: string }> };
     error?: string | undefined;
   }>;
   tasks: ReturnType<typeof TaskSchema.parse>[];
   assignments: ReturnType<typeof AssignmentSchema.parse>[];
+  executionAttempts?: ReturnType<typeof ExecutionAttemptSchema.parse>[];
   timeline: ReturnType<typeof AuditEventSchema.parse>[];
   messages: ReturnType<typeof AgentMessageSchema.parse>[];
-  approvals: ReturnType<typeof ApprovalSchema.parse>[];
+  messageDeliveries?: ReturnType<typeof MessageDeliveryViewSchema.parse>[];
+  approvals: ReturnType<typeof ApprovalViewSchema.parse>[];
+  approvalReadDiagnostics?: ReturnType<typeof ApprovalReadDiagnosticsSchema.parse>;
   artifacts: ReturnType<typeof ArtifactSchema.parse>[];
   runners: ReturnType<typeof RunnerSchema.parse>[];
   workspaces: ReturnType<typeof WorkspaceSchema.parse>[];
+  workspaceConfigs?: ReturnType<typeof ProjectWorkspaceConfigSchema.parse>[];
+  assignmentWorkspaces?: ReturnType<typeof AssignmentWorkspaceSchema.parse>[];
+  workspaceCleanups?: ReturnType<typeof WorkspaceCleanupSchema.parse>[];
+  directoryBindings?: Array<{
+    id: string;
+    projectId: string;
+    rootPath: string;
+    confirmationVersion?: string;
+  }>;
 };
 
 function sha256(value: string): string {
@@ -270,18 +297,53 @@ export type AgentRuntimeStateProvider = (
 ) => {
   readiness: AgentReadiness;
   authMethods: AgentAuthMethodSummary[];
+  negotiation?: AgentNegotiation;
+  localEntry?: { offlineChecksPassed: boolean; issues: Array<{ code: string; message: string }> };
   error?: string | undefined;
 };
 
 export function readControlCenterSnapshot(
   storage: SqliteStorage,
   runtimeState?: AgentRuntimeStateProvider,
+  bindingVersion?: (id: string) => string,
+  approvalEligibility?: (
+    approval: ReturnType<typeof ApprovalSchema.parse>,
+  ) => ReturnType<typeof ApprovalDecisionEligibilitySchema.parse>,
+  options?: ControlCenterReadOptions,
 ): ControlCenterSnapshot {
   const repositories = storage.repositories;
   const generatedAt = new Date().toISOString();
+  const approvalRead = repositories.approvals.listWithDiagnostics();
+  const tasks = repositories.tasks.list(),
+    messages = repositories.messages.list();
+  const messageStore = new SqliteMessageRouterStore(storage);
+  const executionAttempts = repositories.executionAttempts.list();
+  const projects = repositories.projects.list();
+  const followUps =
+    options?.view === 'conversation'
+      ? projects.flatMap((project) =>
+          repositories.events.listByProject(project.id, {
+            taskIds: [],
+            types: ['task.followup.created'],
+          }),
+        )
+      : undefined;
+  const taskIds = followUps
+    ? [...conversationTaskIds({ tasks, timeline: followUps }, options?.taskId)]
+    : [];
+  const timeline = (
+    followUps && !taskIds.length
+      ? followUps
+      : projects.flatMap((project) =>
+          repositories.events.listByProject(
+            project.id,
+            followUps ? { taskIds, types: ['task.followup.created'] } : undefined,
+          ),
+        )
+  ).sort((left, right) => left.occurredAt.localeCompare(right.occurredAt));
   return {
     generatedAt,
-    projects: repositories.projects.list(),
+    projects,
     agents: repositories.agentDefinitions.list().map((definition) => ({
       definition,
       ...(runtimeState?.(definition.id) ?? {
@@ -294,16 +356,46 @@ export function readControlCenterSnapshot(
         authMethods: [],
       }),
     })),
-    tasks: repositories.tasks.list(),
+    tasks,
     assignments: repositories.assignments.list(),
-    timeline: repositories.projects
-      .list()
-      .flatMap((project) => repositories.events.listByProject(project.id))
-      .sort((left, right) => left.occurredAt.localeCompare(right.occurredAt)),
-    messages: repositories.messages.list(),
-    approvals: repositories.approvals.list(),
+    executionAttempts,
+    timeline,
+    messages,
+    messageDeliveries: messages.map((message) =>
+      messageDeliveryView(
+        message,
+        messageStore.getDeliveryByMessage(message.id),
+        tasks,
+        generatedAt,
+        executionAttempts,
+      ),
+    ),
+    approvals: approvalRead.approvals.map((approval) =>
+      ApprovalViewSchema.parse({
+        ...approval,
+        decisionEligibility: approvalEligibility?.(approval) ?? {
+          canApprove: false,
+          canReject: false,
+          reason: 'runtime_unavailable',
+          checkedAt: generatedAt,
+          validForMs: 0,
+        },
+      }),
+    ),
+    approvalReadDiagnostics: approvalRead.diagnostics,
     artifacts: repositories.artifacts.list(),
     runners: repositories.runners.list(),
     workspaces: repositories.workspaces.list(),
+    workspaceConfigs: repositories.projectWorkspaceConfigs.list(),
+    assignmentWorkspaces: repositories.assignmentWorkspaces.list(),
+    workspaceCleanups: repositories.workspaceCleanups.list(),
+    directoryBindings: repositories.workspaceDirectoryBindings
+      .list()
+      .map(({ id, projectId, rootPath }) => ({
+        id,
+        projectId,
+        rootPath,
+        ...(bindingVersion ? { confirmationVersion: bindingVersion(id) } : {}),
+      })),
   };
 }

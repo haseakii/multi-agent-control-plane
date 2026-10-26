@@ -1,0 +1,205 @@
+diff --git a/integrations/hermes-workbench/src/main.tsx b/integrations/hermes-workbench/src/main.tsx
+--- a/integrations/hermes-workbench/src/main.tsx
++++ b/integrations/hermes-workbench/src/main.tsx
+@@ -59,6 +59,7 @@
+ import { WorkspaceReviewPanel } from './workspace-review';
+ import { WorkspacePicker, useWorkspaceConfirmation } from './workspace-picker';
+ import { pendingTaskApprovals } from './conversation-scope';
++import { loadArtifactPreviews } from './artifact-previews';
+ import { resolveWorkspaceProject, type WorkspaceSelection } from './workspace-api';
+ declare const __HERMES_BUILD_ID__: string;
+ 
+@@ -245,6 +246,7 @@
+   const [bossId, setBossId] = useState('');
+   const [sending, setSending] = useState(false);
+   const [content, setContent] = useState<Record<string, string>>({});
++  const [previewErrors, setPreviewErrors] = useState<Record<string, string>>({});
+   const [instructions, setInstructions] = useState<InstructionData[]>([]);
+   const followUpSubmission = useRef<
+     | {
+@@ -268,6 +270,7 @@
+   const [dark, setDark] = useState(false);
+   const submission = useRef<Submission | undefined>(undefined);
+   const contentRef = useRef<Record<string, string>>({});
++  const previewErrorsRef = useRef<Record<string, string>>({});
+   const activeRef = useRef(activeId);
+   activeRef.current = activeId;
+   const pending = useRef(false);
+@@ -290,17 +293,25 @@
+         const instructionLists = await Promise.all(rounds.map((t) => readInstructions(t.id)));
+         setInstructions(instructionLists.flatMap((i) => i.instructions));
+         const ids = rounds.flatMap((r) => taskFamily(data, r)).flatMap((t) => t.resultArtifactRefs);
++        const previews = ids.filter((id) => {
++          if (contentRef.current[id] === undefined && previewErrorsRef.current[id] === undefined) {
+-        for (const id of ids)
+-          if (contentRef.current[id] === undefined) {
+             const artifact = data.artifacts.find((a) => a.id === id);
++            return (
++              !!artifact &&
+-            if (
+-              artifact &&
+               (artifact.mimeType.startsWith('text/') || artifact.mimeType === 'application/json')
++            );
+-            ) {
+-              contentRef.current[id] = await readArtifact(id);
+-              setContent({ ...contentRef.current });
+-            }
+           }
++          return false;
++        });
++        const loaded = await loadArtifactPreviews(previews, readArtifact);
++        if (Object.keys(loaded.content).length) {
++          Object.assign(contentRef.current, loaded.content);
++          setContent({ ...contentRef.current });
++        }
++        if (Object.keys(loaded.errors).length) {
++          Object.assign(previewErrorsRef.current, loaded.errors);
++          setPreviewErrors({ ...previewErrorsRef.current });
++        }
+       }
+     } catch (e) {
+       setError(e instanceof Error ? e.message : String(e));
+@@ -339,6 +350,12 @@
+   const artifacts =
+     snapshot?.artifacts.filter((a) => family.some((t) => t.resultArtifactRefs.includes(a.id))) ??
+     [];
++  const failedPreviews = artifacts.filter((artifact) => previewErrors[artifact.id] !== undefined);
++  const retryPreview = (id: string) => {
++    delete previewErrorsRef.current[id];
++    setPreviewErrors({ ...previewErrorsRef.current });
++    void refresh();
++  };
+   const approvals = pendingTaskApprovals(snapshot?.approvals ?? [], snapshot?.tasks ?? [], root);
+   const action = async (fn: () => Promise<unknown>) => {
+     setSending(true);
+@@ -683,6 +700,12 @@
+                       4 {root.state === 'completed' ? '汇总完成' : '等待汇总'}
+                     </span>
+                   </div>
++                  {failedPreviews.length > 0 && (
++                    <div className={s.draftNotice} role="status">
++                      有 {failedPreviews.length} 个结果预览未能读取。任务历史仍保留，可查看详情并重试。
++                      <button onClick={() => setRail('results')}>查看结果</button>
++                    </div>
++                  )}
+                   <MessageTimeline
+                     messages={conversationMessages(
+                       rounds,
+@@ -833,7 +856,19 @@
+                               a.name ??
+                               '任务结果'}
+                           </strong>
++                          {previewErrors[a.id] !== undefined ? (
++                            <div role="status">
++                              <p>结果预览读取失败：{previewErrors[a.id]}</p>
++                              <button onClick={() => retryPreview(a.id)}>重新读取</button>
++                            </div>
++                          ) : (
++                            <p>
++                              {content[a.id] ??
++                                (a.mimeType.startsWith('text/') || a.mimeType === 'application/json'
++                                  ? '正在读取预览…'
++                                  : '此文件可下载查看。')}
++                            </p>
++                          )}
+-                          <p>{content[a.id] ?? '此文件可下载查看。'}</p>
+                           <a href={artifactUrl(a.id)} download>
+                             下载结果
+                           </a>
+diff --git a/integrations/hermes-workbench/README.md b/integrations/hermes-workbench/README.md
+--- a/integrations/hermes-workbench/README.md
++++ b/integrations/hermes-workbench/README.md
+@@ -30,6 +30,8 @@
+ 
+ 未结束的任务在等待处理或可恢复状态下也保留“停止任务”，取消仍调用既有服务端接口。完成图标仅用于已完成状态，失败与等待状态按实际状态显示。
+ 
++结果预览的读取错误按产物单独显示，不再中断其他结果的读取或误报为引擎断连；“结果”中可重新读取失败的预览，也保留原下载入口。失败预览不会随每次状态刷新反复请求，点击重新读取后才重试。此改动及回归用例同样尚未运行。
++
+ 历史预置定义缺失时，工作台仍加载数据库中已有的成员；首次空库只导入可读取的预置定义，也可在界面自行注册。已删除的成员不会在重启后重新创建。认证配置仍按已确认的完整启动入口匹配，无法匹配时使用成员自身默认登录环境并在界面检查状态。
+ 
+ 日常完整流程示例：<http://127.0.0.1:8047/?task=task-87da23f9-eb9e-47e5-bbd3-0e10f09e1639>。
+diff --git a/docs/guides/hermes-local-delivery.md b/docs/guides/hermes-local-delivery.md
+--- a/docs/guides/hermes-local-delivery.md
++++ b/docs/guides/hermes-local-delivery.md
+@@ -10,6 +10,8 @@
+ 
+ 失败后修改目标再发送会先核对原草稿及服务端版本，保存当前文字并按本次选择确认负责人；已执行的目标保留历史。审批卡片按当前轮任务树显示并标明来源任务，服务端审批资格仍是执行依据。未结束的任务在等待处理或可恢复状态下保留停止入口，完成图标仅用于已完成状态。上述源码改动及其回归用例均未运行，需纳入统一验收，不能引用历史通过数量作为新结论。
+ 
++单个结果预览读取失败单独显示，保留其他预览及“重新读取”／下载入口；不再因此把协作引擎标为断连，也不随定时状态刷新反复读取失败文件。对应源码与回归用例待统一运行验证。
++
+ 启动器依赖已经准备好的 Web 与服务端构建。Node 查找顺序为仓库下 `runtime/node.exe`、当前开发工作树内原有的 R6.1 随包运行时、系统已有 `node.exe`。不再依赖另一个 C5 工作树的绝对路径；这些回退仅方便当前开发实例，不能据此宣称已完成便携发行。启动器不安装、不编译、不自动替换运行版本。
+ 
+ 重复启动时校验模式、记录的进程及本机健康响应后打开页面；记录进程仍在但不响应时保留现状并给出日志。停止只写入当前模式实例目录的停止标记，等待记录的进程退出，不强制结束进程。模式／PID／时间检查用于避免误操作，不构成认证、OS 隔离或跨进程互斥保证。无记录或停止超时均报告未确认。
+@@ -26,6 +28,18 @@
+ 
+ 现有 `scripts/build-windows-release.mjs` 生成标准包的 `start.cmd`、`config.json`、运行说明和清单，复用现有维护入口；不要另写第二套发行器。它目前收集 `apps/web/dist`，启动 `apps/server/dist/release-main.js`，并非 Hermes 工作台。它还会执行原生依赖／迁移探针，因此本静态阶段不运行打包器。
+ 
++## 当前静审交接
++
++| 里程碑 | 可消费的源码／入口 | 已完成与仍待补齐 |
++| --- | --- | --- |
++| ① 任务、消息与审批归属 | `runtime-composition.ts`、Hermes `adapter.ts`、`conversation-scope.ts` | 核心三项 P2 已由原独审任务静态复审闭合，核对源码 SHA-256 为 `5c8eedc1043d02fbf5b321440c85bac9ebff48c49f2dfd658e8d0493382ff43d`；本批界面审批范围改动尚待独审，不能沿用核心签收 |
++| ② 输入、失败与恢复 | Hermes `draft-submission.ts`、`artifact-previews.ts`、`main.tsx`；`integrations/hermes-workbench/tests` | 已写入草稿重试、预览错误隔离与重读、等待状态取消入口；回归用例已写入，未编译、未执行，恢复仍以既有服务端资格判断为准 |
++| ③ 单入口启停与日志 | 根 `start-hermes.cmd` 与既有 `start.ps1`／`stop.ps1` | 源码已形成启动／停止菜单、重复实例识别、明确日志、等待退出；脚本行为及编码待独审和统一运行验证 |
++| ④ 数据布局、锁与恢复 | 现有 `release-config.ts`、`release-maintenance.ts` 与下文兼容边界 | 已核实标准链支持范围与 Hermes 不兼容之处；尚未确定正式布局／旧实例交接方案，不修改实际数据库或声称恢复可用 |
++| ⑤ 候选输入与统一验收 | `hermes-delivery-inputs.json`、`docs/reviews` 的本批增量补丁、本文件验收清单 | 已提供源码哈希与交接入口；下一步由协调方交原独审检查本批改动，并就第④项作兼容决策。冻结源码归档、全新候选、构建输出哈希和运行验收均未完成 |
++
++原独审任务为 `01a161ba-e3d9-76a3-a45f-8864444ee028`，本次只读查询中最新完成回合仍为 `01a16664-d3d0-70b0-8bdc-f7bf4f3c9a04`。该回合只签收此前核心修复；启动器与本批界面代码尚无独立签收。任务处于 idle，不是正在等待完成的审核作业，不能把反复读取旧结论算作推进。
++
+ ## 候选的准确输入
+ 
+ 统一构建前由维护方冻结当前工作树，至少包含以下输入。不能仅凭旧 dist、旧测试通过记录或 Git HEAD 声称当前修复已交付。
+@@ -58,7 +72,7 @@
+ 1. 从冻结源码统一类型检查、构建、必要测试与打包；核对全部源／输出哈希。独立审核本次启动脚本，特别是 Windows PowerShell 5.1 编码和 CMD 中文／空格路径／退出码。
+ 2. 准备新私有候选目录，核对 Node、原生 SQLite、生产依赖、许可、前后端版本和所选正式布局；不覆盖封存包或正在运行的实例。
+ 3. 用唯一入口首次启动、重复打开、缺构建／运行时失败提示和正常停止；确认进程退出后重新启动，检查历史保留、无自动任务重放。只验收必要主线，不扩展边界矩阵。
++4. 浏览器真实输入中文任务并发送；负责人发现／委派另一成员、协作产物落库、负责人恢复并汇总；执行中补充、完成后在同一会话连续追问；刷新后草稿与历史保留。核对失败后修改目标和负责人再重试时执行的是当前目标；同项目两个会话的审批来源不混淆；单个预览失败不遮挡其他结果，能单独重读。核对页面版本，不能只读旧结果。
+-4. 浏览器真实输入中文任务并发送；负责人发现／委派另一成员、协作产物落库、负责人恢复并汇总；执行中补充、完成后在同一会话连续追问；刷新后草稿与历史保留。核对失败后修改目标和负责人再重试时执行的是当前目标；同项目两个会话的审批来源不混淆。核对页面版本，不能只读旧结果。
+ 5. 在另行授权的真实模型额度内完成双成员路径；检查权限卡片与失败／取消／恢复提示，未知或危险请求不自动批准。静态阶段模型预算冻结，旧三轮验收账本不得改写。
+ 6. 正式布局确定后，统一验证停机备份、恢复到新私有目录、完整性校验、恢复后不重放、升级失败保留原版本与数据。不能把启动器的退出提示当成备份链已达标。
+ 
+diff --git a/integrations/hermes-workbench/src/artifact-previews.ts b/integrations/hermes-workbench/src/artifact-previews.ts
+new file mode 100644
+--- /dev/null
++++ b/integrations/hermes-workbench/src/artifact-previews.ts
+@@ -0,0 +1,17 @@
++/** Preview failures belong to individual artifacts, not the engine connection state. */
++export async function loadArtifactPreviews(
++  ids: readonly string[],
++  read: (id: string) => Promise<string>,
++): Promise<{ content: Record<string, string>; errors: Record<string, string> }> {
++  const unique = [...new Set(ids)];
++  const results = await Promise.allSettled(unique.map(async (id) => read(id)));
++  const content: Record<string, string> = {};
++  const errors: Record<string, string> = {};
++  for (const [index, result] of results.entries()) {
++    const id = unique[index]!;
++    if (result.status === 'fulfilled') content[id] = result.value;
++    else
++      errors[id] = result.reason instanceof Error ? result.reason.message : '结果预览读取失败。';
++  }
++  return { content, errors };
++}
+diff --git a/integrations/hermes-workbench/tests/artifact-previews.test.ts b/integrations/hermes-workbench/tests/artifact-previews.test.ts
+new file mode 100644
+--- /dev/null
++++ b/integrations/hermes-workbench/tests/artifact-previews.test.ts
+@@ -0,0 +1,18 @@
++import { expect, it, vi } from 'vitest';
++import { loadArtifactPreviews } from '../src/artifact-previews';
++
++it('keeps other results visible when one preview fails and allows that preview to be retried', async () => {
++  const read = vi.fn(async (id: string) => {
++    if (id === 'missing') throw new Error('HTTP 404');
++    return id === 'empty' ? '' : '协作结果';
++  });
++  const first = await loadArtifactPreviews(['missing', 'result', 'empty', 'result'], read);
++
++  expect(first.content).toEqual({ result: '协作结果', empty: '' });
++  expect(first.errors).toEqual({ missing: 'HTTP 404' });
++  expect(read).toHaveBeenCalledTimes(3);
++
++  const retried = await loadArtifactPreviews(['missing'], async () => '已恢复的结果');
++  expect(retried.content).toEqual({ missing: '已恢复的结果' });
++  expect(retried.errors).toEqual({});
++});

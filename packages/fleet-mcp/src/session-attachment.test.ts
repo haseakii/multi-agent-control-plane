@@ -1,11 +1,16 @@
 import { resolve } from 'node:path';
 import { AgentDefinitionSchema } from '@control-plane/core';
 import { describe, expect, it, vi } from 'vitest';
-import { FleetBossSessionAttachment } from './session-attachment.js';
+import {
+  FleetBossSessionAttachment,
+  FleetSessionAttachment,
+  getFleetMcpStdioProxyPath,
+} from './session-attachment.js';
 import type {
   FleetBossSessionContext,
   FleetBridgeGrantIssuer,
   FleetSessionRuntime,
+  FleetSessionContext,
 } from './session-attachment.js';
 
 function boss() {
@@ -31,6 +36,22 @@ function context(): FleetBossSessionContext {
     taskId: 'task-root',
     scopes: ['boss.orchestration', 'artifact.read'],
     cwd: resolve('/workspace/project'),
+  };
+}
+
+function workerContext(): FleetSessionContext {
+  return {
+    ...context(),
+    agent: AgentDefinitionSchema.parse({
+      ...boss(),
+      id: 'worker-agent',
+      orchestration: { canBeBoss: false },
+      controlBridge: {
+        transport: 'mcp',
+        scopes: ['agent.messaging', 'artifact.read', 'artifact.publish', 'task.status'],
+      },
+    }),
+    scopes: ['agent.messaging'],
   };
 }
 
@@ -165,5 +186,130 @@ describe('FleetBossSessionAttachment', () => {
           command: 'node',
         }),
     ).toThrow('absolute path');
+  });
+
+  it('still requires Boss capability and scope when using the Boss-specific attachment', async () => {
+    const grants = issuer();
+    const attachment = new FleetBossSessionAttachment(runtime(), grants, {
+      command: process.execPath,
+    });
+
+    await expect(attachment.create(workerContext())).rejects.toThrow('not Boss-capable');
+    await expect(attachment.create({ ...context(), scopes: ['artifact.read'] })).rejects.toThrow(
+      'Boss session scopes must include boss.orchestration',
+    );
+    expect(grants.issue).not.toHaveBeenCalled();
+  });
+});
+
+describe('FleetSessionAttachment', () => {
+  it('attaches a messaging-only worker and rotates its scoped grant on resume without granting Boss capability', async () => {
+    const sessionRuntime = runtime();
+    const grants = issuer();
+    const attachment = new FleetSessionAttachment(sessionRuntime, grants, {
+      command: process.execPath,
+      args: [getFleetMcpStdioProxyPath()],
+    });
+    const worker = workerContext();
+
+    await attachment.create(worker);
+    await attachment.resume('session-existing', worker);
+
+    expect(grants.issue).toHaveBeenNthCalledWith(1, {
+      agentId: 'worker-agent',
+      projectId: 'project-1',
+      taskId: 'task-root',
+      scopes: ['agent.messaging'],
+    });
+    expect(grants.issue).toHaveBeenNthCalledWith(2, {
+      agentId: 'worker-agent',
+      projectId: 'project-1',
+      taskId: 'task-root',
+      scopes: ['agent.messaging'],
+      sessionId: 'session-existing',
+    });
+    expect(grants.bindSession).toHaveBeenCalledWith('bridge-token-1', 'session-new');
+    expect(sessionRuntime.newSession).toHaveBeenCalledOnce();
+    expect(sessionRuntime.resumeSession).toHaveBeenCalledOnce();
+    expect(worker.agent.orchestration.canBeBoss).toBe(false);
+    expect(worker.scopes).toEqual(['agent.messaging']);
+  });
+
+  it('permits independently scoped artifact and status access for a worker', async () => {
+    const grants = issuer();
+    const attachment = new FleetSessionAttachment(runtime(), grants, {
+      command: process.execPath,
+    });
+
+    await attachment.create({
+      ...workerContext(),
+      scopes: ['artifact.publish', 'artifact.read', 'task.status'],
+    });
+
+    expect(grants.issue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scopes: ['artifact.publish', 'artifact.read', 'task.status'],
+      }),
+    );
+  });
+
+  it('rejects worker escalation even if its configured ceiling includes the Boss scope', async () => {
+    const grants = issuer();
+    const attachment = new FleetSessionAttachment(runtime(), grants, {
+      command: process.execPath,
+    });
+    const worker = workerContext();
+    worker.agent.controlBridge.scopes.push('boss.orchestration');
+
+    await expect(attachment.create({ ...worker, scopes: ['boss.orchestration'] })).rejects.toThrow(
+      'not Boss-capable',
+    );
+    expect(grants.issue).not.toHaveBeenCalled();
+
+    await attachment.create(worker);
+    expect(grants.issue).toHaveBeenCalledWith(
+      expect.objectContaining({ scopes: ['agent.messaging'] }),
+    );
+  });
+
+  it('rejects disabled, no-bridge, and over-scoped worker sessions before issuing grants', async () => {
+    const sessionRuntime = runtime();
+    const grants = issuer();
+    const attachment = new FleetSessionAttachment(sessionRuntime, grants, {
+      command: process.execPath,
+    });
+    const disabled = workerContext();
+    disabled.agent.enabled = false;
+    const noBridge = workerContext();
+    noBridge.agent.controlBridge = { transport: 'none', scopes: [] };
+    noBridge.scopes = [];
+    const overScoped = workerContext();
+    overScoped.agent.controlBridge.scopes = ['task.status'];
+
+    await expect(attachment.create(disabled)).rejects.toThrow('Disabled agents');
+    await expect(attachment.resume('session-existing', noBridge)).rejects.toThrow(
+      'MCP control bridge transport',
+    );
+    await expect(attachment.create(overScoped)).rejects.toThrow('outside the configured ceiling');
+    expect(grants.issue).not.toHaveBeenCalled();
+    expect(sessionRuntime.newSession).not.toHaveBeenCalled();
+    expect(sessionRuntime.resumeSession).not.toHaveBeenCalled();
+  });
+
+  it('revokes a worker grant when session binding or resume fails', async () => {
+    const sessionRuntime = runtime();
+    const grants = issuer();
+    grants.bindSession.mockRejectedValueOnce(new Error('session binding failed'));
+    sessionRuntime.resumeSession.mockRejectedValueOnce(new Error('session resume failed'));
+    const attachment = new FleetSessionAttachment(sessionRuntime, grants, {
+      command: process.execPath,
+    });
+
+    await expect(attachment.create(workerContext())).rejects.toThrow('session binding failed');
+    await expect(attachment.resume('session-existing', workerContext())).rejects.toThrow(
+      'session resume failed',
+    );
+    expect(grants.revoke).toHaveBeenNthCalledWith(1, 'bridge-token-1');
+    expect(grants.revoke).toHaveBeenNthCalledWith(2, 'bridge-token-2');
   });
 });

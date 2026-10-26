@@ -1,0 +1,351 @@
+.panel {
+  position: relative;
+  width: 440px;
+  min-width: 300px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--h-bg-pane);
+  color: var(--h-text);
+  border-left: 1px solid var(--h-line);
+  font-size: 12px;
+}
+.header {
+  padding: 20px;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--h-line);
+}
+.header h2 {
+  margin: 0 0 6px;
+  font-size: 15px;
+}
+.header p {
+  margin: 0;
+  color: var(--h-text-3);
+}
+.panel button {
+  padding: 8px 10px;
+  color: var(--h-text);
+  background: var(--h-bg-pane);
+  border: 1px solid var(--h-line);
+}
+.header button {
+  display: flex;
+  padding: 5px;
+}
+.resizeHandle {
+  position: absolute;
+  left: -4px;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  z-index: 3;
+  cursor: col-resize;
+  touch-action: none;
+}
+.resizeHandle:hover,
+.resizeHandle:focus-visible {
+  background: color-mix(in srgb, #e7683c 45%, transparent);
+  outline: 2px solid #e7683c;
+}
+.diffSelector {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  width: 100%;
+}
+.diffSelector select {
+  padding: 8px;
+  font: inherit;
+  color: var(--h-text);
+  background: var(--h-bg-pane);
+  border: 1px solid var(--h-line);
+  width: 100%;
+}
+.actions button[aria-pressed='true'] {
+  border-color: #e7683c;
+  background: color-mix(in srgb, #e7683c 9%, var(--h-bg-pane));
+}
+.body {
+  padding: 16px 20px 28px;
+  min-height: 0;
+  overflow: auto;
+}
+.body p {
+  line-height: 1.8;
+}
+.body a {
+  color: var(--h-text-2);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+.selector {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 6px 0 16px;
+}
+.selector select,
+.selector input {
+  padding: 8px;
+  width: 100%;
+  border: 1px solid var(--h-line);
+  color: var(--h-text);
+  background: var(--h-bg-pane);
+}
+.paths {
+  background: var(--h-bg-soft);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.paths code,
+.paths small {
+  overflow-wrap: anywhere;
+  user-select: text;
+  line-height: 1.6;
+}
+.paths small,
+.direction {
+  color: var(--h-text-3);
+}
+.direction {
+  padding: 4px 0;
+}
+.note {
+  color: var(--h-text-3);
+  line-height: 1.8;
+}
+.actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.actions a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 0;
+}
+.empty {
+  padding: 16px;
+  background: var(--h-bg-soft);
+  line-height: 1.8;
+}
+.review {
+  border-top: 1px solid var(--h-line);
+  margin-top: 20px;
+  padding-top: 16px;
+}
+.review h3 {
+  font-size: 14px;
+  margin: 0;
+}
+.files {
+  list-style: none;
+  margin: 16px 0;
+  padding: 0;
+  max-height: 260px;
+  overflow: auto;
+}
+.filePicker {
+  margin: 16px 0;
+}
+.fileFilters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.fileFilters label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-width: 140px;
+}
+.fileFilters input,
+.fileFilters select {
+  padding: 8px;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--h-line);
+  color: var(--h-text);
+  background: var(--h-bg-pane);
+  font: inherit;
+}
+.filePicker :is(input, select, button):focus-visible {
+  outline: 2px solid #e7683c;
+  outline-offset: 2px;
+}
+.files li {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--h-line);
+}
+.files code {
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.files button {
+  text-align: left;
+  max-width: 100%;
+  cursor: pointer;
+}
+.files button[aria-pressed='true'] {
+  border-color: var(--h-accent, #e7683c);
+  background: color-mix(in srgb, #e7683c 9%, var(--h-bg-pane));
+}
+.files span {
+  color: var(--h-text-3);
+  font-size: 11px;
+}
+.patchSection {
+  margin: 12px 0;
+}
+.diff {
+  max-height: 480px;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.65;
+  background: var(--h-bg-soft);
+  padding: 8px 0;
+  tab-size: 2;
+  user-select: text;
+}
+.diffLine {
+  display: grid;
+  grid-template-columns: 4ch 4ch minmax(0, 1fr);
+  min-width: max-content;
+}
+.diffLine code {
+  font: inherit;
+  padding: 0 10px;
+}
+.lineNumber {
+  color: var(--h-text-3);
+  text-align: right;
+  padding: 0 4px;
+  user-select: none;
+  border-right: 1px solid var(--h-line);
+}
+.lineNumber::before {
+  content: attr(data-line-number);
+}
+.diff[data-wrap='true'] .diffLine {
+  min-width: 0;
+}
+.diff[data-wrap='true'] code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.diff span[data-kind='add'] {
+  background: color-mix(in srgb, #20a87b 16%, transparent);
+}
+.diff span[data-kind='remove'] {
+  background: color-mix(in srgb, #db625c 16%, transparent);
+}
+.diff span[data-kind='file'] {
+  font-weight: 700;
+}
+.diff span[data-kind='hunk'] {
+  color: var(--h-accent, #c65a28);
+}
+.decision {
+  padding: 14px;
+  margin: 16px 0;
+  border: 1px solid var(--h-line);
+  background: var(--h-bg-soft);
+}
+.check {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  line-height: 1.8;
+  margin-bottom: 12px;
+}
+.check input {
+  flex-shrink: 0;
+  margin-top: 4px;
+}
+.panel .merge {
+  background: #e86b38;
+  border-color: #e86b38;
+  color: #fff;
+}
+.error,
+.notice {
+  padding: 10px 12px;
+  border-left: 3px solid #d88438;
+  background: var(--h-bg-soft);
+  overflow-wrap: anywhere;
+}
+.notice {
+  border-left-color: #2a9e78;
+}
+.error p,
+.notice p {
+  margin: 4px 0;
+}
+.technical {
+  color: var(--h-text-3);
+  line-height: 1.8;
+  margin-top: 16px;
+}
+.liveColumns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+  gap: 12px;
+}
+.liveColumns > div {
+  min-width: 0;
+}
+.liveColumns pre {
+  max-height: 440px;
+  overflow: auto;
+  padding: 12px;
+  background: var(--h-bg-soft);
+  border: 1px solid var(--h-line);
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.technical summary {
+  cursor: pointer;
+}
+.technical dl {
+  margin: 12px 0;
+}
+.technical dt {
+  margin-top: 8px;
+}
+.technical dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+@media (max-width: 1200px) {
+  .panel {
+    width: 360px;
+  }
+}
+@media (max-width: 760px) {
+  .panel {
+    width: 440px;
+    min-width: 0;
+    max-width: 95%;
+  }
+}

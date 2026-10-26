@@ -452,7 +452,7 @@ export class TaskEngine {
       const recovered: ExecutionAttempt[] = [];
       for (const attempt of this.store.executionAttempts
         .list()
-        .filter((candidate) => candidate.state === 'running')) {
+        .filter((candidate) => ['queued', 'running', 'waiting'].includes(candidate.state))) {
         const now = this.now();
         const interrupted = ExecutionAttemptSchema.parse({
           ...attempt,
@@ -461,14 +461,14 @@ export class TaskEngine {
           finishedAt: now,
           failure: {
             code: 'CONTROL_PLANE_RESTART',
-            message: 'The control plane restarted while this attempt was running.',
+            message: 'The control plane restarted before this attempt finished.',
             retryable: true,
           },
         });
         this.store.executionAttempts.upsert(interrupted);
 
         const assignment = this.requireAssignment(attempt.assignmentId);
-        if (assignment.state === 'running') {
+        if (['queued', 'running', 'waiting'].includes(assignment.state)) {
           this.store.assignments.upsert(
             AssignmentSchema.parse({
               ...assignment,
@@ -479,7 +479,7 @@ export class TaskEngine {
         }
 
         let task = this.requireTask(attempt.taskId);
-        if (task.state === 'running') {
+        if (['running', 'waiting_approval'].includes(task.state)) {
           task = TaskSchema.parse({ ...task, state: 'waiting', updatedAt: now });
           this.store.tasks.upsert(task);
         }

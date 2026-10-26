@@ -1,0 +1,45 @@
+.help {
+  margin: 0 0 16px;
+  font-size: 13px;
+}
+.help summary {
+  cursor: pointer;
+  color: var(--h-text-3);
+}
+.help ul {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+}
+.help li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--h-line);
+  border-radius: 8px;
+  margin-bottom: 8px;
+}
+.help p {
+  margin: 4px 0 0;
+  color: var(--h-text-3);
+  line-height: 1.5;
+}
+.actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.actions button {
+  border: 1px solid var(--h-line);
+  border-radius: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  background: var(--h-bg-pane);
+}
+.actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
