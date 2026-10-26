@@ -27,6 +27,7 @@ const Installation = z.object({
     'checking',
     'ready',
     'failed',
+    'cancelled',
     'needs-attention',
   ]),
   message: z.string(),
@@ -40,6 +41,8 @@ const Installation = z.object({
     })
     .optional(),
   installed: z.boolean().default(false),
+  canCancel: z.boolean().default(false),
+  cancelling: z.boolean().default(false),
   members: z.array(InstalledMember).default([]),
   package: z
     .object({ runtime: z.object({ command: z.string(), args: z.array(z.string()) }) })
@@ -75,6 +78,7 @@ const labels = {
   checking: '检查连接',
   ready: '已安装',
   failed: '安装未完成',
+  cancelled: '已取消',
   'needs-attention': '连接待处理',
 };
 function InstallLocation({ label, directory }: { label: string; directory: string }) {
@@ -129,13 +133,32 @@ function InstallProgress({ row }: { row: z.infer<typeof Installation> }) {
   const elapsed = Math.max(0, Math.floor((now - Date.parse(row.updatedAt)) / 1000));
   return (
     <div className={s.installProgress}>
-      <progress aria-label="当前步骤进度" max={100} value={percent} />
+      <div
+        className={s.installProgressTrack}
+        role="progressbar"
+        aria-label="当前步骤进度"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={percent}
+        aria-valuetext={
+          row.cancelling
+            ? '正在取消，等待后台停止'
+            : percent === undefined
+              ? '正在处理，总进度未知'
+              : `已下载 ${percent}%`
+        }
+        data-indeterminate={percent === undefined}
+      >
+        <span style={{ width: percent === undefined ? '35%' : `${percent}%` }} />
+      </div>
       <p role="status">
-        {progress
-          ? total
-            ? `已下载 ${bytes(progress.receivedBytes)} / ${bytes(total)}（${percent}%）`
-            : `已下载 ${bytes(progress.receivedBytes)} · 总大小未知`
-          : '正在处理，请稍候'}
+        {row.cancelling
+          ? '正在取消，等待下载或安装进程停止…'
+          : progress
+            ? total
+              ? `已下载 ${bytes(progress.receivedBytes)} / ${bytes(total)}（${percent}%）`
+              : `已下载 ${bytes(progress.receivedBytes)} · 总大小未知`
+            : '正在处理，请稍候'}
         {' · '}当前步骤已用 {elapsed} 秒
       </p>
       <p className={s.hint}>下载 → 安装 → 检查连接。完成后再登录使用；关闭此窗口不影响后台安装。</p>
@@ -150,6 +173,7 @@ export function AgentInstall({
   installRequested = false,
   expectedVersion,
   disabled = false,
+  activeOnly = false,
 }: {
   entryId?: string;
   onExisting: (id?: string) => void;
@@ -158,6 +182,7 @@ export function AgentInstall({
   installRequested?: boolean;
   expectedVersion?: string;
   disabled?: boolean;
+  activeOnly?: boolean;
 }) {
   const [plan, setPlan] = useState<z.infer<typeof Plan>>();
   const [records, setRecords] = useState<z.infer<typeof Records>>();
@@ -165,6 +190,7 @@ export function AgentInstall({
   const [busy, setBusy] = useState(false);
   const [checking, setChecking] = useState(false);
   const [recordsError, setRecordsError] = useState('');
+  const [cancellationId, setCancellationId] = useState('');
   const idempotency = useRef({ hash: '', id: crypto.randomUUID() });
   const autoAttempted = useRef(false),
     flight = useRef(false);
@@ -248,7 +274,27 @@ export function AgentInstall({
       setBusy(false);
     }
   }
-  const visible = records?.installations.filter((row) => !entryId || row.entryId === entryId) ?? [];
+  async function cancel(id: string) {
+    setBusy(true);
+    setError('');
+    try {
+      await api('/api/agent-installations/' + id + '/cancel', Installation, {});
+      setCancellationId(id);
+      setRecords(await api('/api/agent-installations', Records));
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : '取消未确认，请重试。');
+    } finally {
+      setBusy(false);
+    }
+  }
+  const visible =
+    records?.installations.filter(
+      (row) =>
+        (!entryId || row.entryId === entryId) &&
+        (!activeOnly ||
+          ['queued', 'downloading', 'installing', 'checking'].includes(row.state) ||
+          row.id === cancellationId),
+    ) ?? [];
   const installed = visible.find((row) => row.installed && row.version === plan?.version);
   useEffect(() => {
     if (!installRequested || autoAttempted.current || !plan || !records) return;
@@ -259,6 +305,7 @@ export function AgentInstall({
     }
     if (!installed && !records.busy) void start();
   }, [installRequested, plan, records, installed]);
+  if (activeOnly && !visible.length && !recordsError && !error) return null;
   return (
     <section className={s.installPanel} aria-label="安装 ACP 成员">
       <h4>
@@ -320,7 +367,7 @@ export function AgentInstall({
             <strong>
               {row.entryId} · {row.version}
             </strong>
-            <span>{labels[row.state]}</span>
+            <span>{row.cancelling ? '正在取消' : labels[row.state]}</span>
           </div>
           <p role={['failed', 'needs-attention'].includes(row.state) ? 'alert' : 'status'}>
             {['queued', 'downloading', 'installing', 'checking'].includes(row.state) && (
@@ -329,6 +376,15 @@ export function AgentInstall({
             {row.message}
           </p>
           <InstallProgress row={row} />
+          {row.canCancel && (
+            <button
+              type="button"
+              disabled={disabled || busy || row.cancelling}
+              onClick={() => void cancel(row.id)}
+            >
+              {row.cancelling ? '正在取消…' : '取消下载 / 安装'}
+            </button>
+          )}
           {row.directory ? (
             <InstallLocation label="本次安装位置" directory={row.directory} />
           ) : (
@@ -343,13 +399,17 @@ export function AgentInstall({
             </details>
           )}
           <div className={s.actions}>
-            {['failed', 'needs-attention'].includes(row.state) && (
+            {['failed', 'cancelled', 'needs-attention'].includes(row.state) && (
               <button
                 disabled={disabled || busy || !!records?.busy}
                 onClick={() => void retry(row.id)}
               >
                 <RefreshCw size={14} />
-                {row.state === 'needs-attention' ? '重试连接' : '重试安装'}
+                {row.state === 'needs-attention'
+                  ? '重试连接'
+                  : row.state === 'cancelled'
+                    ? '重新安装'
+                    : '重试安装'}
               </button>
             )}
             {row.members.map((member) => (

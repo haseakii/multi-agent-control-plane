@@ -9,6 +9,40 @@ import { resolveNetwork, type NetworkSettingsService } from './network-settings.
 import { NetworkSettingsSchema } from '@control-plane/core';
 import { downloadPackageFile } from './agent-package-io.js';
 
+it('cancels a stalled download body and closes its output file', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'acp-download-cancel-'));
+  const controller = new AbortController();
+  const ready = Promise.withResolvers<void>();
+  const cancelled = vi.fn();
+  try {
+    const pending = downloadPackageFile({
+      source: 'https://example.com/worker.exe',
+      destination: join(root, 'partial'),
+      signal: controller.signal,
+      network: {
+        fetch: async () =>
+          new Response(
+            new ReadableStream({
+              pull() {
+                ready.resolve();
+              },
+              cancel: cancelled,
+            }),
+          ),
+      },
+    });
+    const rejected = expect(pending).rejects.toThrow();
+    await ready.promise;
+    controller.abort();
+    await rejected;
+    expect(cancelled).toHaveBeenCalled();
+    writeFileSync(join(root, 'partial'), 'retained cancellation evidence');
+  } finally {
+    controller.abort();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 it('reports streamed bytes, avoids invented totals, and does not report verified completion on checksum failure', async () => {
   const root = mkdtempSync(join(tmpdir(), 'acp-download-progress-'));
   const clock = vi.spyOn(performance, 'now');

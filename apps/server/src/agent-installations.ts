@@ -33,6 +33,7 @@ export const StartAgentInstallSchema = z
 export class AgentInstallationsService {
   private readonly repo;
   private readonly active = new Map<string, Promise<void>>();
+  private readonly controllers = new Map<string, AbortController>();
   // Byte counters are live telemetry, not durable task state or per-chunk database writes.
   private readonly downloads = new Map<string, DownloadProgress>();
   constructor(
@@ -64,6 +65,9 @@ export class AgentInstallationsService {
       .map((row) => ({
         ...row,
         progress: this.downloads.get(row.id),
+        canCancel:
+          this.active.has(row.id) && ['queued', 'downloading', 'installing'].includes(row.state),
+        cancelling: this.controllers.get(row.id)?.signal.aborted ?? false,
         installed: !!row.package || !!agents.find((a) => a.definition.id === row.agentId),
         members: agents
           .filter(
@@ -172,7 +176,7 @@ export class AgentInstallationsService {
     if (!row) throw new TaskControlError(404, '安装记录不存在。');
     if (this.active.has(id)) return row;
     if (this.busy) throw new TaskControlError(409, '有成员正在安装，请稍后重试。');
-    if (!['failed', 'needs-attention'].includes(row.state)) return row;
+    if (!['failed', 'cancelled', 'needs-attention'].includes(row.state)) return row;
     const local = this.localPackage(row);
     if (!local) {
       const plan = this.plan(row.entryId);
@@ -187,14 +191,26 @@ export class AgentInstallationsService {
     return next;
   }
   private launch(row: AgentInstallation) {
+    const controller = new AbortController();
+    this.controllers.set(row.id, controller);
     this.downloads.delete(row.id);
-    const promise = this.execute(row).finally(() => {
+    const promise = this.execute(row, controller.signal).finally(() => {
       this.active.delete(row.id);
+      this.controllers.delete(row.id);
       this.downloads.delete(row.id);
     });
     this.active.set(row.id, promise);
   }
-  private async execute(initial: AgentInstallation) {
+  cancel(id: string) {
+    const row = this.repo.get(id);
+    if (!row) throw new TaskControlError(404, '安装记录不存在。');
+    if (!this.active.has(id)) return row;
+    if (!['queued', 'downloading', 'installing'].includes(row.state))
+      throw new TaskControlError(409, '程序下载与安装已完成，正在检查连接，请等待检查结束。');
+    this.controllers.get(id)?.abort();
+    return { ...row, cancelling: true };
+  }
+  private async execute(initial: AgentInstallation, signal: AbortSignal) {
     let row = initial;
     try {
       let pkg = this.localPackage(row);
@@ -217,12 +233,17 @@ export class AgentInstallationsService {
             runtimeRoot: join(dirname(this.options.root), 'runtimes'),
             nodeExecutable: join(dirname(this.options.root), 'runtime/node.exe'),
             network: this.options.network,
+            signal,
             phase: (state, message) => {
+              signal.throwIfAborted();
               this.downloads.delete(row.id);
               row = this.save(row, { state, message });
             },
-            progress: (progress) => this.downloads.set(row.id, progress),
+            progress: (progress) => {
+              if (!signal.aborted) this.downloads.set(row.id, progress);
+            },
           });
+          signal.throwIfAborted();
           pkg = {
             runtime,
             origin: 'installation',
@@ -281,6 +302,14 @@ export class AgentInstallationsService {
         message: '安装与 ACP 连接检查完成。请在下方登录后使用；账号授权由成员自己管理。',
       });
     } catch (error) {
+      if (signal.aborted) {
+        this.save(row, {
+          state: 'cancelled',
+          message:
+            '已取消。本次下载和安装已停止，未完成文件保留，可点击重新安装。原有成员不受影响。',
+        });
+        return;
+      }
       const stage = {
         queued: '准备',
         downloading: '下载',
@@ -288,6 +317,7 @@ export class AgentInstallationsService {
         checking: '连接检查',
         ready: '安装',
         failed: '安装',
+        cancelled: '安装',
         'needs-attention': '连接检查',
       }[row.state];
       this.save(row, {
@@ -351,6 +381,12 @@ export function registerAgentInstallationRoutes(
         ),
       reply,
     ),
+  );
+  app.post('/api/agent-installations/:id/cancel', (request, reply) =>
+    handler(() => {
+      z.object({}).strict().parse(request.body);
+      return service.cancel(z.object({ id: z.string().uuid() }).strict().parse(request.params).id);
+    }, reply),
   );
   app.addHook('preClose', async () => {
     await service.settle();

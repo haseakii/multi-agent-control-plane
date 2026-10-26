@@ -1,5 +1,4 @@
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { runInstallProcess } from './agent-install-process.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, realpathSync } from 'node:fs';
 import { join, relative } from 'node:path';
@@ -39,7 +38,9 @@ export async function ensureManagedUv(
   root: string,
   network: NetworkSettingsService,
   progress?: (progress: DownloadProgress) => void,
+  signal?: AbortSignal,
 ) {
+  signal?.throwIfAborted();
   const target = uvTargets[process.arch as keyof typeof uvTargets];
   if (process.platform !== 'win32' || !target)
     throw new AgentPackageInstallError('此平台尚未提供自动 Python 运行环境。');
@@ -69,8 +70,9 @@ export async function ensureManagedUv(
     sha256: target.sha256,
     maxBytes: 128 * 1024 * 1024,
     progress,
+    signal,
   });
-  await extractAgentZip(archive, program);
+  await extractAgentZip(archive, program, signal);
   rejectPackageLinks(program);
   const command = join(program, 'uv.exe');
   const record = UvRecord.parse({
@@ -91,11 +93,14 @@ export async function installPythonAgent(options: {
   phase(state: 'downloading' | 'installing', message: string): void;
   uvExecutable?: string;
   progress?: ((progress: DownloadProgress) => void) | undefined;
+  signal?: AbortSignal | undefined;
 }) {
   const { directory, runtimeRoot, network } = options;
+  options.signal?.throwIfAborted();
   options.phase('downloading', '正在准备 Python 环境管理器…');
   const uv =
-    options.uvExecutable ?? (await ensureManagedUv(runtimeRoot, network, options.progress));
+    options.uvExecutable ??
+    (await ensureManagedUv(runtimeRoot, network, options.progress, options.signal));
   options.phase('installing', '正在准备私有 Python 运行环境；此步骤不提供总下载量…');
   const inherited = Object.fromEntries(
     Object.entries(process.env).filter(
@@ -113,13 +118,14 @@ export async function installPythonAgent(options: {
     UV_PYTHON_INSTALL_REGISTRY: '0',
     UV_LINK_MODE: 'copy',
   });
-  const run = options.run ?? promisify(execFile);
+  const run = options.run ?? runInstallProcess;
   const commandOptions = {
     cwd: directory,
     windowsHide: true,
     timeout: 300_000,
     maxBuffer: 512_000,
     env,
+    ...(options.signal ? { signal: options.signal } : {}),
   };
   await run(
     uv,

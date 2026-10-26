@@ -97,6 +97,7 @@ export const AgentInstallationSchema = z
       'checking',
       'ready',
       'failed',
+      'cancelled',
       'needs-attention',
     ]),
     message: z.string().max(1000),

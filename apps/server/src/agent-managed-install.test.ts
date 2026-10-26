@@ -1,7 +1,7 @@
 import { createRequire } from 'node:module';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, basename, resolve, join } from 'node:path';
 import { expect, it, vi } from 'vitest';
@@ -10,6 +10,39 @@ import { managedAgentRuntime } from './agent-launcher.js';
 import { installPythonAgent } from './agent-python-runtime.js';
 import { extractAgentTar } from './agent-package-io.js';
 import type { NetworkSettingsService } from './network-settings.js';
+import { runInstallProcess } from './agent-install-process.js';
+
+it('stops the owned installer and its child before reporting cancellation', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'acp-managed-'));
+  const readyFile = join(root, 'child.json');
+  const controller = new AbortController();
+  const script = `const {spawn}=require('node:child_process'); const child=spawn(process.execPath,['-e',"require('node:fs').writeFileSync(process.argv[1],JSON.stringify({pid:process.pid}));setInterval(()=>{},1000)",process.argv[1]],{stdio:['ignore','inherit','inherit'],windowsHide:true});setInterval(()=>{},1000);`;
+  const pending = runInstallProcess(process.execPath, ['-e', script, readyFile], {
+    cwd: root,
+    signal: controller.signal,
+    timeout: 10000,
+  });
+  const rejected = expect(pending).rejects.toThrow();
+  try {
+    await vi.waitFor(() => expect(existsSync(readyFile)).toBe(true));
+    const { pid } = JSON.parse(readFileSync(readyFile, 'utf8'));
+    controller.abort();
+    await rejected;
+    await vi.waitFor(() => expect(() => process.kill(pid, 0)).toThrow());
+    expect(
+      (
+        await runInstallProcess(process.execPath, ['-e', 'console.log("ready")'], {
+          cwd: root,
+          timeout: 5000,
+        })
+      ).stdout.trim(),
+    ).toBe('ready');
+  } finally {
+    controller.abort();
+    await rejected;
+    remove(root);
+  }
+}, 15000);
 
 const base = {
   id: 'fixture',

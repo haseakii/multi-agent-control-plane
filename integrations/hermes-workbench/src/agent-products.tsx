@@ -501,7 +501,8 @@ export function AgentProducts({
           </>
         )}
       </div>
-      {((showInstallations && !selected) || (selected && entryMode === 'download')) &&
+      {((!selected && (showInstallations || catalog?.installationSupported)) ||
+        (selected && entryMode === 'download')) &&
         (catalog?.installationSupported ? (
           <AgentInstall
             key={selected?.id ?? 'all'}
@@ -512,6 +513,7 @@ export function AgentProducts({
             disabled={disabled}
             installRequested={!!selected && installRequested}
             expectedVersion={selected?.version}
+            activeOnly={!selected && !showInstallations}
           />
         ) : (
           <p role="status" className={s.notice}>

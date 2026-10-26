@@ -57,7 +57,11 @@ it('upgrades twenty-one migrations, backfills grant revisions and preserves inst
     expect(oldJob.directory).toBeUndefined();
     // Additive JSON metadata: old rows remain readable without a destructive backfill.
     const installDirectory = join(root, 'agents', '中文 installation');
-    storage.repositories.agentInstallations.upsert({ ...oldJob, directory: installDirectory });
+    storage.repositories.agentInstallations.upsert({
+      ...oldJob,
+      directory: installDirectory,
+      state: 'cancelled',
+    });
     expect(storage.repositories.externalClients.get('old')).toMatchObject({
       revision: 1,
       access: { tokenSha256: client.access.tokenSha256, enabled: false },
@@ -81,6 +85,7 @@ it('upgrades twenty-one migrations, backfills grant revisions and preserves inst
     storage.close();
     storage = openSqliteStorage({ filename });
     expect(storage.repositories.agentInstallations.get(jobId)?.directory).toBe(installDirectory);
+    expect(storage.repositories.agentInstallations.get(jobId)?.state).toBe('cancelled');
     expect(storage.repositories.agentMemberOrigins.get('member-' + requestId)?.sourceAgentId).toBe(
       'existing-agent',
     );

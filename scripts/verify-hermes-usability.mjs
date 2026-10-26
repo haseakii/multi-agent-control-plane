@@ -71,12 +71,20 @@ const agentInstallations = new AgentInstallationsService({
   network: runtime.network,
   root: path.join(root, 'agents'),
   releaseRoot: path.resolve('.'),
-  installPackage: async ({ phase, progress }) => {
+  installPackage: async ({ phase, progress, signal }) => {
     installs++;
     installUpdates = { phase, progress };
     phase('downloading', '正在下载回归程序');
     progress({ receivedBytes: 52428800, totalBytes: 104857600 });
-    await installGate;
+    await new Promise((resolve, reject) => {
+      const abort = () => reject(signal.reason);
+      signal.addEventListener('abort', abort, { once: true });
+      installGate.then(() => {
+        signal.removeEventListener('abort', abort);
+        resolve();
+      });
+      if (signal.aborted) abort();
+    });
     phase('installing', '测试安装完成，未访问外网');
     return fixtureRuntime;
   },
@@ -307,7 +315,7 @@ try {
     installPath,
   );
   await expect(page.getByRole('progressbar', { name: '当前步骤进度' })).toHaveAttribute(
-    'value',
+    'aria-valuenow',
     '50',
   );
   const locationBox = await page
@@ -321,7 +329,7 @@ try {
   installUpdates.progress({ receivedBytes: 62914560 });
   await expect(page.getByText('已下载 60.0 MB · 总大小未知', { exact: false })).toBeVisible();
   await expect(page.getByRole('progressbar', { name: '当前步骤进度' })).not.toHaveAttribute(
-    'value',
+    'aria-valuenow',
   );
   installUpdates.phase('installing', '正在安装依赖；此步骤不提供总下载量');
   await expect(
@@ -330,17 +338,26 @@ try {
   await expect(page.getByText(/已下载 60.0 MB/)).toHaveCount(0);
   await page.getByRole('button', { name: '返回产品目录', exact: true }).click();
   await page.getByRole('button', { name: '已下载程序与安装记录', exact: true }).click();
+  await page.getByRole('button', { name: '产品目录', exact: true }).click();
+  await expect(page.getByRole('progressbar', { name: '当前步骤进度' })).toBeVisible();
+  await page.getByRole('button', { name: '取消下载 / 安装', exact: true }).click();
+  await expect(page.getByText('已取消', { exact: true })).toBeVisible();
+  assert.equal(agentInstallations.list()[0].state, 'cancelled');
+  assert.equal(runtime.agentControl.list().length, 1);
+  await page.getByRole('button', { name: '重新安装', exact: true }).click();
+  await expect(page.getByText('已下载 50.0 MB / 100.0 MB（50%）', { exact: false })).toBeVisible();
+  await page.getByRole('button', { name: '已下载程序与安装记录', exact: true }).click();
   await expect(page.getByRole('textbox', { name: '本次安装位置', exact: true })).toHaveValue(
-    installPath,
+    agentInstallations.list()[0].directory,
   );
   await expect(page.getByRole('progressbar', { name: '当前步骤进度' })).toBeVisible();
   finishInstall();
   checks.push(
-    'Live download bytes, unknown totals, phase changes and exact installation paths remain visible after reopening records',
+    'Progress stays visible for unknown totals and on the product catalog; cancellation prevents registration and a fresh retry completes',
   );
   await expect(page.getByText('已安装', { exact: true })).toBeVisible({ timeout: 15000 });
   await expect(page.getByText('本机安装入口', { exact: true })).toBeVisible();
-  assert.equal(installs, 1);
+  assert.equal(installs, 2);
   await page.screenshot({ path: path.join(root, 'acp.png') });
   await expect(page.getByRole('button', { name: '登录并使用', exact: true })).toBeVisible();
   await page.getByRole('button', { name: '登录并使用', exact: true }).click();

@@ -91,13 +91,34 @@ it('isolates install, retries a failed install and interrupted check, reuses reg
     expect(failedDirectory).toContain(first.id);
     expect(service.list()[0]?.progress).toBeUndefined();
     expect(runtime.agentControl.list()).toHaveLength(0);
+    installer.mockImplementationOnce(async ({ phase, signal }) => {
+      phase('installing', 'Waiting for installer cancellation');
+      await new Promise<void>((resolve) =>
+        signal!.addEventListener('abort', () => resolve(), { once: true }),
+      );
+      // A late adapter success must not register a cancelled package.
+      return { type: 'acp-stdio', command: process.execPath, args: [] };
+    });
+    service.retry(first.id);
+    expect(service.list()[0]?.canCancel).toBe(true);
+    service.cancel(first.id);
+    service.cancel(first.id);
+    expect(service.list()[0]?.cancelling).toBe(true);
+    expect(service.busy).toBe(true);
+    service.retry(first.id);
+    await service.settle();
+    expect(service.list()[0]?.state).toBe('cancelled');
+    expect(runtime.agentControl.list()).toHaveLength(0);
+    expect(service.busy).toBe(false);
+    service = new AgentInstallationsService(options);
+    expect(service.list()[0]?.state).toBe('cancelled');
     service.retry(first.id);
     await service.settle();
     const ready = storage.repositories.agentInstallations.get(first.id)!;
     expect(ready.state).toBe('ready');
     expect(ready.directory).not.toBe(failedDirectory);
     expect(ready.agentId).toBeDefined();
-    expect(installer).toHaveBeenCalledTimes(2);
+    expect(installer).toHaveBeenCalledTimes(3);
     const agent = runtime.agentControl.list()[0]!;
     expect(agent.definition.auth).toEqual({ mode: 'agent-managed' });
     expect(agent.definition.orchestration.canBeBoss).toBe(false);
@@ -109,7 +130,7 @@ it('isolates install, retries a failed install and interrupted check, reuses reg
     service.retry(first.id);
     await service.settle();
     expect(service.list()[0]?.state).toBe('ready');
-    expect(installer).toHaveBeenCalledTimes(2);
+    expect(installer).toHaveBeenCalledTimes(3);
     expect(runtime.agentControl.list()).toHaveLength(1);
     // Simulate losing the catalog after restart: connection retries use the
     // durable package entry, including a restart before initial registration.
@@ -122,7 +143,7 @@ it('isolates install, retries a failed install and interrupted check, reuses reg
     service.retry(first.id);
     await service.settle();
     expect(service.list()[0]?.state).toBe('ready');
-    expect(installer).toHaveBeenCalledTimes(2);
+    expect(installer).toHaveBeenCalledTimes(3);
     storage.repositories.agentDefinitions.delete(ready.agentId!);
     storage.repositories.agentInstallations.upsert({
       ...storage.repositories.agentInstallations.get(first.id)!,
@@ -131,7 +152,7 @@ it('isolates install, retries a failed install and interrupted check, reuses reg
     service.retry(first.id);
     await service.settle();
     expect(service.list()[0]?.state).toBe('ready');
-    expect(installer).toHaveBeenCalledTimes(2);
+    expect(installer).toHaveBeenCalledTimes(3);
     const legacy = {
       ...storage.repositories.agentInstallations.get(first.id)!,
       state: 'failed' as const,

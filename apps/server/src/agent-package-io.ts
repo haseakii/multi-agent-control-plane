@@ -1,6 +1,5 @@
 import { createHash } from 'node:crypto';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { runInstallProcess } from './agent-install-process.js';
 import { createWriteStream, readdirSync } from 'node:fs';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -34,11 +33,16 @@ export async function downloadPackageFile(options: {
   sha256?: string | undefined;
   maxBytes?: number;
   progress?: ((progress: DownloadProgress) => void) | undefined;
+  signal?: AbortSignal | undefined;
 }) {
   let url = new URL(options.source),
     response: Response | undefined;
   const origin = url.origin,
-    signal = AbortSignal.timeout(180_000);
+    signal = AbortSignal.any([
+      AbortSignal.timeout(180_000),
+      ...(options.signal ? [options.signal] : []),
+    ]);
+  signal.throwIfAborted();
   for (let hop = 0; hop < 6; hop++) {
     if (
       url.protocol !== 'https:' ||
@@ -91,6 +95,7 @@ export async function downloadPackageFile(options: {
       },
     }),
     createWriteStream(options.destination, { flags: 'wx' }),
+    { signal },
   );
   if (!bytes || (options.sha256 && options.sha256.toLowerCase() !== hash.digest('hex')))
     throw new AgentPackageInstallError('程序包内容为空或 SHA-256 校验失败，未解压或启动。');
@@ -99,7 +104,7 @@ export async function downloadPackageFile(options: {
 }
 
 /** No archive entry is treated as a shell command. */
-export async function extractAgentZip(archive: string, destination: string) {
+export async function extractAgentZip(archive: string, destination: string, signal?: AbortSignal) {
   const script = [
     "$ErrorActionPreference='Stop'",
     'Add-Type -AssemblyName System.IO.Compression.FileSystem',
@@ -117,19 +122,25 @@ export async function extractAgentZip(archive: string, destination: string) {
     '[IO.Compression.ZipFileExtensions]::ExtractToDirectory($zip,$env:CP_INSTALL_DESTINATION)',
     '} finally {$zip.Dispose()}',
   ].join('\n');
-  await promisify(execFile)(
+  await runInstallProcess(
     join(process.env.SystemRoot ?? 'C:/Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe'),
     ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script],
     {
       windowsHide: true,
       timeout: 120_000,
+      ...(signal ? { signal } : {}),
       env: { ...process.env, CP_INSTALL_ARCHIVE: archive, CP_INSTALL_DESTINATION: destination },
     },
   );
 }
 
 /** Reuse the pinned npm distribution's tar reader; reject links and validate before extraction. */
-export async function extractAgentTar(archive: string, destination: string, npmCli: string) {
+export async function extractAgentTar(
+  archive: string,
+  destination: string,
+  npmCli: string,
+  signal?: AbortSignal,
+) {
   // A parser callback must never bring down the HTTP host. Keep decompression,
   // validation and extraction in a bounded child, using fixed code and argv.
   const script = [
@@ -149,12 +160,13 @@ export async function extractAgentTar(archive: string, destination: string, npmC
     'await tar.x({file:archive,cwd:destination,strict:true,preserveOwner:false});',
   ].join('\n');
   try {
-    await promisify(execFile)(
+    await runInstallProcess(
       process.execPath,
       ['--input-type=module', '-e', script, archive, destination, npmCli],
-      { windowsHide: true, timeout: 120_000, maxBuffer: 64_000 },
+      { windowsHide: true, timeout: 120_000, maxBuffer: 64_000, ...(signal ? { signal } : {}) },
     );
   } catch {
+    signal?.throwIfAborted();
     throw new AgentPackageInstallError(
       '程序包含不支持的路径、链接、重复条目或超量内容，解压未完成。',
     );

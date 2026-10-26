@@ -1,6 +1,5 @@
 import { createHash } from 'node:crypto';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { runInstallProcess } from './agent-install-process.js';
 import { existsSync, lstatSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { installedPackageEntries } from './agent-installed-package.js';
@@ -143,8 +142,10 @@ export async function installAgentPackage(options: {
   ) => Promise<unknown>;
   phase: (state: 'downloading' | 'installing', message: string) => void;
   progress?: ((progress: DownloadProgress) => void) | undefined;
+  signal?: AbortSignal | undefined;
 }) {
   const { plan, directory, network } = options;
+  options.signal?.throwIfAborted();
   mkdirSync(directory, { recursive: true });
   const distribution = plan.distribution;
   const adapt = (command: string, prefixArgs: string[] = []) =>
@@ -166,6 +167,7 @@ export async function installAgentPackage(options: {
       run: options.run,
       phase: options.phase,
       progress: options.progress,
+      signal: options.signal,
     });
     return adapt(python.command, python.prefixArgs);
   }
@@ -178,14 +180,15 @@ export async function installAgentPackage(options: {
       network,
       sha256: distribution.sha256,
       progress: options.progress,
+      signal: options.signal,
     });
     options.phase('installing', '正在安装并自动配置启动入口…');
     const extracted = join(directory, 'program');
-    if (distribution.kind === 'zip') await extractAgentZip(archive, extracted);
+    if (distribution.kind === 'zip') await extractAgentZip(archive, extracted, options.signal);
     else if (distribution.kind === 'tar') {
       const npm = npmRuntime(options.releaseRoot);
       if (!npm) throw new Error('Archive reader unavailable.');
-      await extractAgentTar(archive, extracted, npm);
+      await extractAgentTar(archive, extracted, npm, options.signal);
     } else {
       const command = ownedPackagePath(extracted, distribution.cmd.replaceAll('\\', '/'));
       mkdirSync(dirname(command), { recursive: true });
@@ -217,7 +220,7 @@ export async function installAgentPackage(options: {
   }
   env.npm_config_cache = join(directory, 'cache');
   env.npm_config_registry = 'https://registry.npmjs.org/';
-  await (options.run ?? promisify(execFile))(
+  await (options.run ?? runInstallProcess)(
     process.execPath,
     [
       cli,
@@ -234,8 +237,16 @@ export async function installAgentPackage(options: {
       '--',
       distribution.source,
     ],
-    { cwd: directory, windowsHide: true, timeout: 300_000, maxBuffer: 512_000, env },
+    {
+      cwd: directory,
+      windowsHide: true,
+      timeout: 300_000,
+      maxBuffer: 512_000,
+      env,
+      ...(options.signal ? { signal: options.signal } : {}),
+    },
   );
+  options.signal?.throwIfAborted();
   const match = ExactPackage.exec(distribution.source)!;
   const packageRoot = ownedPackagePath(join(directory, 'node_modules'), match[1]!);
   const entries = installedPackageEntries(packageRoot, match[1]!, true);
