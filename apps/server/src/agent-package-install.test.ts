@@ -87,6 +87,7 @@ it('reports streamed bytes, avoids invented totals, and does not report verified
         destination: join(root, 'bad'),
         network: { fetch: async () => new Response('bad') },
         sha256: '0'.repeat(64),
+        maxAttempts: 1,
         progress,
       }),
     ).rejects.toThrow('SHA-256');

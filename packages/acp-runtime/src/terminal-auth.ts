@@ -1,6 +1,7 @@
 import { basename, isAbsolute } from 'node:path';
 import { z } from 'zod';
 import type { AgentDefinition } from '@control-plane/core';
+import { isNodeEntrypoint } from '@control-plane/runner';
 
 export const TerminalAuthMethodSchema = z
   .object({
@@ -21,7 +22,9 @@ export function terminalInvocationPrefix(runtime: AgentDefinition['runtime']) {
     if (
       !runtime.args[0] ||
       !isAbsolute(runtime.args[0]) ||
-      !/\.(?:[cm]?js|py)$/i.test(runtime.args[0])
+      !(/^node(?:\.exe)?$/.test(name)
+        ? isNodeEntrypoint(runtime.args[0])
+        : /\.py$/i.test(runtime.args[0]))
     )
       return undefined;
     return [runtime.args[0]];
