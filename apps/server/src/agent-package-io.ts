@@ -9,6 +9,8 @@ import type { NetworkSettingsService } from './network-settings.js';
 
 export class AgentPackageInstallError extends Error {}
 
+export type DownloadProgress = { receivedBytes: number; totalBytes?: number };
+
 export function ownedPackagePath(root: string, name: string) {
   const result = resolve(root, name),
     rel = relative(root, result);
@@ -31,6 +33,7 @@ export async function downloadPackageFile(options: {
   network: Pick<NetworkSettingsService, 'fetch'>;
   sha256?: string | undefined;
   maxBytes?: number;
+  progress?: ((progress: DownloadProgress) => void) | undefined;
 }) {
   let url = new URL(options.source),
     response: Response | undefined;
@@ -58,7 +61,17 @@ export async function downloadPackageFile(options: {
   }
   if (!response?.ok || !response.body) throw new Error('Package download failed.');
   const hash = createHash('sha256');
+  const length = Number(response.headers.get('content-length'));
+  // fetch may decompress the body; encoded Content-Length then measures different bytes.
+  let totalBytes =
+    !response.headers.get('content-encoding') && Number.isSafeInteger(length) && length > 0
+      ? length
+      : undefined;
   let bytes = 0;
+  let lastReport = performance.now();
+  const report = () =>
+    options.progress?.({ receivedBytes: bytes, ...(totalBytes ? { totalBytes } : {}) });
+  report();
   await pipeline(
     Readable.fromWeb(response.body as import('node:stream/web').ReadableStream),
     new Transform({
@@ -69,6 +82,11 @@ export async function downloadPackageFile(options: {
           return;
         }
         hash.update(block);
+        if (totalBytes && bytes > totalBytes) totalBytes = undefined;
+        if (performance.now() - lastReport >= 250) {
+          lastReport = performance.now();
+          report();
+        }
         callback(null, block);
       },
     }),
@@ -76,6 +94,8 @@ export async function downloadPackageFile(options: {
   );
   if (!bytes || (options.sha256 && options.sha256.toLowerCase() !== hash.digest('hex')))
     throw new AgentPackageInstallError('程序包内容为空或 SHA-256 校验失败，未解压或启动。');
+  if (totalBytes !== bytes) totalBytes = undefined;
+  report();
 }
 
 /** No archive entry is treated as a shell command. */

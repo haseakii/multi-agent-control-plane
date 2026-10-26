@@ -522,6 +522,35 @@
   font-size: 12px;
   line-height: 1.8;
 }
+.installProgress progress {
+  width: 100%;
+  height: 12px;
+  accent-color: #ec6435;
+}
+.installLocation {
+  margin: 12px 0;
+  font-size: 12px;
+}
+.installLocation label {
+  display: block;
+}
+.installLocation textarea {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 6px 0;
+  padding: 8px;
+  resize: vertical;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--h-line, #ddd);
+  border-radius: 5px;
+  background: var(--h-bg-soft, #f5f3ee);
+  color: var(--h-text);
+  font: inherit;
+}
+.installLocation span {
+  margin-left: 8px;
+}
 .memberCreate {
   width: 100%;
   box-sizing: border-box;

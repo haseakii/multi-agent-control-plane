@@ -8,7 +8,7 @@ import { openSqliteStorage } from '@control-plane/storage';
 import { createControlPlaneRuntime } from './runtime-composition.js';
 import { AgentCatalogService } from './agent-catalog.js';
 import { AgentInstallationsService } from './agent-installations.js';
-import { packagePlan } from './agent-package-install.js';
+import { packagePlan, type installAgentPackage } from './agent-package-install.js';
 const entry = {
   id: 'test-worker',
   name: 'Test Worker',
@@ -44,8 +44,19 @@ it('isolates install, retries a failed install and interrupted check, reuses reg
   );
   await catalog.refresh();
   const installer = vi
-    .fn()
-    .mockRejectedValueOnce(new Error('network failed'))
+    .fn<typeof installAgentPackage>()
+    .mockImplementationOnce(async ({ directory, phase, progress }) => {
+      phase('downloading', 'Downloading fixture');
+      progress?.({ receivedBytes: 50, totalBytes: 100 });
+      expect(service.list()[0]).toMatchObject({
+        directory,
+        progress: { receivedBytes: 50, totalBytes: 100 },
+      });
+      expect(storage.repositories.agentInstallations.list()[0]?.directory).toBe(directory);
+      phase('installing', 'Installing fixture');
+      expect(service.list()[0]?.progress).toBeUndefined();
+      throw new Error('network failed');
+    })
     .mockResolvedValue({
       type: 'acp-stdio',
       command: process.execPath,
@@ -64,6 +75,7 @@ it('isolates install, retries a failed install and interrupted check, reuses reg
   try {
     const plan = service.plan(entry.id);
     expect(plan.integrity).toBe('sha256');
+    expect(plan.installationRoot).toBe(join(root, 'agents'));
     const input = {
       requestId: randomUUID(),
       entryId: entry.id,
@@ -75,11 +87,15 @@ it('isolates install, retries a failed install and interrupted check, reuses reg
     expect(service.start(input).id).toBe(first.id);
     await service.settle();
     expect(service.list()[0]?.state).toBe('failed');
+    const failedDirectory = service.list()[0]?.directory;
+    expect(failedDirectory).toContain(first.id);
+    expect(service.list()[0]?.progress).toBeUndefined();
     expect(runtime.agentControl.list()).toHaveLength(0);
     service.retry(first.id);
     await service.settle();
     const ready = storage.repositories.agentInstallations.get(first.id)!;
     expect(ready.state).toBe('ready');
+    expect(ready.directory).not.toBe(failedDirectory);
     expect(ready.agentId).toBeDefined();
     expect(installer).toHaveBeenCalledTimes(2);
     const agent = runtime.agentControl.list()[0]!;
@@ -89,6 +105,7 @@ it('isolates install, retries a failed install and interrupted check, reuses reg
     storage.repositories.agentInstallations.upsert({ ...ready, state: 'checking' });
     service = new AgentInstallationsService(options);
     expect(service.list()[0]?.state).toBe('failed');
+    expect(service.list()[0]?.directory).toBe(ready.directory);
     service.retry(first.id);
     await service.settle();
     expect(service.list()[0]?.state).toBe('ready');

@@ -100,6 +100,7 @@ export const AgentInstallationSchema = z
       'needs-attention',
     ]),
     message: z.string().max(1000),
+    directory: z.string().min(1).max(32768).optional(),
     agentId: Id.optional(),
     package: InstalledAgentPackageSchema.optional(),
     createdAt: z.string().datetime(),

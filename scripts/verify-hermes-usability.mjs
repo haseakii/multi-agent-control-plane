@@ -60,6 +60,10 @@ const local = createLocalIntegrations({
   baseUrl: 'http://127.0.0.1:0',
 });
 let installs = 0;
+let finishInstall, installUpdates;
+const installGate = new Promise((resolve) => {
+  finishInstall = resolve;
+});
 const agentInstallations = new AgentInstallationsService({
   storage,
   catalog,
@@ -67,8 +71,12 @@ const agentInstallations = new AgentInstallationsService({
   network: runtime.network,
   root: path.join(root, 'agents'),
   releaseRoot: path.resolve('.'),
-  installPackage: async ({ phase }) => {
+  installPackage: async ({ phase, progress }) => {
     installs++;
+    installUpdates = { phase, progress };
+    phase('downloading', '正在下载回归程序');
+    progress({ receivedBytes: 52428800, totalBytes: 104857600 });
+    await installGate;
     phase('installing', '测试安装完成，未访问外网');
     return fixtureRuntime;
   },
@@ -235,13 +243,47 @@ try {
     .getByRole('group', { name: '回归 ACP', exact: true })
     .getByRole('button', { name: '安装', exact: true })
     .click();
+  await expect(page.getByText('已下载 50.0 MB / 100.0 MB（50%）', { exact: false })).toBeVisible();
+  const installPath = agentInstallations.list()[0].directory;
+  await expect(page.getByRole('textbox', { name: '本次安装位置', exact: true })).toHaveValue(
+    installPath,
+  );
+  await expect(page.getByRole('progressbar', { name: '当前步骤进度' })).toHaveAttribute(
+    'value',
+    '50',
+  );
+  const locationBox = await page
+    .getByRole('textbox', { name: '本次安装位置', exact: true })
+    .boundingBox();
+  assert(
+    locationBox && locationBox.y + locationBox.height < 850,
+    'Progress and location should be visible without scrolling',
+  );
+  await page.screenshot({ path: path.join(root, 'acp-downloading.png') });
+  installUpdates.progress({ receivedBytes: 62914560 });
+  await expect(page.getByText('已下载 60.0 MB · 总大小未知', { exact: false })).toBeVisible();
+  await expect(page.getByRole('progressbar', { name: '当前步骤进度' })).not.toHaveAttribute(
+    'value',
+  );
+  installUpdates.phase('installing', '正在安装依赖；此步骤不提供总下载量');
+  await expect(
+    page.getByText('正在安装依赖；此步骤不提供总下载量', { exact: false }),
+  ).toBeVisible();
+  await expect(page.getByText(/已下载 60.0 MB/)).toHaveCount(0);
+  await page.getByRole('button', { name: '返回产品目录', exact: true }).click();
+  await page.getByRole('button', { name: '已下载程序与安装记录', exact: true }).click();
+  await expect(page.getByRole('textbox', { name: '本次安装位置', exact: true })).toHaveValue(
+    installPath,
+  );
+  await expect(page.getByRole('progressbar', { name: '当前步骤进度' })).toBeVisible();
+  finishInstall();
+  checks.push(
+    'Live download bytes, unknown totals, phase changes and exact installation paths remain visible after reopening records',
+  );
   await expect(page.getByText('已安装', { exact: true })).toBeVisible({ timeout: 15000 });
   await expect(page.getByText('本机安装入口', { exact: true })).toBeVisible();
   assert.equal(installs, 1);
   await page.screenshot({ path: path.join(root, 'acp.png') });
-  await page.getByRole('button', { name: '返回产品目录', exact: true }).click();
-  await page.getByRole('button', { name: '已下载程序与安装记录', exact: true }).click();
-  await expect(page.getByText('本机安装入口', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: '登录并使用', exact: true })).toBeVisible();
   await page.getByRole('button', { name: '登录并使用', exact: true }).click();
   await expect(page.getByRole('dialog', { name: '协作者连接' })).toBeHidden({ timeout: 15000 });
@@ -261,6 +303,7 @@ try {
   failure = error;
   await page?.screenshot({ path: path.join(root, 'failure.png') });
 } finally {
+  finishInstall();
   await browser?.close();
   await agentInstallations.settle();
   await app.close();

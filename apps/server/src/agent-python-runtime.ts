@@ -11,6 +11,7 @@ import {
   downloadPackageFile,
   extractAgentZip,
   rejectPackageLinks,
+  type DownloadProgress,
 } from './agent-package-io.js';
 
 export const MANAGED_UV_VERSION = '0.13.5';
@@ -34,7 +35,11 @@ const UvRecord = z
   .object({ command: z.string(), sha256: z.string().regex(/^[a-f0-9]{64}$/) })
   .strict();
 
-export async function ensureManagedUv(root: string, network: NetworkSettingsService) {
+export async function ensureManagedUv(
+  root: string,
+  network: NetworkSettingsService,
+  progress?: (progress: DownloadProgress) => void,
+) {
   const target = uvTargets[process.arch as keyof typeof uvTargets];
   if (process.platform !== 'win32' || !target)
     throw new AgentPackageInstallError('此平台尚未提供自动 Python 运行环境。');
@@ -63,6 +68,7 @@ export async function ensureManagedUv(root: string, network: NetworkSettingsServ
     network,
     sha256: target.sha256,
     maxBytes: 128 * 1024 * 1024,
+    progress,
   });
   await extractAgentZip(archive, program);
   rejectPackageLinks(program);
@@ -84,10 +90,13 @@ export async function installPythonAgent(options: {
   run?: Run | undefined;
   phase(state: 'downloading' | 'installing', message: string): void;
   uvExecutable?: string;
+  progress?: ((progress: DownloadProgress) => void) | undefined;
 }) {
   const { directory, runtimeRoot, network } = options;
-  options.phase('downloading', '正在自动准备私有 Python 运行环境…');
-  const uv = options.uvExecutable ?? (await ensureManagedUv(runtimeRoot, network));
+  options.phase('downloading', '正在准备 Python 环境管理器…');
+  const uv =
+    options.uvExecutable ?? (await ensureManagedUv(runtimeRoot, network, options.progress));
+  options.phase('installing', '正在准备私有 Python 运行环境；此步骤不提供总下载量…');
   const inherited = Object.fromEntries(
     Object.entries(process.env).filter(
       (item): item is [string, string] => item[1] !== undefined && !/^(?:UV_|PIP_)/i.test(item[0]),
@@ -117,7 +126,7 @@ export async function installPythonAgent(options: {
     ['python', 'install', MANAGED_PYTHON_REQUEST, '--no-bin', '--no-registry', '--no-config'],
     commandOptions,
   );
-  options.phase('installing', '正在创建独立 Python 环境并安装固定版本 ACP 程序…');
+  options.phase('installing', '正在创建独立 Python 环境…');
   const venv = join(directory, 'venv'),
     python = join(venv, 'Scripts/python.exe');
   await run(
@@ -133,6 +142,7 @@ export async function installPythonAgent(options: {
     ],
     commandOptions,
   );
+  options.phase('installing', '正在下载并安装 Python ACP 依赖；此步骤不提供总下载量…');
   await run(
     uv,
     [

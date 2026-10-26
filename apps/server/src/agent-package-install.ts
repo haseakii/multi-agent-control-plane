@@ -20,6 +20,7 @@ import {
   extractAgentZip,
   extractAgentTar,
   rejectPackageLinks,
+  type DownloadProgress,
 } from './agent-package-io.js';
 export { AgentPackageInstallError } from './agent-package-io.js';
 
@@ -141,6 +142,7 @@ export async function installAgentPackage(options: {
     options: import('node:child_process').ExecFileOptions,
   ) => Promise<unknown>;
   phase: (state: 'downloading' | 'installing', message: string) => void;
+  progress?: ((progress: DownloadProgress) => void) | undefined;
 }) {
   const { plan, directory, network } = options;
   mkdirSync(directory, { recursive: true });
@@ -163,6 +165,7 @@ export async function installAgentPackage(options: {
       network,
       run: options.run,
       phase: options.phase,
+      progress: options.progress,
     });
     return adapt(python.command, python.prefixArgs);
   }
@@ -174,6 +177,7 @@ export async function installAgentPackage(options: {
       destination: archive,
       network,
       sha256: distribution.sha256,
+      progress: options.progress,
     });
     options.phase('installing', '正在安装并自动配置启动入口…');
     const extracted = join(directory, 'program');
@@ -194,7 +198,7 @@ export async function installAgentPackage(options: {
       throw new AgentPackageInstallError('程序包缺少目录声明的启动入口，未启动。');
     return adapt(command);
   }
-  options.phase('installing', '正在准备 Node.js 适配器，安装到私有目录…');
+  options.phase('installing', '正在通过 npm 下载依赖并安装 ACP 程序；此步骤不提供总下载量…');
   const cli = npmRuntime(options.releaseRoot);
   if (!cli) throw new AgentPackageInstallError('工作台缺少配套 npm，请使用完整发行包。');
   const effective = network.effective();

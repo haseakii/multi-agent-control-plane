@@ -14,6 +14,8 @@ Agent 与角色分开：任何具备资格和权限的成员都可以担任 **Bo
 
 安装默认位于 `%LOCALAPPDATA%\MultiAgentControlPlane`，程序缓存位于 `%LOCALAPPDATA%\MultiAgentControlPlaneCache`。数据与下载文件分开，删除下载文件不影响已安装入口；关闭网页后后台继续运行。Windows 10/11 x64 使用系统内置 .NET Framework 4.8；当前 EXE 尚未代码签名，系统可能提示未知发布者。
 
+ACP 下载和安装可在“协作成员 → 添加 / 下载 ACP → 已下载程序与安装记录”查看。每条新记录从安装开始就显示可复制的完整安装位置，默认在 `%LOCALAPPDATA%\MultiAgentControlPlane\agents` 下；Python 共享环境位于同级 `runtimes`。直接下载显示已接收大小，有总大小时显示百分比；npm / Python 依赖安装等无法获知总量的步骤显示当前阶段和耗时。关闭安装窗口后后台继续，重新打开记录即可查看；下载完成后还需要安装和连接检查。
+
 ### 从源码启动开发控制台
 
 前置条件：**Node.js 22+（当前验证版本为 22.22.2）、pnpm 10.11.0**；使用 Git 工作树和代码审阅时还需要 Git。下面命令均从仓库根目录执行，终端示例使用 PowerShell。

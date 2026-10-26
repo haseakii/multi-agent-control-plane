@@ -19,6 +19,7 @@ import {
 } from './agent-package-install.js';
 import { TaskControlError } from './task-control.js';
 import type { AgentMembersService } from './agent-members.js';
+import type { DownloadProgress } from './agent-package-io.js';
 
 export const StartAgentInstallSchema = z
   .object({
@@ -32,6 +33,8 @@ export const StartAgentInstallSchema = z
 export class AgentInstallationsService {
   private readonly repo;
   private readonly active = new Map<string, Promise<void>>();
+  // Byte counters are live telemetry, not durable task state or per-chunk database writes.
+  private readonly downloads = new Map<string, DownloadProgress>();
   constructor(
     private readonly options: {
       storage: SqliteStorage;
@@ -60,6 +63,7 @@ export class AgentInstallationsService {
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       .map((row) => ({
         ...row,
+        progress: this.downloads.get(row.id),
         installed: !!row.package || !!agents.find((a) => a.definition.id === row.agentId),
         members: agents
           .filter(
@@ -85,11 +89,15 @@ export class AgentInstallationsService {
   plan(entryId: string) {
     const entry = this.options.catalog.entry(entryId);
     if (!entry) throw new TaskControlError(404, '目录产品不存在，请先刷新目录。');
-    return packagePlan(
-      entry,
-      this.options.catalog.snapshot().platform,
-      !!npmRuntime(this.options.releaseRoot),
-    );
+    return {
+      ...packagePlan(
+        entry,
+        this.options.catalog.snapshot().platform,
+        !!npmRuntime(this.options.releaseRoot),
+      ),
+      installationRoot: this.options.root,
+      runtimeDirectory: join(dirname(this.options.root), 'runtimes'),
+    };
   }
   private save(row: AgentInstallation, patch: Partial<AgentInstallation>) {
     return this.repo.upsert({ ...row, ...patch, updatedAt: new Date().toISOString() });
@@ -179,7 +187,11 @@ export class AgentInstallationsService {
     return next;
   }
   private launch(row: AgentInstallation) {
-    const promise = this.execute(row).finally(() => this.active.delete(row.id));
+    this.downloads.delete(row.id);
+    const promise = this.execute(row).finally(() => {
+      this.active.delete(row.id);
+      this.downloads.delete(row.id);
+    });
     this.active.set(row.id, promise);
   }
   private async execute(initial: AgentInstallation) {
@@ -195,16 +207,21 @@ export class AgentInstallationsService {
         if (!pkg) {
           const plan = this.plan(row.entryId);
           if (plan.planHash !== row.planHash) throw new Error('Catalog changed.');
+          // Persist before creating files, so failures and restarts retain their exact location.
+          const directory = join(this.options.root, row.entryId, row.version, row.id, randomUUID());
+          row = this.save(row, { directory });
           const runtime = await (this.options.installPackage ?? installAgentPackage)({
             plan,
-            directory: join(this.options.root, row.entryId, row.version, row.id, randomUUID()),
+            directory,
             releaseRoot: this.options.releaseRoot,
             runtimeRoot: join(dirname(this.options.root), 'runtimes'),
             nodeExecutable: join(dirname(this.options.root), 'runtime/node.exe'),
             network: this.options.network,
             phase: (state, message) => {
+              this.downloads.delete(row.id);
               row = this.save(row, { state, message });
             },
+            progress: (progress) => this.downloads.set(row.id, progress),
           });
           pkg = {
             runtime,

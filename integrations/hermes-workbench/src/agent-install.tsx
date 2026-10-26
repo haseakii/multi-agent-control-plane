@@ -13,6 +13,8 @@ const Plan = z.object({
   source: z.string(),
   integrity: z.string(),
   runtime: z.string().optional(),
+  installationRoot: z.string().optional(),
+  runtimeDirectory: z.string().optional(),
 });
 const Installation = z.object({
   id: z.string(),
@@ -30,6 +32,13 @@ const Installation = z.object({
   message: z.string(),
   agentId: z.string().optional(),
   updatedAt: z.string(),
+  directory: z.string().optional(),
+  progress: z
+    .object({
+      receivedBytes: z.number().int().nonnegative(),
+      totalBytes: z.number().int().positive().optional(),
+    })
+    .optional(),
   installed: z.boolean().default(false),
   members: z.array(InstalledMember).default([]),
   package: z
@@ -68,6 +77,71 @@ const labels = {
   failed: '安装未完成',
   'needs-attention': '连接待处理',
 };
+function InstallLocation({ label, directory }: { label: string; directory: string }) {
+  const [feedback, setFeedback] = useState('');
+  return (
+    <div className={s.installLocation}>
+      <label>
+        {label}
+        <textarea
+          aria-label={label}
+          readOnly
+          rows={2}
+          value={directory}
+          onFocus={(event) => event.target.select()}
+        />
+      </label>
+      <button
+        type="button"
+        onClick={() => {
+          void navigator.clipboard?.writeText(directory).then(
+            () => setFeedback('已复制'),
+            () => setFeedback('复制未完成，请选中路径后按 Ctrl+C'),
+          );
+          if (!navigator.clipboard) setFeedback('请选中路径后按 Ctrl+C');
+        }}
+      >
+        复制{label}
+      </button>
+      <span role="status">{feedback}</span>
+    </div>
+  );
+}
+function bytes(value: number) {
+  return value < 1024 * 1024
+    ? `${(value / 1024).toFixed(1)} KB`
+    : `${(value / 1024 / 1024).toFixed(1)} MB`;
+}
+function InstallProgress({ row }: { row: z.infer<typeof Installation> }) {
+  const [now, setNow] = useState(Date.now());
+  const active = ['queued', 'downloading', 'installing', 'checking'].includes(row.state);
+  useEffect(() => {
+    if (!active) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [active]);
+  if (!active) return null;
+  const progress = row.progress;
+  const total = progress?.totalBytes;
+  const percent = total
+    ? Math.min(100, Math.floor((progress!.receivedBytes / total) * 100))
+    : undefined;
+  const elapsed = Math.max(0, Math.floor((now - Date.parse(row.updatedAt)) / 1000));
+  return (
+    <div className={s.installProgress}>
+      <progress aria-label="当前步骤进度" max={100} value={percent} />
+      <p role="status">
+        {progress
+          ? total
+            ? `已下载 ${bytes(progress.receivedBytes)} / ${bytes(total)}（${percent}%）`
+            : `已下载 ${bytes(progress.receivedBytes)} · 总大小未知`
+          : '正在处理，请稍候'}
+        {' · '}当前步骤已用 {elapsed} 秒
+      </p>
+      <p className={s.hint}>下载 → 安装 → 检查连接。完成后再登录使用；关闭此窗口不影响后台安装。</p>
+    </div>
+  );
+}
 export function AgentInstall({
   entryId,
   onExisting,
@@ -201,12 +275,18 @@ export function AgentInstall({
         </p>
       )}
       {checking && <p role="status">正在核对本平台安装方式…</p>}
-      {plan && !installed && (
+      {plan && !installed && !visible.some((row) => row.version === plan.version) && (
         <>
           <p className={s.hint}>
             {plan.runtime ?? '自动准备运行环境'} · 版本 {plan.version} ·
             安装到工作台私有目录，无需填写路径。
           </p>
+          {plan.installationRoot && (
+            <InstallLocation label="程序下载目录" directory={plan.installationRoot} />
+          )}
+          {plan.runtimeDirectory && plan.runtime?.startsWith('Python') && (
+            <InstallLocation label="共享运行环境目录" directory={plan.runtimeDirectory} />
+          )}
           <details>
             <summary>安装来源与验证方式</summary>
             <p className={s.configExample}>{plan.source}</p>
@@ -248,6 +328,12 @@ export function AgentInstall({
             )}{' '}
             {row.message}
           </p>
+          <InstallProgress row={row} />
+          {row.directory ? (
+            <InstallLocation label="本次安装位置" directory={row.directory} />
+          ) : (
+            <p className={s.hint}>旧版记录未保存安装目录，可展开下方入口查看程序路径。</p>
+          )}
           {row.package && (
             <details>
               <summary>本机安装入口</summary>

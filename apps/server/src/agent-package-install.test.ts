@@ -7,6 +7,60 @@ import { expect, it, vi } from 'vitest';
 import { installAgentPackage, packagePlan } from './agent-package-install.js';
 import { resolveNetwork, type NetworkSettingsService } from './network-settings.js';
 import { NetworkSettingsSchema } from '@control-plane/core';
+import { downloadPackageFile } from './agent-package-io.js';
+
+it('reports streamed bytes, avoids invented totals, and does not report verified completion on checksum failure', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'acp-download-progress-'));
+  const clock = vi.spyOn(performance, 'now');
+  let tick = 0;
+  clock.mockImplementation(() => (tick += 300));
+  try {
+    const cases = [
+      { headers: { 'content-length': '6' }, totalBytes: 6 },
+      { headers: {}, totalBytes: undefined },
+      { headers: { 'content-length': '3' }, totalBytes: undefined },
+      { headers: { 'content-length': '100', 'content-encoding': 'gzip' }, totalBytes: undefined },
+    ];
+    for (const [index, item] of cases.entries()) {
+      const progress = vi.fn();
+      await downloadPackageFile({
+        source: 'https://example.com/worker.exe',
+        destination: join(root, String(index)),
+        network: {
+          fetch: async () =>
+            new Response(
+              new ReadableStream({
+                start(controller) {
+                  controller.enqueue(Buffer.from('abc'));
+                  controller.enqueue(Buffer.from('def'));
+                  controller.close();
+                },
+              }),
+              { headers: item.headers },
+            ),
+        },
+        progress,
+      });
+      expect(progress.mock.calls.map(([value]) => value.receivedBytes)).toEqual([0, 3, 6, 6]);
+      expect(progress.mock.lastCall?.[0].totalBytes).toBe(item.totalBytes);
+      expect(readFileSync(join(root, String(index)), 'utf8')).toBe('abcdef');
+    }
+    const progress = vi.fn();
+    await expect(
+      downloadPackageFile({
+        source: 'https://example.com/worker.exe',
+        destination: join(root, 'bad'),
+        network: { fetch: async () => new Response('bad') },
+        sha256: '0'.repeat(64),
+        progress,
+      }),
+    ).rejects.toThrow('SHA-256');
+    expect(progress).toHaveBeenCalledTimes(2); // initial + received chunk, no verified final report
+  } finally {
+    clock.mockRestore();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 const base = {
   id: 'fixture',
   name: 'Fixture',
