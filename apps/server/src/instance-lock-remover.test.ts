@@ -19,6 +19,7 @@ vi.mock('node:child_process', async (importOriginal) => {
   return { ...actual, execFileSync: vi.fn(actual.execFileSync) };
 });
 import { lockFileIdentity, windowsInstanceLockRemover } from './instance-lock-remover.js';
+import { windowsSystemEnvironment } from './windows-system-environment.js';
 const dirs: string[] = [];
 afterEach(() => {
   vi.mocked(execFileSync).mockRestore();
@@ -104,6 +105,7 @@ it.runIf(process.platform === 'win32')(
         windowsHide: true,
         timeout: 30000,
         env: {
+          ...windowsSystemEnvironment(),
           SystemRoot: process.env.SystemRoot ?? 'C:/Windows',
           TEMP: tmpdir(),
           TMP: tmpdir(),

@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { fstatSync, readFileSync } from 'node:fs';
 import { join, isAbsolute, basename } from 'node:path';
-import { tmpdir } from 'node:os';
+import { windowsSystemEnvironment } from './windows-system-environment.js';
 import { z } from 'zod';
 
 const IdentitySchema = z
@@ -67,9 +67,8 @@ function nativeRemove(
         timeout: 30_000,
         maxBuffer: 16_384,
         env: {
+          ...windowsSystemEnvironment(),
           SystemRoot: systemRoot,
-          TEMP: process.env.TEMP ?? tmpdir(),
-          TMP: process.env.TMP ?? tmpdir(),
           CONTROL_PLANE_LOCK_REQUEST: JSON.stringify({
             path: filename,
             ...owner,
