@@ -205,7 +205,7 @@ describe('LocalRunner', () => {
       command: process.execPath,
       args: [
         '-e',
-        'console.log(JSON.stringify({visible:process.env.VISIBLE,leaked:process.env.RUNNER_SHOULD_NOT_LEAK}))',
+        'console.log(JSON.stringify({visible:process.env.VISIBLE,leaked:process.env.RUNNER_SHOULD_NOT_LEAK,appData:process.env.APPDATA,localAppData:process.env.LOCALAPPDATA}))',
       ],
       cwd: tempDirectory(),
       env: { VISIBLE: 'explicit' },
@@ -222,7 +222,12 @@ describe('LocalRunner', () => {
       .map((event) => event.chunk)
       .join('');
 
-    expect(JSON.parse(stdout.trim())).toEqual({ visible: 'explicit' });
+    expect(JSON.parse(stdout.trim())).toEqual({
+      visible: 'explicit',
+      ...(process.platform === 'win32'
+        ? { appData: process.env.APPDATA, localAppData: process.env.LOCALAPPDATA }
+        : {}),
+    });
   });
 
   it('redacts likely credentials from normalized process output', async () => {

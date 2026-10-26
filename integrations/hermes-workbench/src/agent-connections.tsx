@@ -322,7 +322,7 @@ export function AgentConnections({
                 setEditing('new');
               }}
             >
-              {hasOnboardingDraft ? '添加成员 · 有草稿' : '＋ 添加成员'}
+              {hasOnboardingDraft ? '添加 / 下载 ACP · 有草稿' : '＋ 添加 / 下载 ACP'}
             </button>
           </nav>
           {error && (
@@ -341,7 +341,9 @@ export function AgentConnections({
             </p>
           )}
           {!loading && !error && !agents.length && !editing && (
-            <p className={s.empty}>当前服务没有注册协作者。请先接入本机已安装的 ACP 协作者。</p>
+            <p className={s.empty}>
+              当前服务没有注册协作者。点击“添加 / 下载 ACP”，选择下载安装或使用本机已有入口。
+            </p>
           )}
           {editing === 'new' && !manual && (
             <AgentQuickAdd

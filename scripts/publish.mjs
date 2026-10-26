@@ -54,6 +54,12 @@ if (!flags['--web-dist']) {
   run('integrations/hermes-workbench/build.mjs', ['--typecheck']);
   run('integrations/hermes-workbench/build.mjs', ['--output', web]);
 }
+run('scripts/verify-hermes-usability.mjs', [
+  '--web-root',
+  web,
+  '--evidence',
+  path.join(evidence, 'hermes-usability'),
+]);
 run('scripts/build-windows-release.mjs', [
   '--output',
   output,

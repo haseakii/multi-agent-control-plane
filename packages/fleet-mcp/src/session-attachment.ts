@@ -33,6 +33,10 @@ export function getFleetMcpStdioProxyPath(): string {
   return fileURLToPath(new URL('./stdio-proxy-main.js', import.meta.url));
 }
 
+export function getClientMcpStdioPath(): string {
+  return fileURLToPath(new URL('./client-stdio-main.js', import.meta.url));
+}
+
 export type FleetSessionContext = {
   agent: AgentDefinition;
   projectId: string;

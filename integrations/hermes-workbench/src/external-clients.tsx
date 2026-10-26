@@ -58,6 +58,8 @@ async function request<S extends z.ZodTypeAny>(
       : { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
     signal: AbortSignal.timeout(25000),
   });
+  if (response.status === 404)
+    throw new Error('当前后台版本未提供 MCP 接入接口。请更新并重启工作台，然后刷新页面。');
   const value = await response.json();
   if (!response.ok)
     throw new Error(typeof value.error === 'string' ? value.error : '操作未完成，请重试。');
@@ -218,9 +220,9 @@ export function ExternalClients({
           <span className={s.eyebrow}>共享本地协作能力</span>
           <h2 id="external-title">
             <Cable size={22} />
-            接入应用
+            MCP 接入应用
           </h2>
-          <p>接入一次，在多个已授权项目间发任务、带附件和继续追问。</p>
+          <p>将本工作台作为 MCP 服务接入外部应用，共用已授权项目的成员与任务。</p>
         </div>
         <button aria-label="关闭应用接入" disabled={!!busy} onClick={onClose}>
           <X size={20} />
@@ -395,6 +397,20 @@ export function ExternalClients({
           </div>
         </section>
         <section className={s.result} aria-label="安装与接入记录">
+          <article className={s.config}>
+            <h3>MCP 接入点在哪里？</h3>
+            <p>
+              左侧选择应用和项目，点击“授权并生成接入”，这里会显示完整启动配置。选择“其他 MCP
+              客户端”可获取通用配置。
+            </p>
+            <p>
+              本机接入使用 stdio：客户端按生成的 command 和 args 启动连接程序，无需填写 HTTP
+              地址。工作台需保持运行。
+            </p>
+            <p className={s.muted}>
+              成员自己的 MCP（例如 chrome-devtools-mcp）由成员配置管理，其启动报错需在该成员中处理。
+            </p>
+          </article>
           {error && (
             <p className={s.error} role="alert">
               {error}
@@ -478,7 +494,7 @@ export function ExternalClients({
                   下载配置
                 </button>
               </div>
-              <details>
+              <details open>
                 <summary>查看配置</summary>
                 <textarea
                   aria-label="完整 MCP 配置"

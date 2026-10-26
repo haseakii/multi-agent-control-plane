@@ -168,7 +168,12 @@ function legacyModelsSnapshot(value: unknown): SessionSettingsSnapshot {
 export function sessionSettingsFromResponse(response: unknown): SessionSettingsSnapshot {
   try {
     const input = record(response);
-    if (input?.configOptions != null) return configOptionsSnapshot(input.configOptions);
+    if (input?.configOptions != null) {
+      const settings = configOptionsSnapshot(input.configOptions);
+      // Some peers advertise an empty (or permission-only) modern list alongside
+      // the older model interface. Keep using that model interface in this case.
+      if (settings.options.length || input.models == null) return settings;
+    }
     if (input?.models != null) return legacyModelsSnapshot(input.models);
     return unavailableSessionSettings();
   } catch {

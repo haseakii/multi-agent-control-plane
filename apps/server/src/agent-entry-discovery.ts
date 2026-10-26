@@ -10,6 +10,7 @@ export const DiscoveredEntrySchema = z.object({
   source: z.enum(['registered', 'path', 'directory', 'package']),
   agentId: z.string().optional(),
   association: z.enum(['linked', 'possible']).optional(),
+  available: z.boolean().optional(),
   name: z.string(),
   packageName: z.string().optional(),
   packageVersion: z.string().optional(),
@@ -52,16 +53,22 @@ export function discoverAgentEntries(
     isFile?: (path: string) => boolean;
     directory?: string;
     nodeExecutable?: string;
+    environment?: NodeJS.ProcessEnv;
   } = {},
 ) {
   const platform = options.platform ?? process.platform;
   const paths = platform === 'win32' ? win32 : posix;
+  const environment = options.environment ?? process.env;
   const command = Object.entries(entry.distribution.binary ?? {}).find(
     ([key]) => key === platformKey,
   )?.[1]?.cmd;
+  const relativeCommand = command?.replaceAll('\\', '/').replace(/^\.\//, '');
   const filename =
-    command && /^(?:\.\/)?[a-zA-Z0-9_.-]+$/.test(command)
-      ? command.replace(/^\.\//, '')
+    relativeCommand &&
+    relativeCommand
+      .split('/')
+      .every((part) => /^[a-zA-Z0-9_.-]+$/.test(part) && !['.', '..'].includes(part))
+      ? paths.basename(relativeCommand)
       : undefined;
   const usableName =
     filename &&
@@ -89,12 +96,22 @@ export function discoverAgentEntries(
           ? 'linked'
           : 'possible',
       name: agent.definition.name,
+      available: agent.localEntry?.offlineChecksPassed,
       runtime: agent.definition.runtime,
     }));
   const directories = [
     ...new Set(
-      (options.path ?? process.env.PATH ?? '')
-        .split(paths.delimiter)
+      [
+        ...(platform === 'win32'
+          ? [
+              environment.APPDATA && paths.join(environment.APPDATA, 'npm'),
+              environment.LOCALAPPDATA && paths.join(environment.LOCALAPPDATA, 'pnpm'),
+              environment.NPM_CONFIG_PREFIX ?? environment.npm_config_prefix,
+            ]
+          : [environment.HOME && paths.join(environment.HOME, '.local', 'bin')]),
+        ...(options.path ?? environment.PATH ?? '').split(paths.delimiter),
+      ]
+        .filter((value): value is string => !!value)
         .map((value) => value.trim().replace(/^"(.*)"$/, '$1'))
         .filter(
           (value) =>
@@ -118,20 +135,22 @@ export function discoverAgentEntries(
       ? paths.normalize(options.directory)
       : undefined;
   if (usableName) {
-    for (const directory of [
-      ...(localDirectory ? [localDirectory, paths.join(localDirectory, 'bin')] : []),
-      ...directories,
-    ]) {
-      const path = paths.join(directory, usableName);
+    const localPaths = localDirectory
+      ? [
+          paths.join(localDirectory, relativeCommand!),
+          paths.join(localDirectory, usableName),
+          paths.join(localDirectory, 'bin', usableName),
+        ]
+      : [];
+    for (const path of new Set([
+      ...localPaths,
+      ...directories.map((directory) => paths.join(directory, usableName)),
+    ])) {
       if (candidates.some((candidate) => normalize(candidate.runtime.command) === normalize(path)))
         continue;
       if (!isFile(path)) continue;
       candidates.push({
-        source:
-          localDirectory &&
-          (directory === localDirectory || directory === paths.join(localDirectory, 'bin'))
-            ? 'directory'
-            : 'path',
+        source: localPaths.includes(path) ? 'directory' : 'path',
         name: entry.name,
         runtime: { type: 'acp-stdio', command: path, args: [] },
       });
@@ -190,6 +209,6 @@ export function discoverAgentEntries(
     candidates,
     searchedDirectories:
       usableName || packageName ? directories.length + (localDirectory ? 1 : 0) : 0,
-    note: '仅查找已登记成员、PATH 和指定目录中的入口及已安装包元数据；未启动程序。包版本来自本机声明，不代表身份验证。产品目录的建议参数需另行确认，环境值不会导入。',
+    note: '仅检查本机 PATH、用户 npm/pnpm 常用目录和指定安装目录；未启动程序。旧成员记录会单独标注入口是否有效。包版本来自本机声明，产品建议参数需另行确认。',
   });
 }

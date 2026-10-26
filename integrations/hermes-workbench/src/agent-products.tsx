@@ -60,6 +60,7 @@ const Catalog = z.object({
   stale: z.boolean(),
   error: z.string().nullable(),
   memberStatuses: z.array(MemberStatus).default([]),
+  installationSupported: z.boolean().default(false),
 });
 const Discovery = z.object({
   candidates: z.array(
@@ -67,6 +68,7 @@ const Discovery = z.object({
       source: z.enum(['registered', 'path', 'directory', 'package']),
       agentId: z.string().optional(),
       association: z.enum(['linked', 'possible']).optional(),
+      available: z.boolean().optional(),
       name: z.string(),
       packageName: z.string().optional(),
       packageVersion: z.string().optional(),
@@ -111,6 +113,8 @@ export function AgentProducts({
   const [search, setSearch] = useState('');
   const [limit, setLimit] = useState(8);
   const [selected, setSelected] = useState<z.infer<typeof Product>>();
+  const [entryMode, setEntryMode] = useState<'download' | 'local'>('download');
+  const [showInstallations, setShowInstallations] = useState(false);
   const [discovery, setDiscovery] = useState<z.infer<typeof Discovery>>();
   const [knownMembers, setKnownMembers] = useState<AgentConnectionData[]>([]);
   const [checkingVisible, setCheckingVisible] = useState(false);
@@ -407,10 +411,10 @@ export function AgentProducts({
     setDiscovery(undefined);
     setKnownMembers([]);
     setSelected(product);
+    setEntryMode('download');
     const draft = entryDraft(product.id);
     fill(draft ?? defaultFields(product));
     setRestored(!!draft);
-    void discover(product);
   }
   const unfinished = new Set(
     (catalog?.entries ?? [])
@@ -432,127 +436,192 @@ export function AgentProducts({
     <section className={s.editor} aria-label="选择 ACP 产品">
       <h3>{selected ? `接入 ${selected.name}` : '选择要接入的产品'}</h3>
       <p className={s.hint}>选择产品 → 安装或使用已有入口 → 成员自己登录</p>
-      <AgentInstall entryId={selected?.id} onExisting={onExisting} />
-      {!selected ? (
-        <>
-          <div className={s.actions}>
-            <button type="button" disabled={disabled || busy} onClick={() => void refresh()}>
-              {busy ? '正在刷新…' : catalog?.entries.length ? '刷新产品目录' : '加载产品目录'}
-            </button>
-            <button type="button" disabled={disabled} onClick={onPaste}>
-              粘贴命令或导入配置文件
-            </button>
+      <div className={s.actions}>
+        {selected ? (
+          <>
             <button
               type="button"
-              disabled={disabled || busy || !products.length}
-              onClick={() => void checkVisible()}
+              aria-pressed={entryMode === 'download'}
+              onClick={() => setEntryMode('download')}
             >
-              {checkingVisible
-                ? '正在检查显示项…'
-                : `检查当前显示的 ${Math.min(products.length, limit)} 项入口`}
+              下载安装 ACP
             </button>
-          </div>
-          <p className={s.hint}>
-            入口检查只读取本机元数据，不启动成员、不登录或安装。常用位置未发现入口不代表尚未安装。
-          </p>
-          <p className={s.hint}>关联数仅表示用户选择的目录来源，不代表软件签名或登录验证。</p>
-          <p className={s.hint}>
-            {catalog?.fetchedAt
-              ? `${catalog.entries.length} 个产品 · ${catalog.stale ? '缓存较旧，建议刷新' : '目录已缓存，可离线查看'}`
-              : '加载只获取 ACP 官方目录，不安装软件。'}
-            {catalog?.platform ? ` · ${catalog.platform}` : ''}
-          </p>
-          {(unfinished.size > 0 || onlyDrafts) && (
             <button
               type="button"
-              aria-pressed={onlyDrafts}
+              aria-pressed={entryMode === 'local'}
+              disabled={busy}
               onClick={() => {
-                setOnlyDrafts((value) => !value);
-                setSearch('');
-                setLimit(8);
+                setEntryMode('local');
+                void discover(selected);
               }}
             >
-              {onlyDrafts ? '查看所有产品' : `继续未完成入口（${unfinished.size}）`}
+              使用本机已有 ACP
             </button>
-          )}
-          {busy && (
-            <button type="button" onClick={stopWaiting}>
-              停止等待目录
-            </button>
-          )}
-          {catalog?.error && (
-            <p role="alert" className={s.error}>
-              {catalog.error}
-            </p>
-          )}
-          <label className={s.field}>
-            搜索产品
-            <input
-              value={search}
-              onChange={(event) => {
-                setSearch(event.target.value);
-                setLimit(8);
+            <button
+              type="button"
+              disabled={associating}
+              onClick={() => {
+                stopWaiting();
+                setSelected(undefined);
               }}
-              placeholder="例如 Codex、Antigravity、Gemini"
-            />
-          </label>
-          <div className={s.productList}>
-            {products.slice(0, limit).map((product) => {
-              const status = catalog?.memberStatuses.find((item) => item.entryId === product.id);
-              return (
-                <button
-                  type="button"
-                  key={product.id}
-                  disabled={disabled || busy}
-                  className={s.productChoice}
-                  onClick={() => void select(product)}
-                >
-                  <strong>{product.name}</strong>
-                  <span>目录版本 {product.version}</span>
-                  <span className={s.productAssociation}>
-                    {status
-                      ? `已关联 ${status.registeredCount} 位成员 · ${status.readyCount} 位最近确认就绪`
-                      : '目录关联状态尚未读取'}
-                  </span>
-                  {!!status?.changedSourceCount && (
-                    <span className={s.sourceAttention}>
-                      {status.changedSourceCount} 位成员入口已变化，来源待核对
-                    </span>
-                  )}
-                  <span
-                    className={s.productLocalStatus}
-                    data-local-check={checkState(status?.localCheck)}
-                  >
-                    {checkLabel(status?.localCheck)}
-                  </span>
-                  {status?.localCheck.checkedAt && (
-                    <small>
-                      检查于 {new Date(status.localCheck.checkedAt).toLocaleString('zh-CN')}
-                    </small>
-                  )}
-                  {unfinished.has(product.id) && <span>有未完成入口 · 继续填写</span>}
-                  <small>
-                    {product.distribution.binary?.[catalog!.platform]
-                      ? '目录提供本平台程序包'
-                      : product.distribution.npx || product.distribution.uvx
-                        ? '目录提供适配器包'
-                        : '请确认本机兼容性'}
-                  </small>
-                </button>
-              );
-            })}
-          </div>
-          {!!catalog?.entries.length && !products.length && (
-            <p className={s.hint}>没有匹配项。仍可粘贴自定义 ACP 配置。</p>
-          )}
-          {products.length > limit && (
-            <button type="button" onClick={() => setLimit((value) => value + 8)}>
-              再显示 8 个产品
+            >
+              返回产品目录
             </button>
-          )}
-        </>
+          </>
+        ) : (
+          <>
+            <button
+              type="button"
+              aria-pressed={!showInstallations}
+              onClick={() => setShowInstallations(false)}
+            >
+              产品目录
+            </button>
+            <button
+              type="button"
+              aria-pressed={showInstallations}
+              onClick={() => setShowInstallations(true)}
+            >
+              已下载程序与安装记录
+            </button>
+          </>
+        )}
+      </div>
+      {((showInstallations && !selected) || (selected && entryMode === 'download')) &&
+        (catalog?.installationSupported ? (
+          <AgentInstall
+            key={selected?.id ?? 'all'}
+            entryId={selected?.id}
+            onExisting={onExisting}
+          />
+        ) : (
+          <p role="status" className={s.notice}>
+            当前启动方式未提供下载管理。请通过发行包的“打开工作台.cmd”启动，或选择“使用本机已有
+            ACP”。
+          </p>
+        ))}
+      {!selected ? (
+        showInstallations ? null : (
+          <>
+            <div className={s.actions}>
+              <button type="button" disabled={disabled || busy} onClick={() => void refresh()}>
+                {busy ? '正在刷新…' : catalog?.entries.length ? '刷新产品目录' : '加载产品目录'}
+              </button>
+              <button type="button" disabled={disabled} onClick={onPaste}>
+                粘贴命令或导入配置文件
+              </button>
+              <button
+                type="button"
+                disabled={disabled || busy || !products.length}
+                onClick={() => void checkVisible()}
+              >
+                {checkingVisible
+                  ? '正在检查显示项…'
+                  : `检查当前显示的 ${Math.min(products.length, limit)} 项入口`}
+              </button>
+            </div>
+            <p className={s.hint}>
+              入口检查只读取本机元数据，不启动成员、不登录或安装。常用位置未发现入口不代表尚未安装。
+            </p>
+            <p className={s.hint}>关联数仅表示用户选择的目录来源，不代表软件签名或登录验证。</p>
+            <p className={s.hint}>
+              {catalog?.fetchedAt
+                ? `${catalog.entries.length} 个产品 · ${catalog.stale ? '缓存较旧，建议刷新' : '目录已缓存，可离线查看'}`
+                : '加载只获取 ACP 官方目录，不安装软件。'}
+              {catalog?.platform ? ` · ${catalog.platform}` : ''}
+            </p>
+            {(unfinished.size > 0 || onlyDrafts) && (
+              <button
+                type="button"
+                aria-pressed={onlyDrafts}
+                onClick={() => {
+                  setOnlyDrafts((value) => !value);
+                  setSearch('');
+                  setLimit(8);
+                }}
+              >
+                {onlyDrafts ? '查看所有产品' : `继续未完成入口（${unfinished.size}）`}
+              </button>
+            )}
+            {busy && (
+              <button type="button" onClick={stopWaiting}>
+                停止等待目录
+              </button>
+            )}
+            {catalog?.error && (
+              <p role="alert" className={s.error}>
+                {catalog.error}
+              </p>
+            )}
+            <label className={s.field}>
+              搜索产品
+              <input
+                value={search}
+                onChange={(event) => {
+                  setSearch(event.target.value);
+                  setLimit(8);
+                }}
+                placeholder="例如 Codex、Antigravity、Gemini"
+              />
+            </label>
+            <div className={s.productList}>
+              {products.slice(0, limit).map((product) => {
+                const status = catalog?.memberStatuses.find((item) => item.entryId === product.id);
+                return (
+                  <button
+                    type="button"
+                    key={product.id}
+                    disabled={disabled || busy}
+                    className={s.productChoice}
+                    onClick={() => void select(product)}
+                  >
+                    <strong>{product.name}</strong>
+                    <span>目录版本 {product.version}</span>
+                    <span className={s.productAssociation}>
+                      {status
+                        ? `已关联 ${status.registeredCount} 位成员 · ${status.readyCount} 位最近确认就绪`
+                        : '目录关联状态尚未读取'}
+                    </span>
+                    {!!status?.changedSourceCount && (
+                      <span className={s.sourceAttention}>
+                        {status.changedSourceCount} 位成员入口已变化，来源待核对
+                      </span>
+                    )}
+                    <span
+                      className={s.productLocalStatus}
+                      data-local-check={checkState(status?.localCheck)}
+                    >
+                      {checkLabel(status?.localCheck)}
+                    </span>
+                    {status?.localCheck.checkedAt && (
+                      <small>
+                        检查于 {new Date(status.localCheck.checkedAt).toLocaleString('zh-CN')}
+                      </small>
+                    )}
+                    {unfinished.has(product.id) && <span>有未完成入口 · 继续填写</span>}
+                    <small>
+                      {product.distribution.binary?.[catalog!.platform]
+                        ? '目录提供本平台程序包'
+                        : product.distribution.npx || product.distribution.uvx
+                          ? '目录提供适配器包'
+                          : '请确认本机兼容性'}
+                    </small>
+                  </button>
+                );
+              })}
+            </div>
+            {!!catalog?.entries.length && !products.length && (
+              <p className={s.hint}>没有匹配项。仍可粘贴自定义 ACP 配置。</p>
+            )}
+            {products.length > limit && (
+              <button type="button" onClick={() => setLimit((value) => value + 8)}>
+                再显示 8 个产品
+              </button>
+            )}
+          </>
+        )
       ) : (
-        <>
+        <div hidden={entryMode !== 'local'}>
           <p className={s.hint}>{selected.description}</p>
           {restored && (
             <p className={s.notice} role="status">
@@ -636,6 +705,11 @@ export function AgentProducts({
                           : '找到候选本机入口'}
                     </strong>
                     <p className={s.configExample}>{candidate.runtime.command}</p>
+                    {candidate.source === 'registered' && candidate.available === false && (
+                      <p role="status" className={s.error}>
+                        此成员记录的程序或脚本在当前机器不可用。打开成员修正入口，或使用下载管理安装到本机。
+                      </p>
+                    )}
                     {candidate.packageName && (
                       <p className={s.hint}>
                         {candidate.packageName}
@@ -857,7 +931,7 @@ export function AgentProducts({
               改用命令或批量配置
             </button>
           </div>
-        </>
+        </div>
       )}
       {error && (
         <p role="alert" className={s.error}>

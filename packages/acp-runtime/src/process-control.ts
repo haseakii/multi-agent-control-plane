@@ -45,6 +45,7 @@ export interface AgentRuntimeControl {
 export type ProcessAgentRuntimeControlOptions = {
   prepareEnvironment?: (definition: AgentDefinition) => Record<string, string>;
   probeTimeoutMs?: number | undefined;
+  sessionSettingsTimeoutMs?: number | undefined;
   authenticationTimeoutMs?: number | undefined;
   runtimeFactory?: (() => AcpClientRuntime) | undefined;
 };
@@ -108,6 +109,7 @@ function observation(connection: AcpRuntimeConnection): AgentRuntimeObservation 
 export class ProcessAgentRuntimeControl implements AgentRuntimeControl {
   private readonly shutdown = new AbortController();
   private readonly probeTimeoutMs: number;
+  private readonly sessionSettingsTimeoutMs: number;
   private readonly authenticationTimeoutMs: number;
   private readonly runtimeFactory: () => AcpClientRuntime;
   private readonly prepareEnvironment: (definition: AgentDefinition) => Record<string, string>;
@@ -117,6 +119,7 @@ export class ProcessAgentRuntimeControl implements AgentRuntimeControl {
     options: ProcessAgentRuntimeControlOptions = {},
   ) {
     this.probeTimeoutMs = options.probeTimeoutMs ?? 15_000;
+    this.sessionSettingsTimeoutMs = options.sessionSettingsTimeoutMs ?? 60_000;
     this.authenticationTimeoutMs = options.authenticationTimeoutMs ?? 5 * 60_000;
     this.runtimeFactory = options.runtimeFactory ?? (() => new AcpClientRuntime());
     this.prepareEnvironment = options.prepareEnvironment ?? environmentFor;
@@ -169,7 +172,7 @@ export class ProcessAgentRuntimeControl implements AgentRuntimeControl {
     values: Record<string, string> = {},
   ): Promise<SessionSettingsInspection> {
     const settings = SessionSettingValuesSchema.parse(values);
-    return this.withConnection(definition, this.probeTimeoutMs, async (connection) => {
+    return this.withConnection(definition, this.sessionSettingsTimeoutMs, async (connection) => {
       // This discovery/validation session has no MCP servers and no active prompt;
       // runtime permission handling therefore refuses every permission request.
       const session = await connection.newSession({ cwd, mcpServers: [] });

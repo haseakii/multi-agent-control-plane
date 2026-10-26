@@ -22,7 +22,7 @@
   cursor: default;
 }
 .dialog {
-  width: min(600px, calc(100vw - 28px));
+  width: min(880px, calc(100vw - 28px));
   max-height: min(820px, calc(100dvh - 36px));
   padding: 0;
   color: var(--h-text, #292823);
@@ -74,6 +74,32 @@
   padding: 18px 24px;
   overflow-wrap: anywhere;
 }
+.controls {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.confirmed {
+  padding: 16px;
+  margin-bottom: 16px;
+  background: var(--h-bg-soft, #f7f5f0);
+  border-radius: 10px;
+  font-size: 15px;
+}
+.confirmed dl {
+  display: grid;
+  grid-template-columns: minmax(90px, auto) 1fr;
+  gap: 10px 20px;
+}
+.confirmed dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.dialog .field select {
+  font-size: 15px;
+  min-height: 42px;
+}
 .description {
   margin: 0 0 18px;
   font-size: 13px;
@@ -85,6 +111,13 @@
   margin-bottom: 16px;
   border: 1px solid var(--h-border, #e3dfd7);
   border-radius: 10px;
+}
+.presets > summary {
+  cursor: pointer;
+  font-size: 14px;
+}
+.presets[open] > summary {
+  margin-bottom: 12px;
 }
 .presetHeading {
   display: flex;
@@ -362,8 +395,8 @@
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 10px;
-  margin: 12px 0;
-  padding: 12px 14px;
+  margin: 4px 20px 8px;
+  padding: 8px 12px;
   border: 1px solid var(--h-border, #e5e1d9);
   border-radius: 10px;
   background: var(--h-bg-secondary, #f8f7f3);

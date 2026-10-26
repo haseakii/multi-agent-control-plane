@@ -19,7 +19,7 @@
   cursor: default;
 }
 .topbar {
-  height: 64px;
+  height: 56px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -346,9 +346,9 @@
 .taskHeader {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
   border-bottom: 1px solid var(--h-line);
-  padding: 16px 20px;
+  padding: 10px 20px;
 }
 .taskHeading {
   display: flex;
@@ -521,11 +521,55 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
+  min-height: 0;
+  --conversation-max-width: 1040px;
+  --conversation-font-size: 16px;
+}
+.readingToolbar {
+  display: flex;
+  justify-content: flex-end;
+  padding: 4px 20px;
+  flex-shrink: 0;
+}
+.readingToolbar button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  font: inherit;
+  font-size: 13px;
+  background: var(--h-bg-pane);
+  color: var(--h-text);
+  border: 1px solid var(--h-line);
+  cursor: pointer;
+}
+.reading .topbar,
+.reading .sidebar,
+.reading .projectContext,
+.reading .steps,
+.reading .followUp,
+.reading .conversation > section[aria-label='本轮运行设置'],
+.reading .execution > aside,
+.reading .previewMount,
+.reading .bottom {
+  display: none;
+}
+.reading .conversation {
+  --conversation-max-width: 1280px;
+  --conversation-font-size: 18px;
+}
+.reading .timeline {
+  font-size: 17px;
+}
+.followUp textarea {
+  min-height: 44px;
+  max-height: 150px;
+  font-size: 15px;
 }
 .steps {
   display: flex;
   gap: 16px;
-  padding: 16px 24px;
+  padding: 8px 24px;
   border-bottom: 1px solid var(--h-line);
   font-size: 11px;
   flex-wrap: wrap;

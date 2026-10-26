@@ -18,9 +18,8 @@ import { readClientAccessFile } from './client-gateway.js';
 import { createInstanceControl, stopInstance } from './instance-control.js';
 import { warmStartupAgents } from './startup-agents.js';
 import { deploymentContext, waitForDeployment } from './deployment-context.js';
-import { ExternalClientsService } from './external-clients.js';
-import { AgentInstallationsService } from './agent-installations.js';
-import { AgentMembersService } from './agent-members.js';
+import { createLocalIntegrations } from './local-integrations.js';
+import { preferBundledRuntime } from './bundled-runtime.js';
 
 const bundleRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 async function startRelease(args: string[]) {
@@ -39,6 +38,7 @@ async function startRelease(args: string[]) {
       throw new Error('Usage: start.cmd [--config ABSOLUTE_CONFIG_PATH]');
     const configPath = args[1] ?? join(bundleRoot, 'config.json');
     const config = readReleaseConfig(configPath);
+    preferBundledRuntime(bundleRoot);
     const deployment = deploymentContext(process.env.CONTROL_PLANE_DEPLOYMENT_CONTEXT);
     startupPort = config.port;
     startupStage = 'assets';
@@ -73,35 +73,27 @@ async function startRelease(args: string[]) {
     const readLegacy = config.clientAccessFile
       ? readClientAccessFile(config.clientAccessFile)
       : () => ({ version: 1, clients: [] });
-    const externalClients = deployment
-      ? new ExternalClientsService({
-          storage,
-          runtime,
-          installationFile: join(dirname(deployment.operationFile), 'installation.json'),
-          baseUrl: `http://${config.host}:${config.port}`,
-          readLegacy,
-        })
-      : undefined;
     const agentCatalog = new AgentCatalogService(
       new FileCatalogCache(join(config.dataDir, 'cache/agent-catalog.json')),
       runtime.network.fetch,
     );
-    const agentMembers = new AgentMembersService(storage, runtime.agentControl);
-    const agentInstallations = deployment
-      ? new AgentInstallationsService({
-          storage,
-          catalog: agentCatalog,
-          agents: runtime.agentControl,
-          network: runtime.network,
-          root: join(dirname(deployment.operationFile), 'agents'),
-          releaseRoot: bundleRoot,
-          members: agentMembers,
-        })
-      : undefined;
+    const local = createLocalIntegrations({
+      storage,
+      runtime,
+      catalog: agentCatalog,
+      dataDir: config.dataDir,
+      releaseRoot: bundleRoot,
+      baseUrl: `http://${config.host}:${config.port}`,
+      readLegacy,
+      ...(deployment
+        ? { installationFile: join(dirname(deployment.operationFile), 'installation.json') }
+        : {}),
+    });
+    const { externalClients, agentMembers, agentInstallations } = local;
     app = buildServer({
       agentMembers,
-      ...(externalClients ? { externalClients } : {}),
-      ...(agentInstallations ? { agentInstallations } : {}),
+      externalClients,
+      agentInstallations,
       ...(deployment ? { deployment } : {}),
       fastify: { logger: { level: config.logLevel, stream: log } },
       webRoot,
@@ -109,15 +101,7 @@ async function startRelease(args: string[]) {
       agentCatalog,
       taskControl: runtime,
       fleetGateway: runtime.fleetGateway,
-      ...(config.clientAccessFile || externalClients
-        ? {
-            clientGateway: {
-              storage,
-              runtime,
-              readAccess: externalClients?.readAccess ?? readLegacy,
-            },
-          }
-        : {}),
+      clientGateway: { storage, runtime, readAccess: externalClients.readAccess },
       controlCenter: (options) =>
         readControlCenterSnapshot(
           activeStorage,
@@ -143,6 +127,7 @@ async function startRelease(args: string[]) {
     });
     startupStage = 'listen';
     const address = await app.listen({ host: config.host, port: config.port });
+    local.setBaseUrl(address);
     runtime.setBridgeBaseUrl(address);
     const health = (await fetch(`${address}/health`).then((response) => response.json())) as {
       status?: string;

@@ -258,8 +258,21 @@ copyFileSync(nodeLicense, join(output, 'runtime/LICENSE'));
 // Reuse the npm shipped with the verified local Node distribution. No package
 // manager is installed globally; member installs stay under installation/agents.
 const bundledNpm = join(dirname(nodeSource), 'node_modules/npm');
-if (existsSync(join(bundledNpm, 'bin/npm-cli.js')))
+if (existsSync(join(bundledNpm, 'bin/npm-cli.js'))) {
   copyTree(bundledNpm, join(output, 'runtime/npm'));
+  // npm's own wrappers expect a global layout. Call the pinned CLI directly,
+  // without resolving the user's global npm prefix or another Node version.
+  for (const command of ['npm', 'npx'])
+    writeFileSync(
+      join(output, 'runtime', command + '.cmd'),
+      [
+        '@echo off',
+        '"%~dp0node.exe" "%~dp0npm\\bin\\' + command + '-cli.js" %*',
+        'exit /b %errorlevel%',
+        '',
+      ].join('\r\n'),
+    );
+}
 writeFileSync(
   join(output, 'package.json'),
   JSON.stringify(

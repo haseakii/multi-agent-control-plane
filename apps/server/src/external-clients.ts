@@ -56,7 +56,8 @@ export class ExternalClientsService {
     private readonly options: {
       storage: SqliteStorage;
       runtime: ControlPlaneRuntime;
-      installationFile: string;
+      installationFile?: string;
+      localHost?: { root: string; runtime: string; entry: string };
       baseUrl: string;
       readLegacy: () => unknown;
       installCodex?: typeof installCodexClient;
@@ -123,6 +124,10 @@ export class ExternalClientsService {
   }
   private installation() {
     const file = this.options.installationFile;
+    if (!file) {
+      if (!this.options.localHost) throw new TaskControlError(503, '本机 MCP 启动入口未配置。');
+      return { ...this.options.localHost, file: undefined };
+    }
     const state = z
       .object({
         version: z.literal(1),
@@ -254,12 +259,16 @@ export class ExternalClientsService {
         version: 1,
         baseUrl: this.options.baseUrl,
         token,
-        start: {
-          command: installed.runtime,
-          args: [installed.entry, 'serve', '--installation', installed.file],
-          cwd: installed.root,
-          logFile: join(installed.root, 'logs', id + '.log'),
-        },
+        ...(installed.file
+          ? {
+              start: {
+                command: installed.runtime,
+                args: [installed.entry, 'serve', '--installation', installed.file],
+                cwd: installed.root,
+                logFile: join(installed.root, 'logs', id + '.log'),
+              },
+            }
+          : {}),
       }),
       { flag: 'wx', mode: 0o600 },
     );
@@ -380,7 +389,9 @@ export class ExternalClientsService {
       name = 'collaboration_' + id.slice(7, 15);
     const server = {
       command: installed.runtime,
-      args: [installed.entry, 'mcp', '--installation', installed.file, '--connection', connection],
+      args: installed.file
+        ? [installed.entry, 'mcp', '--installation', installed.file, '--connection', connection]
+        : [installed.entry, '--connection', connection],
     };
     const config =
       row.target === 'vscode'

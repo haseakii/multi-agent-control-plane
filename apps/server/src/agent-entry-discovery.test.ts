@@ -39,6 +39,7 @@ it('finds existing registrations and PATH files without executing or importing r
     platform: 'win32',
     path: 'C:\\Tools;C:\\Tools;.;\\\\server\\share',
     isFile,
+    environment: {},
   });
   expect(result.candidates).toHaveLength(2);
   expect(result.candidates[0]?.agentId).toBe('existing');
@@ -63,11 +64,41 @@ it('does not treat traversal or launcher names as product entrypoints', () => {
       },
       'windows-x86_64',
       [],
-      { platform: 'win32', path: 'C:\\Tools', isFile },
+      { platform: 'win32', path: 'C:\\Tools', isFile, environment: {} },
     );
     expect(result.candidates).toEqual([]);
   }
   expect(isFile).not.toHaveBeenCalled();
+});
+it('finds package subdirectory binaries and current user npm prefixes without scanning the home tree', () => {
+  const nested = {
+    ...entry,
+    distribution: {
+      binary: {
+        'windows-x86_64': {
+          archive: 'https://example.com/a.zip',
+          cmd: './dist-package/bin/sample.exe',
+        },
+      },
+    },
+  };
+  const isFile = vi.fn(
+    (path: string) =>
+      path === 'D:\\解压目录\\dist-package\\bin\\sample.exe' ||
+      path === 'C:\\Users\\new-user\\AppData\\Roaming\\npm\\sample.exe',
+  );
+  const result = discoverAgentEntries(nested, 'windows-x86_64', [], {
+    platform: 'win32',
+    path: '',
+    directory: 'D:\\解压目录',
+    isFile,
+    environment: { APPDATA: 'C:\\Users\\new-user\\AppData\\Roaming' },
+  });
+  expect(result.candidates.map((candidate) => candidate.runtime.command)).toEqual([
+    'D:\\解压目录\\dist-package\\bin\\sample.exe',
+    'C:\\Users\\new-user\\AppData\\Roaming\\npm\\sample.exe',
+  ]);
+  expect(result.candidates.map((candidate) => candidate.source)).toEqual(['directory', 'path']);
 });
 
 it('finds an installed package from an explicit install folder and PATH without running its entry', () => {

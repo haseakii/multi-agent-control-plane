@@ -163,7 +163,17 @@ export type LocalRunnerOptions = {
 
 const defaultEnvironmentKeys =
   process.platform === 'win32'
-    ? ['PATH', 'PATHEXT', 'SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'USERPROFILE']
+    ? [
+        'PATH',
+        'PATHEXT',
+        'SystemRoot',
+        'WINDIR',
+        'TEMP',
+        'TMP',
+        'USERPROFILE',
+        'APPDATA',
+        'LOCALAPPDATA',
+      ]
     : ['PATH', 'HOME', 'TMPDIR', 'TMP'];
 
 export class LocalRunner implements Runner {

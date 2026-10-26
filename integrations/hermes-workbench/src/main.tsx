@@ -30,6 +30,8 @@ import {
   GitPullRequest,
   PanelLeft,
   Settings2,
+  Maximize2,
+  Minimize2,
 } from 'lucide-react';
 import {
   artifactUrl,
@@ -423,6 +425,15 @@ function Workbench() {
   const [fileFocus, setFileFocus] = useState<FileFocus | null>(null);
   const [reviewFocus, setReviewFocus] = useState<{ taskId: string }>();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [reading, setReading] = useState(false);
+  useEffect(() => {
+    if (!reading) return;
+    const restore = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !document.querySelector('dialog[open]')) setReading(false);
+    };
+    window.addEventListener('keydown', restore);
+    return () => window.removeEventListener('keydown', restore);
+  }, [reading]);
   const [workspaceChoice, setWorkspaceChoice] = useState<WorkspaceSelection>(readWorkspaceDraft);
   useEffect(() => {
     saveWorkspaceDraft(workspaceChoice);
@@ -937,7 +948,7 @@ function Workbench() {
     }
   };
   return (
-    <div className={s.app}>
+    <div className={`${s.app} ${reading ? s.reading : ''}`}>
       <header className={s.topbar}>
         <div className={s.brand}>
           <div className={s.brandRow}>
@@ -967,7 +978,7 @@ function Workbench() {
         <button disabled={sending} onClick={() => openConnections()}>
           <Users size={16} /> 协作成员
         </button>
-        <button onClick={() => setExternalClientsOpen(true)}>接入应用</button>
+        <button onClick={() => setExternalClientsOpen(true)}>接入应用 · MCP</button>
         <button disabled={sending} onClick={() => setHelpOpen(true)}>
           使用说明
         </button>
@@ -1554,6 +1565,16 @@ function Workbench() {
               )}
               <div className={s.execution}>
                 <section className={s.conversation}>
+                  <div className={s.readingToolbar}>
+                    <button
+                      type="button"
+                      aria-pressed={reading}
+                      onClick={() => setReading(!reading)}
+                    >
+                      {reading ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+                      {reading ? '退出阅读（Esc）' : '放大对话'}
+                    </button>
+                  </div>
                   {allSubagents.length > 0 && (
                     <div className={s.steps} aria-label="协作进度">
                       <span data-done>1 已接收目标</span>
@@ -1637,6 +1658,8 @@ function Workbench() {
                   )}
                   <div
                     className={s.timeline}
+                    role="region"
+                    aria-label="会话消息"
                     onClickCapture={(event) => {
                       const link =
                         event.target instanceof Element ? event.target.closest('a') : null;

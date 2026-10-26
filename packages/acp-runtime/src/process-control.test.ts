@@ -29,7 +29,10 @@ describe('ProcessAgentRuntimeControl', () => {
   it('discovers and validates model settings without prompts or MCP access, and releases the process', async () => {
     const runner = new LocalRunner({ defaultStopGracePeriodMs: 100 });
     const stop = vi.spyOn(runner, 'stop');
-    const control = new ProcessAgentRuntimeControl(runner, { probeTimeoutMs: 5_000 });
+    const control = new ProcessAgentRuntimeControl(runner, {
+      probeTimeoutMs: 1,
+      sessionSettingsTimeoutMs: 5_000,
+    });
     const snapshot = await control.sessionSettings(definition(), process.cwd(), { model: 'large' });
     expect(snapshot).toMatchObject({
       source: 'config-options',

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { Download, LoaderCircle, RefreshCw, ArrowRight } from 'lucide-react';
 import s from './agent-connections.module.css';
 import { AgentMemberCreate } from './agent-member-create';
+import { SnapshotRefresh } from './snapshot-refresh';
 const Plan = z.object({
   entryId: z.string(),
   name: z.string(),
@@ -29,6 +30,9 @@ const Installation = z.object({
   updatedAt: z.string(),
   installed: z.boolean().default(false),
   members: z.array(z.object({ id: z.string(), name: z.string() })).default([]),
+  package: z
+    .object({ runtime: z.object({ command: z.string(), args: z.array(z.string()) }) })
+    .optional(),
 });
 const Records = z.object({ installations: z.array(Installation), busy: z.boolean() });
 async function api<S extends z.ZodTypeAny>(
@@ -45,7 +49,9 @@ async function api<S extends z.ZodTypeAny>(
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
         }),
-    signal: signal ?? AbortSignal.timeout(15000),
+    signal: signal
+      ? AbortSignal.any([signal, AbortSignal.timeout(15000)])
+      : AbortSignal.timeout(15000),
   });
   const data = await response.json();
   if (!response.ok) throw new Error(data.error ?? '安装操作未完成，请重试。');
@@ -72,21 +78,23 @@ export function AgentInstall({
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [checking, setChecking] = useState(false);
+  const [recordsError, setRecordsError] = useState('');
   const idempotency = useRef({ hash: '', id: crypto.randomUUID() });
   useEffect(() => {
-    const controller = new AbortController();
-    let active = true;
-    const load = () =>
-      api('/api/agent-installations', Records, undefined, controller.signal)
-        .then((value) => {
-          if (active) setRecords(value);
-        })
-        .catch(() => undefined);
-    void load();
-    const timer = window.setInterval(() => void load(), 2000);
+    const reader = new SnapshotRefresh(
+      (signal) => api('/api/agent-installations', Records, undefined, signal),
+      (value) => {
+        setRecords(value);
+        setRecordsError('');
+      },
+      (failure) => setRecordsError(failure instanceof Error ? failure.message : '安装记录读取失败'),
+      15000,
+      '读取安装记录超时，稍后自动重试。',
+    );
+    void reader.refresh();
+    const timer = window.setInterval(() => void reader.refresh(), 2000);
     return () => {
-      active = false;
-      controller.abort();
+      reader.dispose();
       clearInterval(timer);
     };
   }, []);
@@ -151,13 +159,22 @@ export function AgentInstall({
     }
   }
   const visible = records?.installations.filter((row) => !entryId || row.entryId === entryId) ?? [];
-  if (!entryId && !visible.length) return null;
   const installed = visible.find((row) => row.installed && row.version === plan?.version);
   return (
     <section className={s.installPanel} aria-label="安装 ACP 成员">
       <h4>
         <Download size={16} /> {entryId ? '安装并接入' : '成员安装进度'}
       </h4>
+      {!entryId && !visible.length && (
+        <p role="status">
+          {records ? '还没有下载记录。回到产品目录，选择 ACP 后下载安装。' : '正在读取安装记录…'}
+        </p>
+      )}
+      {recordsError && (
+        <p role="alert" className={s.error}>
+          无法读取安装记录：{recordsError}。正在自动重试。
+        </p>
+      )}
       {checking && <p role="status">正在核对本平台安装方式…</p>}
       {plan && !installed && (
         <>
@@ -203,6 +220,14 @@ export function AgentInstall({
             )}{' '}
             {row.message}
           </p>
+          {row.package && (
+            <details>
+              <summary>本机安装入口</summary>
+              <pre className={s.configExample}>
+                {[row.package.runtime.command, ...row.package.runtime.args].join('\n')}
+              </pre>
+            </details>
+          )}
           <div className={s.actions}>
             {['failed', 'needs-attention'].includes(row.state) && (
               <button disabled={busy || !!records?.busy} onClick={() => void retry(row.id)}>
@@ -228,7 +253,7 @@ export function AgentInstall({
         </article>
       ))}
       {error && (
-        <p className={s.hint} role="status">
+        <p className={s.error} role="alert">
           {error}
         </p>
       )}

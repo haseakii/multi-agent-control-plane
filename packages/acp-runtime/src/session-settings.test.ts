@@ -71,6 +71,18 @@ const legacyModels = {
 };
 
 describe('ACP public session settings', () => {
+  it('uses the legacy model interface when modern options contain no editable controls', () => {
+    for (const configOptions of [[], [modelOptions()[3]!]]) {
+      expect(sessionSettingsFromResponse({ configOptions, models: legacyModels })).toEqual({
+        source: 'legacy-models',
+        options: [expect.objectContaining({ id: 'model', currentValue: 'small' })],
+      });
+    }
+    expect(sessionSettingsFromResponse({ configOptions: [], models: undefined })).toEqual({
+      source: 'config-options',
+      options: [],
+    });
+  });
   it('keeps only model controls, preserves groups, and gives standard options priority over legacy', () => {
     const configOptions = modelOptions();
     configOptions[0] = {
@@ -92,10 +104,6 @@ describe('ACP public session settings', () => {
       { value: 'small', name: 'Local models · Small' },
     ]);
     expect(snapshot.options[2]?.currentValue).toBe('32k');
-    expect(sessionSettingsFromResponse({ configOptions: [], models: legacyModels })).toEqual({
-      source: 'config-options',
-      options: [],
-    });
     expect(sessionSettingsFromResponse({ modes: { currentModeId: 'yolo' } })).toEqual({
       source: 'unavailable',
       options: [],

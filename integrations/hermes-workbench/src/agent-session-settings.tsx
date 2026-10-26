@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { SlidersHorizontal, RefreshCw, X } from 'lucide-react';
 import {
@@ -24,6 +24,7 @@ import {
   type SessionSettingValuesData,
   type TaskSessionSettingsData,
   type SessionPresetData,
+  type SessionSettingsData,
 } from './session-settings';
 import s from './agent-session-settings.module.css';
 
@@ -37,6 +38,7 @@ type Props = {
   inheritPrevious?: boolean;
   disabled?: boolean;
   settingsLocked?: boolean;
+  confirmedSettings?: SessionSettingsData;
 };
 
 function errorText(error: unknown) {
@@ -59,7 +61,8 @@ export function SessionSettingsControl(props: Props) {
         aria-haspopup="dialog"
       >
         <SlidersHorizontal size={15} />
-        运行设置{props.values ? ' · 已选' : ''}
+        {props.settingsLocked ? '查看运行设置' : '运行设置'}
+        {props.values ? ' · 已选' : ''}
       </button>
       {open &&
         createPortal(
@@ -78,6 +81,8 @@ function SessionSettingsDialog({
   inheritedValues,
   onChange,
   inheritPrevious,
+  settingsLocked,
+  confirmedSettings,
   onClose,
 }: Props & { onClose: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
@@ -155,12 +160,18 @@ function SessionSettingsDialog({
       .then((next) => {
         if (controller.signal.aborted) return;
         setData(next);
-        setSelected({
+        const selection = {
           ...(next.settings ? currentSessionValues(next.settings) : {}),
           ...next.defaults.values,
           ...inheritedValues,
           ...values,
-        });
+        };
+        setSelected(selection);
+        setVerified(
+          !!next.settings &&
+            sessionCacheFreshness(next) === 'fresh' &&
+            sameSessionValues(selection, currentSessionValues(next.settings)),
+        );
       })
       .catch((cause) => {
         if (!controller.signal.aborted) setError(errorText(cause));
@@ -180,10 +191,11 @@ function SessionSettingsDialog({
   }, [agentId, projectId]);
 
   async function inspect(nextValues: SessionSettingValuesData = selected) {
+    if (settingsLocked) return;
     if (pending) return;
     const controller = new AbortController();
     request.current = controller;
-    const timer = window.setTimeout(() => controller.abort(), 45000);
+    const timer = window.setTimeout(() => controller.abort(), 75000);
     setPending('inspect');
     setError('');
     setNotice('');
@@ -466,282 +478,318 @@ function SessionSettingsDialog({
         </button>
       </header>
       <div className={s.body}>
-        <p className={s.description}>
-          {onChange
-            ? inheritPrevious
-              ? '默认沿用上轮已确认的设置。这里的选择只用于下次发送。'
-              : '为本次任务选择模型和思考方式，也可以保存为此成员默认。'
-            : '为此成员保存日常默认；每位成员独立设置。'}
-        </p>
-        <section className={s.presets} aria-label="成员常用方案">
-          <div className={s.presetHeading}>
-            <label htmlFor="session-preset-select">常用方案</label>
-            <button
-              type="button"
-              disabled={!!pending || presetsLoading}
-              onClick={() => setPresetsVersion((version) => version + 1)}
-            >
-              刷新方案
-            </button>
-          </div>
-          <select
-            id="session-preset-select"
-            value={selectedPreset}
-            disabled={!!pending || presetsLoading}
-            onChange={(event) => choosePreset(event.target.value)}
-          >
-            <option value="">当前参数（自定义）</option>
-            <option value="$native">成员原生设置</option>
-            {activePresets.map((preset) => (
-              <option key={preset.id} value={preset.id}>
-                {preset.name}
-              </option>
-            ))}
-            {loadedArchived && (
-              <option value={loadedArchived.id}>已载入：{loadedArchived.name}（已归档）</option>
+        {confirmedSettings && (
+          <section className={s.confirmed} aria-label="本轮实际生效设置">
+            <strong>本轮实际生效设置</strong>
+            <dl>
+              {editableSessionOptions(confirmedSettings).map((option) => (
+                <Fragment key={option.id}>
+                  <dt>{sessionSettingLabel(option)}</dt>
+                  <dd>
+                    {option.options.find((item) => item.value === option.currentValue)?.name ??
+                      option.currentValue}
+                  </dd>
+                </Fragment>
+              ))}
+            </dl>
+            {!editableSessionOptions(confirmedSettings).length && (
+              <p>成员未提供可调整的模型选项。</p>
             )}
-          </select>
-          <p>
-            {presetsLoading
-              ? '正在读取已保存方案…'
-              : activePresets.length
-                ? `${activePresets.length} 个可选方案 · 选用仅填入下次发送参数`
-                : '将常用模型组合保存为方案，之后直接选用。'}
-          </p>
-          {selectedPreset && (
-            <p className={s.presetSelection}>
-              {sessionSettingValuesSummary(selected, data?.settings) || '下次使用成员原生设置'}
-            </p>
-          )}
-          {!creatingPreset ? (
-            <button
-              type="button"
-              disabled={
-                !!pending || presetsLoading || activePresets.length >= 32 || presets.length >= 128
-              }
-              onClick={() => setCreatingPreset(true)}
-            >
-              保存为新的常用方案
-            </button>
-          ) : (
-            <form
-              className={s.presetCreate}
-              onSubmit={(event) => {
-                event.preventDefault();
-                void createPreset();
-              }}
-            >
-              <label>
-                新方案名称
-                <input
-                  value={presetName}
-                  maxLength={80}
-                  disabled={!!pending}
-                  placeholder="例如 日常开发、快速修改"
-                  onChange={(event) => setPresetName(event.target.value)}
-                />
-              </label>
-              {!canSaveValues && <small>先点击下方“核对当前参数”，确认这组值后再保存。</small>}
-              <div>
-                <button
-                  type="submit"
-                  disabled={
-                    !!pending ||
-                    !canSaveValues ||
-                    !presetName.trim() ||
-                    activePresets.length >= 32 ||
-                    presets.length >= 128
-                  }
-                >
-                  保存方案
-                </button>
-                <button type="button" disabled={!!pending} onClick={() => setCreatingPreset(false)}>
-                  取消
-                </button>
-              </div>
-            </form>
-          )}
-          {(activePresets.length >= 32 || presets.length >= 128) && (
-            <p>每位成员可保留 32 个可选方案、128 个方案总记录（含归档）。归档可释放可选名额。</p>
-          )}
-          {presetsError && (
-            <p className={s.error} role="alert">
-              {presetsError}
-            </p>
-          )}
-          {presetNotice && (
-            <p className={s.notice} role="status">
-              {presetNotice}
-            </p>
-          )}
-          {presets.length > 0 && (
-            <details className={s.presetManagement}>
-              <summary>管理常用方案（{presets.length}）</summary>
-              <p>重命名、归档和恢复只管理方案，不修改默认、已选参数或已有任务。</p>
-              {activePresets.length > 0 && <ul>{activePresets.map(presetManagerRow)}</ul>}
-              {archivedPresets.length > 0 && (
-                <details>
-                  <summary>已归档（{archivedPresets.length}）</summary>
-                  <ul>{archivedPresets.map(presetManagerRow)}</ul>
-                </details>
-              )}
-            </details>
-          )}
-        </section>
-        <section className={s.discovery}>
-          <div>
-            <strong>
-              {pending === 'inspect'
-                ? '正在读取并核对…'
-                : freshness === 'stale'
-                  ? '选项缓存需重新核对'
-                  : verified
-                    ? '已读取并核对'
-                    : data?.settings?.source !== 'unavailable' && options.length
-                      ? '已有可用设置缓存'
-                      : '尚未读取可调整设置'}
-            </strong>
-            <span>读取使用无提示会话，不发送任务。登录由成员自己管理。</span>
-          </div>
-          <button type="button" disabled={!!pending} onClick={() => void inspect()}>
-            <RefreshCw size={14} />
-            {options.length ? '核对当前参数' : '读取可用设置'}
-          </button>
-        </section>
-        <div className={s.observation} aria-label="能力缓存观察">
-          <span className={s.freshness} data-state={freshness}>
-            {freshness === 'fresh'
-              ? '刚读取的可用选项'
-              : freshness === 'stale'
-                ? '缓存需更新'
-                : '尚无观察记录'}
-          </span>
-          {data?.observation && (
-            <span>
-              观察于 {new Date(data.observation.observedAt).toLocaleString('zh-CN')} · 有效至{' '}
-              {new Date(data.observation.expiresAt).toLocaleTimeString('zh-CN')}
-            </span>
-          )}
-          <span>
-            能力来源：
-            {data?.settings?.source === 'config-options'
-              ? 'ACP 会话配置'
-              : data?.settings?.source === 'legacy-models'
-                ? 'ACP 兼容模型接口'
-                : '尚未提供可调整选项'}
-          </span>
-          {freshness === 'stale' && <p role="status">{staleDescription} 此处不会自动启动成员。</p>}
-          {data?.observation && (
-            <details>
-              <summary>观察技术详情</summary>
-              <p>观察来自无提示新会话，不代表当前任务已使用这些参数。</p>
-              <dl>
-                <dt>观察来源</dt>
-                <dd>{data.observation.source}</dd>
-                <dt>探针会话标识摘要</dt>
-                <dd>{data.observation.sessionIdHash}</dd>
-                <dt>成员配置摘要</dt>
-                <dd>{data.observation.definitionFingerprint}</dd>
-                <dt>就绪证据摘要</dt>
-                <dd>{data.observation.readinessFingerprint}</dd>
-              </dl>
-              <p>{data.observation.accountIdentityNote}</p>
-            </details>
-          )}
-        </div>
-        {pending === 'cache' && <p role="status">正在读取已保存的设置…</p>}
-        {options.length > 0 && (
-          <div className={s.fields}>
-            {options.map((option) => {
-              const chosen = selected[option.id] ?? option.currentValue;
-              const known = option.options.some((item) => item.value === chosen);
-              return (
-                <label key={option.id} className={s.field}>
-                  <span>{sessionSettingLabel(option)}</span>
-                  <select
-                    disabled={!!pending}
-                    value={chosen}
-                    onChange={(event) => {
-                      // Models can change all dependent options; ask the member to provide fresh defaults.
-                      const next = nextSessionSelection(option, selected, event.target.value);
-                      setSelectedPreset('');
-                      setSelected(next);
-                      void inspect(next);
-                    }}
-                  >
-                    {!known && <option value={chosen}>{chosen}（需重新核对）</option>}
-                    {option.options.map((item) => (
-                      <option key={item.value} value={item.value}>
-                        {item.name}
-                      </option>
-                    ))}
-                  </select>
-                  {option.description && <small>{option.description}</small>}
-                  {option.options.find((item) => item.value === chosen)?.description && (
-                    <small>
-                      {option.options.find((item) => item.value === chosen)?.description}
-                    </small>
-                  )}
-                </label>
-              );
-            })}
-          </div>
+          </section>
         )}
-        {data && !options.length && !pending && (
-          <p className={s.empty}>
-            模型、思考等级和上下文长度由成员管理。只有成员实际提供的选项才会出现在这里。
-          </p>
-        )}
-        <p className={s.context}>
-          上下文容量随模型而定；成员未提供可调选项时，由成员管理。已用上下文可在任务过程里查看。
+        <p className={s.description}>
+          {settingsLocked
+            ? '任务正在执行，此处可查看本轮设置；执行结束后可读取选项并调整下一轮。'
+            : onChange
+              ? inheritPrevious
+                ? '默认沿用上轮已确认的设置。这里的选择只用于下次发送。'
+                : '为本次任务选择模型和思考方式，也可以保存为此成员默认。'
+              : '为此成员保存日常默认；每位成员独立设置。'}
         </p>
-        <details className={s.nativeOptions}>
-          <summary>重新发现成员选项</summary>
-          <p>
-            忽略已保存的模型偏好，读取成员自身设置。适合旧模型不可用或选项已经变化时使用；已保存的默认不会被删除。
-          </p>
-          <button
-            type="button"
-            disabled={!!pending}
-            onClick={() => {
-              setSelectedPreset('');
-              void inspect({});
-            }}
-          >
-            读取成员原生选项
-          </button>
-          {data && Object.keys(data.defaults.values).length > 0 && (
-            <>
-              <p>
-                清除此成员保存的默认偏好，之后新任务使用成员自身设置。当前任务和本页下轮选择保持原样。
-              </p>
-              {freshness !== 'fresh' && <p>恢复前请先读取成员原生选项，确认当前可用设置。</p>}
+        <fieldset className={s.controls} disabled={settingsLocked}>
+          <details className={s.presets} aria-label="成员常用方案">
+            <summary>常用方案（可选）</summary>
+            <div className={s.presetHeading}>
+              <label htmlFor="session-preset-select">常用方案</label>
               <button
                 type="button"
-                disabled={!!pending || freshness !== 'fresh'}
-                onClick={() => void save({}, true)}
+                disabled={!!pending || presetsLoading}
+                onClick={() => setPresetsVersion((version) => version + 1)}
               >
-                恢复成员原生默认
+                刷新方案
               </button>
-            </>
+            </div>
+            <select
+              id="session-preset-select"
+              value={selectedPreset}
+              disabled={!!pending || presetsLoading}
+              onChange={(event) => choosePreset(event.target.value)}
+            >
+              <option value="">当前参数（自定义）</option>
+              <option value="$native">成员原生设置</option>
+              {activePresets.map((preset) => (
+                <option key={preset.id} value={preset.id}>
+                  {preset.name}
+                </option>
+              ))}
+              {loadedArchived && (
+                <option value={loadedArchived.id}>已载入：{loadedArchived.name}（已归档）</option>
+              )}
+            </select>
+            <p>
+              {presetsLoading
+                ? '正在读取已保存方案…'
+                : activePresets.length
+                  ? `${activePresets.length} 个可选方案 · 选用仅填入下次发送参数`
+                  : '将常用模型组合保存为方案，之后直接选用。'}
+            </p>
+            {selectedPreset && (
+              <p className={s.presetSelection}>
+                {sessionSettingValuesSummary(selected, data?.settings) || '下次使用成员原生设置'}
+              </p>
+            )}
+            {!creatingPreset ? (
+              <button
+                type="button"
+                disabled={
+                  !!pending || presetsLoading || activePresets.length >= 32 || presets.length >= 128
+                }
+                onClick={() => setCreatingPreset(true)}
+              >
+                保存为新的常用方案
+              </button>
+            ) : (
+              <form
+                className={s.presetCreate}
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void createPreset();
+                }}
+              >
+                <label>
+                  新方案名称
+                  <input
+                    value={presetName}
+                    maxLength={80}
+                    disabled={!!pending}
+                    placeholder="例如 日常开发、快速修改"
+                    onChange={(event) => setPresetName(event.target.value)}
+                  />
+                </label>
+                {!canSaveValues && <small>先点击下方“核对当前参数”，确认这组值后再保存。</small>}
+                <div>
+                  <button
+                    type="submit"
+                    disabled={
+                      !!pending ||
+                      !canSaveValues ||
+                      !presetName.trim() ||
+                      activePresets.length >= 32 ||
+                      presets.length >= 128
+                    }
+                  >
+                    保存方案
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!!pending}
+                    onClick={() => setCreatingPreset(false)}
+                  >
+                    取消
+                  </button>
+                </div>
+              </form>
+            )}
+            {(activePresets.length >= 32 || presets.length >= 128) && (
+              <p>每位成员可保留 32 个可选方案、128 个方案总记录（含归档）。归档可释放可选名额。</p>
+            )}
+            {presetsError && (
+              <p className={s.error} role="alert">
+                {presetsError}
+              </p>
+            )}
+            {presetNotice && (
+              <p className={s.notice} role="status">
+                {presetNotice}
+              </p>
+            )}
+            {presets.length > 0 && (
+              <details className={s.presetManagement}>
+                <summary>管理常用方案（{presets.length}）</summary>
+                <p>重命名、归档和恢复只管理方案，不修改默认、已选参数或已有任务。</p>
+                {activePresets.length > 0 && <ul>{activePresets.map(presetManagerRow)}</ul>}
+                {archivedPresets.length > 0 && (
+                  <details>
+                    <summary>已归档（{archivedPresets.length}）</summary>
+                    <ul>{archivedPresets.map(presetManagerRow)}</ul>
+                  </details>
+                )}
+              </details>
+            )}
+          </details>
+          <section className={s.discovery}>
+            <div>
+              <strong>
+                {pending === 'inspect'
+                  ? '正在读取并核对…'
+                  : freshness === 'stale'
+                    ? '选项缓存需重新核对'
+                    : verified
+                      ? '已读取并核对'
+                      : data?.settings?.source !== 'unavailable' && options.length
+                        ? '已有可用设置缓存'
+                        : '尚未读取可调整设置'}
+              </strong>
+              <span>读取会新建无提示会话，首次启动最多等待 60 秒。登录由成员自己管理。</span>
+            </div>
+            <button type="button" disabled={!!pending} onClick={() => void inspect()}>
+              <RefreshCw size={14} />
+              {options.length ? '核对当前参数' : '读取可用设置'}
+            </button>
+          </section>
+          <div className={s.observation} aria-label="能力缓存观察">
+            <span className={s.freshness} data-state={freshness}>
+              {freshness === 'fresh'
+                ? '刚读取的可用选项'
+                : freshness === 'stale'
+                  ? '缓存需更新'
+                  : '尚无观察记录'}
+            </span>
+            {data?.observation && (
+              <span>
+                观察于 {new Date(data.observation.observedAt).toLocaleString('zh-CN')} · 有效至{' '}
+                {new Date(data.observation.expiresAt).toLocaleTimeString('zh-CN')}
+              </span>
+            )}
+            <span>
+              能力来源：
+              {data?.settings?.source === 'config-options'
+                ? 'ACP 会话配置'
+                : data?.settings?.source === 'legacy-models'
+                  ? 'ACP 兼容模型接口'
+                  : '尚未提供可调整选项'}
+            </span>
+            {freshness === 'stale' && (
+              <p role="status">{staleDescription} 此处不会自动启动成员。</p>
+            )}
+            {data?.observation && (
+              <details>
+                <summary>观察技术详情</summary>
+                <p>观察来自无提示新会话，不代表当前任务已使用这些参数。</p>
+                <dl>
+                  <dt>观察来源</dt>
+                  <dd>{data.observation.source}</dd>
+                  <dt>探针会话标识摘要</dt>
+                  <dd>{data.observation.sessionIdHash}</dd>
+                  <dt>成员配置摘要</dt>
+                  <dd>{data.observation.definitionFingerprint}</dd>
+                  <dt>就绪证据摘要</dt>
+                  <dd>{data.observation.readinessFingerprint}</dd>
+                </dl>
+                <p>{data.observation.accountIdentityNote}</p>
+              </details>
+            )}
+          </div>
+          {pending === 'cache' && <p role="status">正在读取已保存的设置…</p>}
+          {options.length > 0 && (
+            <div className={s.fields}>
+              {options.map((option) => {
+                const chosen = selected[option.id] ?? option.currentValue;
+                const known = option.options.some((item) => item.value === chosen);
+                return (
+                  <label key={option.id} className={s.field}>
+                    <span>{sessionSettingLabel(option)}</span>
+                    <select
+                      aria-label={sessionSettingLabel(option)}
+                      disabled={!!pending}
+                      value={chosen}
+                      onChange={(event) => {
+                        // Models can change all dependent options; ask the member to provide fresh defaults.
+                        const next = nextSessionSelection(option, selected, event.target.value);
+                        setSelectedPreset('');
+                        setSelected(next);
+                        void inspect(next);
+                      }}
+                    >
+                      {!known && <option value={chosen}>{chosen}（需重新核对）</option>}
+                      {option.options.map((item) => (
+                        <option key={item.value} value={item.value}>
+                          {item.name}
+                        </option>
+                      ))}
+                    </select>
+                    {option.description && <small>{option.description}</small>}
+                    {option.options.find((item) => item.value === chosen)?.description && (
+                      <small>
+                        {option.options.find((item) => item.value === chosen)?.description}
+                      </small>
+                    )}
+                  </label>
+                );
+              })}
+            </div>
           )}
-        </details>
-        {error && (
-          <p className={s.error} role="alert">
-            {error}
+          {data && !options.length && !pending && (
+            <p className={s.empty}>
+              模型、思考等级和上下文长度由成员管理。只有成员实际提供的选项才会出现在这里。
+            </p>
+          )}
+          <p className={s.context}>
+            上下文容量随模型而定；成员未提供可调选项时，由成员管理。已用上下文可在任务过程里查看。
           </p>
-        )}
-        {notice && (
-          <p className={s.notice} role="status">
-            {notice}
-          </p>
-        )}
+          <details className={s.nativeOptions}>
+            <summary>重新发现成员选项</summary>
+            <p>
+              忽略已保存的模型偏好，读取成员自身设置。适合旧模型不可用或选项已经变化时使用；已保存的默认不会被删除。
+            </p>
+            <button
+              type="button"
+              disabled={!!pending}
+              onClick={() => {
+                setSelectedPreset('');
+                void inspect({});
+              }}
+            >
+              读取成员原生选项
+            </button>
+            {data && Object.keys(data.defaults.values).length > 0 && (
+              <>
+                <p>
+                  清除此成员保存的默认偏好，之后新任务使用成员自身设置。当前任务和本页下轮选择保持原样。
+                </p>
+                {freshness !== 'fresh' && <p>恢复前请先读取成员原生选项，确认当前可用设置。</p>}
+                <button
+                  type="button"
+                  disabled={!!pending || freshness !== 'fresh'}
+                  onClick={() => void save({}, true)}
+                >
+                  恢复成员原生默认
+                </button>
+              </>
+            )}
+          </details>
+          {error && (
+            <p className={s.error} role="alert">
+              {error}
+            </p>
+          )}
+          {notice && (
+            <p className={s.notice} role="status">
+              {notice}
+            </p>
+          )}
+          {error && (
+            <button type="button" onClick={() => void inspect({})}>
+              忽略旧偏好，重新读取模型和参数
+            </button>
+          )}
+        </fieldset>
       </div>
       <footer className={s.footer}>
         {onChange && (
           <button
             type="button"
-            disabled={!!pending}
+            disabled={!!pending || settingsLocked}
             onClick={() => {
               onChange(undefined);
               onClose();
@@ -751,14 +799,18 @@ function SessionSettingsDialog({
           </button>
         )}
         <span className={s.spacer} />
-        <button type="button" disabled={!!pending || !canSaveValues} onClick={() => void save()}>
+        <button
+          type="button"
+          disabled={!!pending || !canSaveValues || settingsLocked}
+          onClick={() => void save()}
+        >
           {options.length ? '保存为成员默认' : '恢复成员原生默认'}
         </button>
         {onChange && (
           <button
             type="button"
             className={s.primary}
-            disabled={!!pending || (!verified && !selectedPreset)}
+            disabled={!!pending || settingsLocked || (!verified && !selectedPreset)}
             onClick={() => {
               onChange({ ...selected });
               onClose();
@@ -880,12 +932,14 @@ export function TaskRuntimeSettings({ taskId, ...props }: Props & { taskId: stri
                       : '正在读取…')}
         </span>
         {props.values && <small>已选择下轮覆盖；发送后确认实际生效。</small>}
-        {locked && <small>本轮设置已冻结，执行结束后可调整。运行中的补充要求沿用本轮设置。</small>}
+        {locked && <small>执行中可查看设置；补充要求沿用本轮参数。</small>}
         {data?.state === 'failed' && summary && <small className={s.error}>{data.error}</small>}
       </div>
       <SessionSettingsControl
         {...props}
-        disabled={props.disabled || locked}
+        disabled={props.disabled}
+        settingsLocked={locked}
+        confirmedSettings={data?.confirmed}
         inheritPrevious
         inheritedValues={data?.confirmed ? currentSessionValues(data.confirmed) : data?.requested}
       />
