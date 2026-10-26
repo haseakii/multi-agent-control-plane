@@ -6,6 +6,11 @@ import { request } from 'node:http';
 import { spawn, execFileSync } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
+  availableInstallationPort,
+  shouldUpgradePackage,
+  openLocalBrowser,
+} from './lib/package-open.mjs';
+import {
   atomicJson,
   readJson,
   parseInstallation,
@@ -26,8 +31,8 @@ function argumentsFor(args) {
   const command = args[0] ?? 'start',
     flags = {};
   for (let i = 1; i < args.length; i++) {
-    if (args[i] === '--headless') {
-      flags['--headless'] = true;
+    if (['--headless', '--upgrade-if-newer'].includes(args[i])) {
+      flags[args[i]] = true;
       continue;
     }
     if (
@@ -244,14 +249,19 @@ function operations(file) {
         { signal: AbortSignal.timeout(5000), redirect: 'error' },
       );
       if (installing.ok) {
-        if ((await installing.json()).busy) throw Error('还有成员正在安装，请完成后再升级。');
+        if ((await installing.json()).busy)
+          throw Object.assign(Error('还有成员正在安装，请完成后再升级。'), {
+            code: 'UPGRADE_BUSY',
+          });
       } else if (installing.status !== 404) throw Error('无法确认成员安装状态，原版本保持运行。');
       if (
         (snapshot.executionAttempts ?? []).some((attempt) =>
           ['running', 'waiting', 'queued'].includes(attempt.state),
         )
       )
-        throw Error('还有任务正在执行或等待执行授权，完成或停止后再升级。');
+        throw Object.assign(Error('还有任务正在执行或等待执行授权，完成或停止后再升级。'), {
+          code: 'UPGRADE_BUSY',
+        });
       const policies = [];
       for (const project of snapshot.projects)
         policies.push([
@@ -366,15 +376,22 @@ async function install(flags) {
       path.join(here, 'lib/installation.mjs'),
       path.join(versionDir, 'launcher/lib/installation.mjs'),
     );
+    fs.copyFileSync(
+      path.join(here, 'lib/package-open.mjs'),
+      path.join(versionDir, 'launcher/lib/package-open.mjs'),
+    );
   }
   let configFile = flags['--config']
     ? path.resolve(flags['--config'])
     : path.join(root, 'config.json');
-  if (!flags['--config'])
+  if (!flags['--config']) {
+    const defaults = readJson(path.join(source, 'config.json'));
     atomicJson(configFile, {
-      ...readJson(path.join(source, 'config.json')),
+      ...defaults,
+      port: await availableInstallationPort(defaults.port ?? 3000),
       dataDir: path.join(root, 'data'),
     });
+  }
   const current = {
     releaseDir: versionDir,
     releaseId: pack.releaseId,
@@ -447,6 +464,25 @@ async function main() {
     const result = await install(flags);
     console.log('工作台安装入口已准备。');
     if (command === 'install') return;
+    if (result.existing && flags['--upgrade-if-newer']) {
+      const ops = operations(result.file);
+      if (fs.existsSync(operationFile(result.file))) await recoverInstallation(result.file, ops);
+      const state = parseInstallation(readJson(result.file));
+      const offered = validatePackage(path.resolve(flags['--release']));
+      const current = {
+        releaseId: state.current.releaseId,
+        manifest: readJson(path.join(state.current.releaseDir, 'release-manifest.json')),
+      };
+      if (shouldUpgradePackage(current, offered)) {
+        console.log('发现新版，正在保留原记录并准备升级…');
+        try {
+          await upgradeInstallation(result.file, offered.root, ops);
+        } catch (error) {
+          if (error.code !== 'UPGRADE_BUSY') throw error;
+          console.log('当前还有工作未结束，暂缓升级，先打开已有版本；结束后重新打开新版即可。');
+        }
+      }
+    }
     return start(result.file, !flags['--headless']);
   }
   const file = path.resolve(flags['--installation'] ?? path.join(here, '../installation.json'));
@@ -544,11 +580,7 @@ async function start(file, open) {
   await ops.ensure(state.current, state);
   const url = 'http://127.0.0.1:' + (configFor(state.current).port ?? 3000) + '/';
   console.log('工作台已在后台就绪：' + url + '\n可以关闭本窗口。');
-  if (open)
-    spawn(process.env.ComSpec ?? 'cmd.exe', ['/d', '/c', 'start', '""', url], {
-      windowsHide: true,
-      stdio: 'ignore',
-    }).unref();
+  if (open) await openLocalBrowser(url);
 }
 main().catch((error) => {
   console.error(error.message);

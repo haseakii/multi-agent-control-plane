@@ -75,10 +75,22 @@ run('scripts/verify-windows-installation.mjs', [
   '--evidence',
   path.join(evidence, 'first-install'),
 ]);
+run('scripts/build-windows-executable.mjs', ['--package', output, '--output', output + '.exe']);
+run('scripts/verify-windows-executable.mjs', [
+  '--executable',
+  output + '.exe',
+  '--evidence',
+  path.join(evidence, 'single-executable'),
+]);
 fs.writeFileSync(
   path.join(evidence, 'release.json'),
   JSON.stringify(
-    { releaseId: verified.releaseId, files: verified.manifest.files.length, tests: 'tests.json' },
+    {
+      releaseId: verified.releaseId,
+      files: verified.manifest.files.length,
+      tests: 'tests.json',
+      executable: path.basename(output) + '.exe',
+    },
     null,
     2,
   ),

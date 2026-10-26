@@ -6,6 +6,14 @@ Agent 与角色分开：任何具备资格和权限的成员都可以担任 **Bo
 
 ## Quick Start
 
+### Windows：下载一个 EXE，直接打开
+
+在 [GitHub Releases](https://github.com/haseakii/multi-agent-control-plane/releases) 下载 Windows x64 的 **Hermes-Workbench-…-windows-x64.exe**，双击即可。**无需解压、安装系统 Node / pnpm、修改配置或手填端口。** 工作台程序与配套 Node/npm、网页和依赖均在 EXE 内，首次自动准备私有安装并打开浏览器；添加 ACP 成员时再按需联网下载和登录。
+
+以后打开同一个 EXE、安装目录的 **工作台.exe**，或开始菜单中的 **Hermes 工作台** 即可；重复打开会复用已有服务。下载新版后直接打开，空闲时自动备份、升级并核对历史与权限；有任务未结束时先打开当前版本，稍后重开新版再升级。打开旧 EXE 不会自动降级。
+
+安装默认位于 `%LOCALAPPDATA%\MultiAgentControlPlane`，程序缓存位于 `%LOCALAPPDATA%\MultiAgentControlPlaneCache`。数据与下载文件分开，删除下载文件不影响已安装入口；关闭网页后后台继续运行。Windows 10/11 x64 使用系统内置 .NET Framework 4.8；当前 EXE 尚未代码签名，系统可能提示未知发布者。
+
 ### 从源码启动开发控制台
 
 前置条件：**Node.js 22+（当前验证版本为 22.22.2）、pnpm 10.11.0**；使用 Git 工作树和代码审阅时还需要 Git。下面命令均从仓库根目录执行，终端示例使用 PowerShell。
@@ -47,9 +55,9 @@ Invoke-RestMethod http://127.0.0.1:5173/health
 
 ### 使用 Windows 完整发布包
 
-已有 **Windows x64 完整包**时，解压后双击包内 **打开工作台.cmd**，首次安装默认放在 `%LOCALAPPDATA%\MultiAgentControlPlane`。随后使用安装目录中的 **启动工作台.cmd**、**停止工作台.cmd**、**升级工作台.cmd** 和 **恢复工作台.cmd**。控制台自带配套 Node/npm、网页和生产依赖；ACP 程序可在“协作成员 → 添加 / 下载 ACP”中下载管理，也可使用本机已有入口。账号登录由成员自己完成。
+ZIP 完整目录包保留给维护和自定义部署：完整解压后双击 **打开工作台.cmd**，或在 PowerShell 中运行 `.\打开工作台.cmd`。它与 EXE 共用安装、启动和升级逻辑，首次安装默认放在 `%LOCALAPPDATA%\MultiAgentControlPlane`。安装目录继续提供 **启动工作台.cmd**、**停止工作台.cmd**、**升级工作台.cmd** 和 **恢复工作台.cmd**。ACP 程序在“协作成员 → 添加 / 下载 ACP”中下载和登录，也可使用本机已有入口。
 
-工作台地址以启动器打开的地址和当前配置为准：标准包默认端口为 **3000**；本机已有的日用 Hermes 安装使用 [8057](http://127.0.0.1:8057/)。关闭浏览器不会停止后台服务。
+工作台地址由启动器直接打开；新安装优先使用 **3000**，被占用时自动选择可用端口并保存。已有安装保留原端口和客户端连接配置；本机已有的日用 Hermes 安装使用 [8057](http://127.0.0.1:8057/)。关闭浏览器不会停止后台服务。
 
 源码开发控制台与日用 Hermes 工作台共用核心引擎，启动方式和页面功能各有侧重。`pnpm build` 构建 `apps/*` 与 `packages/*`；Hermes 网页还依赖单独准备的上游源码和依赖，构建方法见 [Hermes 集成说明](integrations/hermes-workbench/README.md)。新克隆的仓库不包含本机安装目录，根目录的中文快捷脚本仅适用于已经完成安装的本机环境。
 

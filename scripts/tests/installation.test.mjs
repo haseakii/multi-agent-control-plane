@@ -182,3 +182,19 @@ it('rejects unknown installation versions and preserves existing records', () =>
     f.cleanup();
   }
 });
+
+it('defers an upgrade while work is active without stopping or replacing the current installation', async () => {
+  const f = fixture();
+  try {
+    f.ops.inspect.mockRejectedValue(Object.assign(Error('active task'), { code: 'UPGRADE_BUSY' }));
+    await expect(upgradeInstallation(f.file, 'new', f.ops)).rejects.toMatchObject({
+      code: 'UPGRADE_BUSY',
+    });
+    expect(f.ops.stop).not.toHaveBeenCalled();
+    expect(f.ops.backup).not.toHaveBeenCalled();
+    expect(readJson(f.file)).toEqual(f.state);
+    expect(fs.existsSync(operationFile(f.file))).toBe(false);
+  } finally {
+    f.cleanup();
+  }
+});

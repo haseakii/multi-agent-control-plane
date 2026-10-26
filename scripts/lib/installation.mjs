@@ -273,7 +273,10 @@ export async function upgradeInstallation(file, directory, ops) {
       saveOperation(file, operation);
       throw Error('升级未完成，恢复尚需确认。原目录和备份均保留；运行“恢复工作台”。');
     }
-    throw Error('升级未完成，原版本入口已恢复：' + String(error?.message ?? error));
+    throw Object.assign(
+      Error('升级未完成，原版本入口已恢复：' + String(error?.message ?? error)),
+      error?.code === 'UPGRADE_BUSY' ? { code: 'UPGRADE_BUSY' } : {},
+    );
   }
 }
 export async function recoverInstallation(file, ops) {

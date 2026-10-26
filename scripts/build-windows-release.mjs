@@ -326,13 +326,17 @@ copyFileSync(
   join(repo, 'scripts/lib/installation.mjs'),
   join(output, 'launcher/lib/installation.mjs'),
 );
+copyFileSync(
+  join(repo, 'scripts/lib/package-open.mjs'),
+  join(output, 'launcher/lib/package-open.mjs'),
+);
 for (const [name, command] of [
   ['打开工作台.cmd', 'open-package'],
   ['升级工作台.cmd', 'update'],
 ]) {
   const args =
     command === 'open-package'
-      ? 'open-package --release "%~dp0."'
+      ? 'open-package --release "%~dp0." --upgrade-if-newer'
       : 'update --installation "%LOCALAPPDATA%\\MultiAgentControlPlane\\installation.json" --release "%~dp0."';
   writeFileSync(
     join(output, name),
@@ -366,6 +370,7 @@ const result = execFileSync(
 );
 const manifest = {
   format: 'windows-directory-m1',
+  builtAt: new Date().toISOString(),
   platform: process.platform,
   arch: process.arch,
   node: process.version,
