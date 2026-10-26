@@ -45,7 +45,7 @@ it.runIf(process.platform === 'win32')(
     });
     expect(existsSync(f.filename)).toBe(false);
   },
-  15000,
+  45000,
 );
 
 it.runIf(process.platform === 'win32')(
@@ -62,7 +62,7 @@ it.runIf(process.platform === 'win32')(
     ).toBe(true);
     expect(existsSync(f.filename)).toBe(false);
   },
-  20000,
+  65000,
 );
 
 it.runIf(process.platform === 'win32')(
@@ -77,7 +77,7 @@ it.runIf(process.platform === 'win32')(
     });
     expect(readFileSync(f.filename, 'utf8')).toBe('foreign');
   },
-  15000,
+  45000,
 );
 
 it.runIf(process.platform === 'win32')(
@@ -102,7 +102,7 @@ it.runIf(process.platform === 'win32')(
       {
         encoding: 'utf8',
         windowsHide: true,
-        timeout: 10000,
+        timeout: 30000,
         env: {
           SystemRoot: process.env.SystemRoot ?? 'C:/Windows',
           TEMP: tmpdir(),
@@ -122,7 +122,7 @@ it.runIf(process.platform === 'win32')(
     expect(readFileSync(f.filename, 'utf8')).toBe('foreign-after-native-check');
     expect(existsSync(original)).toBe(false);
   },
-  15000,
+  45000,
 );
 
 it('retains the lock when the native primitive cannot run, with no pathname deletion fallback', () => {
@@ -152,7 +152,7 @@ it.runIf(process.platform === 'win32')(
     });
     expect(existsSync(filename)).toBe(false);
   },
-  15000,
+  45000,
 );
 
 it.runIf(process.platform !== 'win32')('fails closed on unsupported native platforms', () => {

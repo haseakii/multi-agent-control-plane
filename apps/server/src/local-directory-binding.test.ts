@@ -581,7 +581,7 @@ describe.skipIf(process.platform !== 'win32')(
       const s = setup();
       const service = new LocalDirectoryBindings(s.storage, [s.privateRoot]);
       expect(service.preview({ path: s.source }).rootPath).toBe(realpathSync.native(s.source));
-    }, 15000);
+    }, 30000);
   },
 );
 

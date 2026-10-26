@@ -45,7 +45,7 @@ function windowsMetadataCommand(paths: string[]) {
     args: ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', command],
     options: {
       windowsHide: true,
-      timeout: 5000,
+      timeout: 15000,
       maxBuffer: 16384,
       encoding: 'utf8' as const,
       env: {
