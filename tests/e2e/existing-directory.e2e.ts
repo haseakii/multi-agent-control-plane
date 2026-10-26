@@ -1,3 +1,4 @@
+import { snapshotForUi, openProjectForm, openContext, mockTaskPanels } from './helpers';
 import { expect, test, type Page } from '@playwright/test';
 
 const rootPath = 'C:\\合成测试 专用\\' + '较长的中文目录名称 '.repeat(9) + '\\源码';
@@ -32,108 +33,108 @@ function snapshot() {
 }
 async function setup(page: Page) {
   const state = snapshot();
-  await page.route('**/api/control-center', (r) => r.fulfill({ json: state }));
+  await mockTaskPanels(page);
+  await page.route('**/api/control-center', (r) => r.fulfill({ json: snapshotForUi(state) }));
   return state;
 }
-for (const width of [1366, 1024])
-  test(`B0 bound directory confirmation and canceled goal preserve draft at ${width}`, async ({
-    page,
-  }) => {
-    await page.setViewportSize({ width, height: 900 });
-    const state = await setup(page);
-    let creates = 0,
-      goals = 0;
-    await page.route('**/api/directories/validate', (r) =>
-      r.fulfill({
-        json: {
-          validationId: '00000000-0000-4000-8000-000000000001',
-          rootPath,
-          expiresAt: '2099-01-01T00:00:00Z',
-          notice: 'Fixture metadata only; no real files or model.',
-        },
-      }),
-    );
-    await page.route('**/api/projects', async (r) => {
-      creates++;
-      expect(r.request().postDataJSON()).toEqual({
-        name: '合成绑定项目',
-        workspace: {
-          kind: 'existing-local',
-          validationId: '00000000-0000-4000-8000-000000000001',
-          confirmedPath: rootPath,
-        },
-      });
-      const project = { id: 'bound', name: '合成绑定项目', defaultBossAgentId: 'fixture-boss' };
-      state.projects.push(project);
-      state.workspaces.push({
-        id: 'workspace',
-        projectId: 'bound',
+test('B0 bound directory confirmation and canceled goal preserve draft at 1024', async ({
+  page,
+}) => {
+  const width = 1024;
+  await page.setViewportSize({ width, height: 900 });
+  const state = await setup(page);
+  let creates = 0,
+    goals = 0;
+  await page.route('**/api/directories/validate', (r) =>
+    r.fulfill({
+      json: {
+        validationId: '00000000-0000-4000-8000-000000000001',
         rootPath,
-        provider: 'local-directory',
-        access: 'read-write',
-      });
-      state.directoryBindings.push({
-        id: 'workspace',
-        projectId: 'bound',
-        rootPath,
-        confirmationVersion: 'version-one',
-      });
-      await r.fulfill({ status: 201, json: project });
+        expiresAt: '2099-01-01T00:00:00Z',
+        notice: 'Fixture metadata only; no real files or model.',
+      },
+    }),
+  );
+  await page.route('**/api/projects', async (r) => {
+    creates++;
+    expect(r.request().postDataJSON()).toEqual({
+      name: '合成绑定项目',
+      workspace: {
+        kind: 'existing-local',
+        validationId: '00000000-0000-4000-8000-000000000001',
+        confirmedPath: rootPath,
+      },
     });
-    await page.route('**/api/projects/bound/goals', async (r) => {
-      goals++;
-      expect(r.request().postDataJSON()).toEqual({
-        objective: '合成目标，不调用模型',
-        workspaceConfirmation: { workspaceId: 'workspace', rootPath, version: 'version-one' },
-      });
-      await r.fulfill({
-        status: 409,
-        json: { error: 'Directory confirmation expired; recheck before execution.' },
-      });
+    const project = { id: 'bound', name: '合成绑定项目', defaultBossAgentId: 'fixture-boss' };
+    state.projects.push(project);
+    state.workspaces.push({
+      id: 'workspace',
+      projectId: 'bound',
+      rootPath,
+      provider: 'local-directory',
+      access: 'read-write',
     });
-    await page.goto('/');
-    await page.getByLabel('Project name', { exact: true }).fill('合成绑定项目');
-    await page.getByLabel('Workspace source').selectOption('existing');
-    await page.getByLabel('Existing directory path').fill(rootPath);
-    await expect(page.getByRole('button', { name: 'Create project', exact: true })).toBeDisabled();
-    await page.getByRole('button', { name: 'Validate directory', exact: true }).click();
-    await expect(page.getByLabel('Actual directory path')).toHaveText(rootPath);
-    await page.getByLabel('Confirm this actual directory').check();
-    await page.getByRole('button', { name: 'Cancel directory confirmation' }).click();
-    await expect(page.getByRole('button', { name: 'Create project', exact: true })).toBeDisabled();
-    expect(creates).toBe(0);
-    await page.getByRole('button', { name: 'Validate directory', exact: true }).click();
-    await page.getByLabel('Confirm this actual directory').check();
-    await page.getByRole('button', { name: 'Create project', exact: true }).click();
-    await expect(page.getByLabel('Active project')).toHaveValue('bound');
-    expect(creates).toBe(1);
-    await page.getByLabel('Goal objective').fill('合成目标，不调用模型');
-    const submit = page.getByRole('button', { name: 'Submit goal', exact: true });
-    await submit.click();
-    const dialog = page.getByRole('dialog');
-    await expect(dialog).toContainText(rootPath);
-    const confirm = dialog.getByRole('button', { name: 'Confirm and submit goal' });
-    await expect(confirm).toBeDisabled();
-    await dialog.getByRole('button', { name: 'Cancel execution' }).click();
-    await expect(dialog).not.toBeVisible();
-    await expect(submit).toBeFocused();
-    expect(goals).toBe(0);
-    await expect(page.getByLabel('Goal objective')).toHaveValue('合成目标，不调用模型');
-    await submit.click();
-    await dialog.getByLabel('I understand this task may read or modify this directory').check();
-    state.directoryBindings[0].confirmationVersion = 'version-two';
-    await confirm.click();
-    await expect(dialog.getByRole('alert')).toContainText('Directory confirmation expired');
-    expect(goals).toBe(1);
-    expect(state.tasks).toEqual([]);
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
-      true,
-    );
-    await page.screenshot({
-      path: `${process.env.CONTROL_PLANE_E2E_DATA_DIR}/b0-confirmation-${width}.png`,
-      fullPage: true,
+    state.directoryBindings.push({
+      id: 'workspace',
+      projectId: 'bound',
+      rootPath,
+      confirmationVersion: 'version-one',
+    });
+    await r.fulfill({ status: 201, json: project });
+  });
+  await page.route('**/api/projects/bound/goals', async (r) => {
+    goals++;
+    expect(r.request().postDataJSON()).toEqual({
+      objective: '合成目标，不调用模型',
+      workspaceConfirmation: { workspaceId: 'workspace', rootPath, version: 'version-one' },
+    });
+    await r.fulfill({
+      status: 409,
+      json: { error: 'Directory confirmation expired; recheck before execution.' },
     });
   });
+  await page.goto('/');
+  await openProjectForm(page);
+  await page.getByLabel('项目名称', { exact: true }).fill('合成绑定项目');
+  await page.getByLabel('Workspace source').selectOption('existing');
+  await page.getByLabel('Existing directory path').fill(rootPath);
+  await expect(page.getByRole('button', { name: '创建项目', exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: 'Validate directory', exact: true }).click();
+  await expect(page.getByLabel('Actual directory path')).toHaveText(rootPath);
+  await page.getByLabel('Confirm this actual directory').check();
+  await page.getByRole('button', { name: 'Cancel directory confirmation' }).click();
+  await expect(page.getByRole('button', { name: '创建项目', exact: true })).toBeDisabled();
+  expect(creates).toBe(0);
+  await page.getByRole('button', { name: 'Validate directory', exact: true }).click();
+  await page.getByLabel('Confirm this actual directory').check();
+  await page.getByRole('button', { name: '创建项目', exact: true }).click();
+  await expect(page.getByLabel('当前项目')).toHaveValue('bound');
+  expect(creates).toBe(1);
+  await page.getByLabel('描述任务').fill('合成目标，不调用模型');
+  const submit = page.getByRole('button', { name: '开始协作 →', exact: true });
+  await submit.click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toContainText(rootPath);
+  const confirm = dialog.getByRole('button', { name: '确认并开始协作' });
+  await expect(confirm).toBeDisabled();
+  await dialog.getByRole('button', { name: '暂不执行' }).click();
+  await expect(dialog).not.toBeVisible();
+  await expect(submit).toBeFocused();
+  expect(goals).toBe(0);
+  await expect(page.getByLabel('描述任务')).toHaveValue('合成目标，不调用模型');
+  await submit.click();
+  await dialog.getByLabel('我了解本次任务可能读取或修改此目录').check();
+  state.directoryBindings[0].confirmationVersion = 'version-two';
+  await confirm.click();
+  await expect(dialog.getByRole('alert')).toContainText('Directory confirmation expired');
+  expect(goals).toBe(1);
+  expect(state.tasks).toEqual([]);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({
+    path: `${process.env.CONTROL_PLANE_E2E_DATA_DIR}/b0-confirmation-${width}.png`,
+    fullPage: true,
+  });
+});
 
 test('B0 invalid directory feedback and input changes never retain confirmation', async ({
   page,
@@ -159,17 +160,18 @@ test('B0 invalid directory feedback and input changes never retain confirmation'
         });
   });
   await page.goto('/');
-  await page.getByLabel('Project name', { exact: true }).fill('未创建');
+  await openProjectForm(page);
+  await page.getByLabel('项目名称', { exact: true }).fill('未创建');
   await page.getByLabel('Workspace source').selectOption('existing');
   await page.getByLabel('Existing directory path').fill(rootPath);
   await page.getByRole('button', { name: 'Validate directory', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('nothing changed');
-  await expect(page.getByRole('button', { name: 'Create project', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: '创建项目', exact: true })).toBeDisabled();
   await page.getByRole('button', { name: 'Validate directory', exact: true }).click();
   await page.getByLabel('Confirm this actual directory').check();
   await page.getByLabel('Existing directory path').fill(rootPath + '-different');
   await expect(page.getByLabel('Actual directory path')).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Create project', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: '创建项目', exact: true })).toBeDisabled();
   expect(creates).toBe(0);
 });
 
@@ -223,8 +225,9 @@ test('B0 recovery acknowledgement is invalidated by polling a new binding versio
     });
   });
   await page.goto('/');
-  await page.getByRole('button', { name: 'Recover from saved context' }).click();
-  const dialog = page.getByRole('dialog'),
+  await openContext(page);
+  await page.getByRole('button', { name: '从已保存进度恢复' }).click();
+  const dialog = page.locator('.task-action-dialog[open]'),
     confirm = dialog.getByRole('button', { name: 'Create new execution attempt' });
   const ack = dialog.getByLabel('I have rechecked this workspace before recovery');
   await expect(confirm).toBeDisabled();

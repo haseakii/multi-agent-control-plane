@@ -1,17 +1,26 @@
 import { defineConfig } from '@playwright/test';
+import { mkdtempSync, realpathSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+process.env.CONTROL_PLANE_E2E_DATA_DIR ??= mkdtempSync(
+  join(realpathSync.native(tmpdir()), 'control-plane-e2e-'),
+);
 
 export default defineConfig({
   testDir: './tests/e2e',
   testMatch: '**/*.e2e.ts',
   fullyParallel: true,
   reporter: process.env.CI ? 'github' : 'list',
+  projects: [{ name: 'local', testIgnore: '**/acp-official-catalog.e2e.ts' }],
   use: {
     baseURL: 'http://127.0.0.1:4173',
     trace: 'retain-on-failure',
+    ...(process.env.PLAYWRIGHT_CHANNEL ? { channel: process.env.PLAYWRIGHT_CHANNEL } : {}),
   },
   webServer: [
     {
-      command: 'node --import tsx apps/server/src/main.ts',
+      command: 'node --import tsx tests/e2e/server.ts',
       env: {
         CONTROL_PLANE_DEMO: '1',
         HOST: '127.0.0.1',
@@ -33,7 +42,7 @@ export default defineConfig({
       stderr: 'pipe',
     },
     {
-      command: 'pnpm --filter @control-plane/web dev:e2e',
+      command: 'node apps/web/node_modules/vite/bin/vite.js apps/web --host 127.0.0.1 --port 4173',
       url: 'http://127.0.0.1:4173',
       reuseExistingServer: false,
       timeout: 120_000,

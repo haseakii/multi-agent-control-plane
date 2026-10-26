@@ -1,3 +1,4 @@
+import { snapshotForUi, openProjectForm, openApproval, mockTaskPanels } from './helpers';
 import { expect, test } from '@playwright/test';
 
 const initialSnapshot = {
@@ -17,9 +18,12 @@ test('a slow older poll cannot overwrite the snapshot after a new project is cre
   page,
 }) => {
   const state = structuredClone(initialSnapshot);
-  await page.route('**/api/control-center', (route) => route.fulfill({ json: state }));
+  await mockTaskPanels(page);
+  await page.route('**/api/control-center', (route) =>
+    route.fulfill({ json: snapshotForUi(state) }),
+  );
   await page.goto('/');
-  await expect(page.getByLabel('Active project')).toHaveValue('project-one');
+  await expect(page.getByLabel('当前项目')).toHaveValue('project-one');
 
   const oldState = structuredClone(state);
   let releaseSlowPoll!: () => void;
@@ -36,9 +40,9 @@ test('a slow older poll cannot overwrite the snapshot after a new project is cre
     if (requests === 1) {
       markPollStarted();
       await slowPoll;
-      await route.fulfill({ json: oldState });
+      await route.fulfill({ json: snapshotForUi(oldState) });
     } else {
-      await route.fulfill({ json: state });
+      await route.fulfill({ json: snapshotForUi(state) });
     }
   });
   await page.route('**/api/projects', async (route) => {
@@ -48,14 +52,15 @@ test('a slow older poll cannot overwrite the snapshot after a new project is cre
   });
 
   await pollStarted;
-  await page.getByLabel('Project name', { exact: true }).fill('Second project');
-  await page.getByRole('button', { name: 'Create project', exact: true }).click();
-  await expect(page.getByLabel('Active project')).toHaveValue('project-two');
+  await openProjectForm(page);
+  await page.getByLabel('项目名称', { exact: true }).fill('Second project');
+  await page.getByRole('button', { name: '创建项目', exact: true }).click();
+  await expect(page.getByLabel('当前项目')).toHaveValue('project-two');
   const staleResponse = page.waitForResponse('**/api/control-center');
   releaseSlowPoll();
   await staleResponse;
-  await expect(page.getByLabel('Active project')).toHaveValue('project-two');
-  await expect(page.getByLabel('Active project').locator('option')).toHaveCount(3);
+  await expect(page.getByLabel('当前项目')).toHaveValue('project-two');
+  await expect(page.getByLabel('当前项目').locator('option')).toHaveCount(3);
 });
 
 test('a failed approval stays pending until an explicit successful decision', async ({ page }) => {
@@ -74,7 +79,10 @@ test('a failed approval stays pending until an explicit successful decision', as
       },
     ],
   };
-  await page.route('**/api/control-center', (route) => route.fulfill({ json: state }));
+  await mockTaskPanels(page);
+  await page.route('**/api/control-center', (route) =>
+    route.fulfill({ json: snapshotForUi(state) }),
+  );
   let attempts = 0;
   await page.route('**/api/approvals/approval-one/approve', async (route) => {
     attempts += 1;
@@ -87,15 +95,17 @@ test('a failed approval stays pending until an explicit successful decision', as
   });
   await page.goto('/');
   const approval = page.locator('.approval-card');
-  await approval.getByRole('button', { name: 'Approve', exact: true }).click();
-  await expect(page.getByRole('alert')).toContainText('Approval could not be saved.');
-  await expect(approval.locator('.badge')).toContainText('待决定');
-  await expect(approval.getByRole('button', { name: 'Approve', exact: true })).toBeEnabled();
+  const review = await openApproval(page, approval);
+  await review.getByRole('button', { name: '允许一次', exact: true }).click();
+  await expect(review.getByRole('alert')).toContainText('Approval could not be saved.');
+  await expect(review).toContainText('待决定');
+  await expect(review.getByRole('button', { name: '允许一次', exact: true })).toBeEnabled();
   await page.waitForResponse('**/api/control-center');
   expect(attempts).toBe(1);
-  await approval.getByRole('button', { name: 'Reject', exact: true }).click();
+  await review.getByRole('button', { name: '拒绝当前请求', exact: true }).click();
+  await review.getByRole('button', { name: '返回审批列表' }).click();
   await expect(approval.locator('.badge')).toContainText('已拒绝');
-  await expect(approval.getByRole('button')).toHaveCount(0);
+  await expect(approval.getByRole('button', { name: '查看审批详情' })).toBeEnabled();
   expect(attempts).toBe(2);
 });
 
@@ -117,11 +127,15 @@ test('keeps project and approval controls usable on a narrow screen', async ({
       },
     ],
   };
-  await page.route('**/api/control-center', (route) => route.fulfill({ json: state }));
+  await mockTaskPanels(page);
+  await page.route('**/api/control-center', (route) =>
+    route.fulfill({ json: snapshotForUi(state) }),
+  );
   await page.goto('/');
-  await expect(page.getByLabel('Active project')).toHaveValue('project-one');
-  await page.getByRole('button', { name: /Task context/ }).click();
-  await expect(page.getByRole('button', { name: 'Approve', exact: true })).toBeEnabled();
+  await expect(page.getByLabel('当前项目')).toHaveValue('project-one');
+  await page.getByRole('button', { name: /结果与审批/ }).click();
+  await openApproval(page, page.locator('.approval-card'));
+  await expect(page.getByRole('button', { name: '允许一次', exact: true })).toBeEnabled();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );
