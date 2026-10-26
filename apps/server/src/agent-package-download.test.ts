@@ -14,6 +14,33 @@ function file() {
 afterEach(() => roots.splice(0).forEach((root) => rmSync(root, { recursive: true, force: true })));
 const sha256 = createHash('sha256').update('abcdef').digest('hex');
 
+it('does not spend retry attempts on complete capped-range responses', async () => {
+  const destination = file();
+  const content = 'abcdefghij';
+  const fetch = vi.fn(async (_url, init) => {
+    const start = init.headers.Range ? Number(/bytes=(\d+)-/.exec(init.headers.Range)![1]) : 0;
+    return start === 0
+      ? new Response(content.slice(0, 2), { headers: { 'content-length': '10', etag: '"v1"' } })
+      : new Response(content.slice(start, start + 2), {
+          status: 206,
+          headers: {
+            'content-range': `bytes ${start}-${start + 1}/10`,
+            'content-length': '2',
+            etag: '"v1"',
+          },
+        });
+  });
+  await downloadPackageFile({
+    source: 'https://example.com/package',
+    destination,
+    network: { fetch },
+    maxAttempts: 2,
+    retryDelayMs: 1,
+  });
+  expect(readFileSync(destination, 'utf8')).toBe(content);
+  expect(fetch).toHaveBeenCalledTimes(5);
+});
+
 it('continues a capped range until the entire object is present even without a checksum', async () => {
   const destination = file();
   const fetch = vi

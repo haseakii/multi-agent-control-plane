@@ -116,11 +116,17 @@ export async function downloadPackageFile(options: Options) {
   let resume = true,
     etag: string | null = null,
     failure: unknown;
-  for (let attempt = 0; attempt < attempts; attempt++) {
+  // A valid capped 206 response makes progress, rather than consuming a retry.
+  // Retain an overall deadline so a server cannot stretch an endless range chain.
+  const deadline = Date.now() + timeoutMs * attempts;
+  let attempt = 0;
+  while (attempt < attempts) {
     options.signal?.throwIfAborted();
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
     const stalled = new AbortController();
     const signal = AbortSignal.any([
-      AbortSignal.timeout(timeoutMs),
+      AbortSignal.timeout(Math.min(timeoutMs, remaining)),
       stalled.signal,
       ...(options.signal ? [options.signal] : []),
     ]);
@@ -212,8 +218,10 @@ export async function downloadPackageFile(options: Options) {
       clearTimeout(timer);
       if (expectedEnd !== undefined && bytes !== expectedEnd)
         throw new DownloadFailure('程序包下载尚未完成，正在自动恢复。', true);
-      if (total !== undefined && bytes !== total)
-        throw new DownloadFailure('程序包分段下载尚未完成，正在自动恢复。', true);
+      if (response.status === 206 && total !== undefined && bytes < total) {
+        report();
+        continue;
+      }
       if (!bytes || !(await verifyPackageChecksum(options.destination, checks, signal)))
         throw new DownloadFailure(
           '程序包内容为空或 SHA-256/SHA-512 校验失败，未解压或启动。',
@@ -226,6 +234,7 @@ export async function downloadPackageFile(options: Options) {
     } catch (error) {
       options.signal?.throwIfAborted();
       failure = error;
+      attempt++;
       if (error instanceof DownloadFailure) {
         if (!error.retryable) throw error;
         if (error.reset) resume = false;
@@ -242,8 +251,10 @@ export async function downloadPackageFile(options: Options) {
       clearTimeout(timer);
       await response?.body?.cancel().catch(() => undefined);
     }
-    if (attempt + 1 < attempts)
-      await delay(Math.min(retryMs * 2 ** attempt, 30_000), undefined, { signal: options.signal });
+    if (attempt < attempts)
+      await delay(Math.min(retryMs * 2 ** (attempt - 1), 30_000), undefined, {
+        signal: options.signal,
+      });
   }
   if (failure instanceof AgentPackageInstallError) throw failure;
   throw new AgentPackageInstallError('程序包自动下载恢复未完成，请检查网络或代理后重新安装。');
