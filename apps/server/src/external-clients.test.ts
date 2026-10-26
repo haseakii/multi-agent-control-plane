@@ -47,8 +47,26 @@ it('creates project-scoped reusable configs, shares records, and revokes each gr
       payload: { toolName, input },
     });
   try {
+    expect(
+      (await app.inject({ method: 'GET', url: '/api/external-clients' })).json(),
+    ).toMatchObject({ projects: [], unavailableProjects: [] });
     runtime.createProject({ id: 'p', name: 'Shared' });
     runtime.setWorkspaceMode('p', { mode: 'task-local' });
+    const workspaceConfig = storage.repositories.projectWorkspaceConfigs.get('p')!;
+    storage.repositories.projectWorkspaceConfigs.delete('p');
+    expect(
+      (await app.inject({ method: 'GET', url: '/api/external-clients' })).json(),
+    ).toMatchObject({ projects: [], unavailableProjects: [{ id: 'p', name: 'Shared' }] });
+    expect(() =>
+      service.create({
+        requestId: randomUUID(),
+        name: 'No implicit grant',
+        target: 'generic',
+        profile: 'read',
+        projectId: 'p',
+      }),
+    ).toThrow('目录不可用');
+    storage.repositories.projectWorkspaceConfigs.upsert(workspaceConfig);
     runtime.createProject({ id: 'other', name: 'Private' });
     runtime.setWorkspaceMode('other', { mode: 'task-local' });
     const input = {

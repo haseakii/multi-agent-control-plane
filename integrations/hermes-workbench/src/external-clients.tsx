@@ -35,7 +35,11 @@ const Client = z.object({
   managed: z.boolean(),
   connectionAvailable: z.boolean(),
 });
-const View = z.object({ projects: z.array(Project), clients: z.array(Client) });
+const View = z.object({
+  projects: z.array(Project),
+  clients: z.array(Client),
+  unavailableProjects: z.array(z.object({ id: z.string(), name: z.string() })).default([]),
+});
 const Configuration = z.object({
   id: z.string(),
   name: z.string(),
@@ -91,10 +95,20 @@ export function ExternalClients({
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [loadError, setLoadError] = useState('');
+  const [projectName, setProjectName] = useState('MCP 协作项目');
+  const projectRequest = useRef({ id: 'project-' + crypto.randomUUID(), name: '' });
   const [revokeId, setRevokeId] = useState('');
   const key = useRef({ payload: '', id: crypto.randomUUID() });
   async function load() {
-    const next = await request('/api/external-clients', View);
+    let next: z.infer<typeof View>;
+    try {
+      next = await request('/api/external-clients', View);
+      setLoadError('');
+    } catch (failure) {
+      setLoadError(failure instanceof Error ? failure.message : '项目列表读取失败，请重试。');
+      throw failure;
+    }
     setView(next);
     if (!initialized.current) {
       initialized.current = true;
@@ -103,8 +117,9 @@ export function ExternalClients({
         return valid.length ? valid : next.projects[0] ? [next.projects[0].id] : [];
       });
     }
+    return next;
   }
-  async function run(label: string, action: () => Promise<void>) {
+  async function run(label: string, action: () => Promise<unknown>) {
     setBusy(label);
     setError('');
     setNotice('');
@@ -133,6 +148,48 @@ export function ExternalClients({
     !!view?.clients.some(
       (c) => c.id === editing.id && (c.revision > editing.revision || !c.enabled),
     );
+  const blockedReason = busy
+    ? busy === 'load'
+      ? '正在读取项目与接入状态…'
+      : busy === 'project'
+        ? '正在创建项目…'
+        : '正在处理，请稍候…'
+    : loadError
+      ? '项目列表读取失败，请点击“重新读取项目”。'
+      : !view
+        ? '尚未读取到项目，请点击“重新读取项目”。'
+        : stale
+          ? '此接入的授权已改变，请先重新读取此接入。'
+          : missing.length
+            ? '选中的项目目录不可用，请取消该项目或重新确认目录。'
+            : !projects.length
+              ? view.projects.length
+                ? '请先勾选至少一个授权项目。'
+                : '没有可授权的项目，请先在上方创建项目或恢复原项目目录。'
+              : '';
+  function createLocalProject() {
+    if (busy || !projectName.trim()) return;
+    void run('project', async () => {
+      const name = projectName.trim();
+      if (projectRequest.current.name !== name)
+        projectRequest.current = { id: 'project-' + crypto.randomUUID(), name };
+      const id = projectRequest.current.id;
+      // Reconcile a successful creation whose response/refresh was interrupted before retrying.
+      const before = await load();
+      if (!before.projects.some((project) => project.id === id))
+        await request('/api/projects', z.object({ id: z.string() }), {
+          id,
+          name,
+          executionWorkspaceMode: 'task-local',
+        });
+      const next = await load();
+      if (!next.projects.some((project) => project.id === id))
+        throw new Error('项目已创建，但目录尚未就绪，请重新读取项目。');
+      setProjects((current) => [...new Set([...current, id])]);
+      clearConfig();
+      setNotice('项目已创建并选中。请核对权限，再点击授权按钮生成接入。');
+    });
+  }
   function startNew() {
     setEditing(undefined);
     setConfig(undefined);
@@ -156,6 +213,7 @@ export function ExternalClients({
     setConfig(undefined);
   }
   function submit() {
+    if (blockedReason) return;
     if (config && !editing) {
       startNew();
       return;
@@ -284,6 +342,11 @@ export function ExternalClients({
             <legend>
               授权项目 <span className={s.muted}>已选 {projects.length} 项</span>
             </legend>
+            {(!view || loadError) && (
+              <p role={loadError ? 'alert' : 'status'} className={s.muted}>
+                {loadError || '正在读取可授权的项目…'}
+              </p>
+            )}
             <div className={s.projectList}>
               {view?.projects.map((project) => (
                 <label className={s.projectChoice} key={project.id}>
@@ -320,8 +383,40 @@ export function ExternalClients({
               ))}
             </div>
             {view && !view.projects.length && (
-              <p className={s.muted}>先在工作台创建或选择项目，再来接入。</p>
+              <div className={s.emptyProjects}>
+                <p>
+                  {view.unavailableProjects.length
+                    ? '已有项目目录尚未就绪，暂时不能授权。可回到工作台重新确认目录，或创建新的本地项目。'
+                    : '还没有项目。先创建一个本地项目，再授权此应用访问。'}
+                </p>
+                {!!view.unavailableProjects.length && (
+                  <p className={s.muted}>
+                    {view.unavailableProjects.map((project) => project.name).join('、')}
+                  </p>
+                )}
+                <label>
+                  新项目名称
+                  <input
+                    value={projectName}
+                    maxLength={128}
+                    onChange={(event) => setProjectName(event.target.value)}
+                  />
+                </label>
+                <button
+                  type="button"
+                  disabled={!!busy || !!loadError || !projectName.trim()}
+                  onClick={createLocalProject}
+                >
+                  创建项目并选中
+                </button>
+                <p className={s.muted}>
+                  工作台自动准备本地工作目录。此步骤只创建项目，不运行任务，也不生成授权。
+                </p>
+              </div>
             )}
+            <button type="button" disabled={!!busy} onClick={() => void run('load', load)}>
+              重新读取项目
+            </button>
           </fieldset>
           <fieldset disabled={!!busy}>
             <legend>允许此应用做什么</legend>
@@ -375,9 +470,15 @@ export function ExternalClients({
             </p>
           )}
           <div className={s.submitBox}>
+            {blockedReason && (
+              <p id="external-submit-reason" className={s.blockedReason} role="status">
+                {blockedReason}
+              </p>
+            )}
             <button
               className={s.primary}
-              disabled={!!busy || !projects.length || !!missing.length || !!stale}
+              disabled={!!blockedReason}
+              aria-describedby={blockedReason ? 'external-submit-reason' : undefined}
               onClick={() => void submit()}
             >
               <Plus size={16} />

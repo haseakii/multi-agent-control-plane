@@ -173,6 +173,17 @@ export class ExternalClientsService {
       ];
     });
   }
+  projectView() {
+    const projects = this.projects();
+    const available = new Set(projects.map((project) => project.id));
+    return {
+      projects,
+      unavailableProjects: this.repo.projects
+        .list()
+        .filter((project) => !available.has(project.id))
+        .map((project) => ({ id: project.id, name: project.name })),
+    };
+  }
   list() {
     const records = this.repo.externalClients.list();
     return this.allAccess().clients.map((access) => {
@@ -470,7 +481,7 @@ export function registerExternalClientRoutes(
     };
   app.get(
     '/api/external-clients',
-    guarded(() => ({ projects: service.projects(), clients: service.list(), localOnly: true })),
+    guarded(() => ({ ...service.projectView(), clients: service.list(), localOnly: true })),
   );
   app.post('/api/external-clients', (request, reply) =>
     guarded(() => service.create(request.body))(request, reply),

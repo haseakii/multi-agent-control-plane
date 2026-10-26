@@ -81,8 +81,6 @@ const agentInstallations = new AgentInstallationsService({
     return fixtureRuntime;
   },
 });
-runtime.createProject({ id: 'p', name: '界面回归项目' });
-runtime.setWorkspaceMode('p', { mode: 'task-local' });
 runtime.agentControl.create({
   id: 'fixture',
   name: '回归成员',
@@ -106,19 +104,23 @@ const task = TaskSchema.parse({
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
 });
-storage.repositories.tasks.upsert(task);
-const result = await runtime.artifacts.publish({
-  projectId: 'p',
-  taskId: 'task',
-  producerAgentId: 'fixture',
-  kind: 'report',
-  mimeType: 'text/plain',
-  content: new TextEncoder().encode(
-    '这是本地测试回复，用于核对文字、滚动与阅读空间。\n'.repeat(35),
-  ),
-  links: [{ entityType: 'task', entityId: 'task' }],
-});
-storage.repositories.tasks.upsert({ ...task, resultArtifactRefs: [result.artifact.id] });
+async function seedReadingTask() {
+  runtime.createProject({ id: 'p', name: '界面回归项目' });
+  runtime.setWorkspaceMode('p', { mode: 'task-local' });
+  storage.repositories.tasks.upsert(task);
+  const result = await runtime.artifacts.publish({
+    projectId: 'p',
+    taskId: 'task',
+    producerAgentId: 'fixture',
+    kind: 'report',
+    mimeType: 'text/plain',
+    content: new TextEncoder().encode(
+      '这是本地测试回复，用于核对文字、滚动与阅读空间。\n'.repeat(35),
+    ),
+    links: [{ entityType: 'task', entityId: 'task' }],
+  });
+  storage.repositories.tasks.upsert({ ...task, resultArtifactRefs: [result.artifact.id] });
+}
 const app = buildServer({
   ...local,
   agentInstallations,
@@ -146,6 +148,62 @@ try {
   browser = await chromium.launch({ channel: 'msedge', headless: true });
   page = await browser.newPage({ viewport: { width: 1912, height: 914 } });
   page.on('pageerror', (error) => browserErrors.push(error.message));
+  await page.goto(base);
+  const failedProjectRead = (route) =>
+    route.fulfill({ status: 503, json: { error: '测试项目读取失败' } });
+  await page.route('**/api/external-clients', failedProjectRead);
+  await page.getByRole('button', { name: '接入应用 · MCP', exact: true }).click();
+  const setup = page.getByRole('region', { name: '创建应用接入', exact: true });
+  await expect(setup.getByText('测试项目读取失败', { exact: true })).toBeVisible();
+  const authorize = page.getByRole('button', { name: '授权并生成接入', exact: true });
+  await expect(authorize).toBeDisabled();
+  await page.unroute('**/api/external-clients', failedProjectRead);
+  await page.getByRole('button', { name: '重新读取项目', exact: true }).click();
+  await expect(setup.getByText('还没有项目。先创建一个本地项目，再授权此应用访问。')).toBeVisible();
+  const createBox = await page
+    .getByRole('button', { name: '创建项目并选中', exact: true })
+    .boundingBox();
+  const reasonBox = await page.locator('#external-submit-reason').boundingBox();
+  assert(
+    createBox && reasonBox && createBox.y + createBox.height <= reasonBox.y,
+    'The create action must not be covered by the sticky authorization footer',
+  );
+  await page.screenshot({ path: path.join(root, 'mcp-empty-projects.png') });
+  await page.getByLabel('新项目名称', { exact: true }).fill('新机器接入项目');
+  await page.getByRole('button', { name: '创建项目并选中', exact: true }).click();
+  await expect(authorize).toBeEnabled();
+  assert.equal(storage.repositories.projects.list().length, 1);
+  assert.equal(storage.repositories.externalClients.list().length, 0);
+  assert.equal(storage.repositories.tasks.list().length, 0);
+  const projectCheckbox = page.getByRole('checkbox', { name: /新机器接入项目/ });
+  await expect(projectCheckbox).toBeChecked();
+  await projectCheckbox.uncheck();
+  await expect(authorize).toBeDisabled();
+  await expect(setup.getByText('请先勾选至少一个授权项目。', { exact: true })).toBeVisible();
+  await projectCheckbox.check();
+  await page.getByLabel('使用的应用').selectOption('generic');
+  await authorize.click();
+  await expect(page.getByRole('textbox', { name: '完整 MCP 配置' })).toBeVisible();
+  const onboardingProject = storage.repositories.projects.list()[0];
+  assert.deepEqual(
+    storage.repositories.externalClients.list()[0].access.projects.map((grant) => grant.projectId),
+    [onboardingProject.id],
+  );
+  const savedWorkspace = storage.repositories.projectWorkspaceConfigs.get(onboardingProject.id);
+  storage.repositories.projectWorkspaceConfigs.delete(onboardingProject.id);
+  await page.getByRole('button', { name: '重新读取项目', exact: true }).click();
+  await expect(setup.getByText(/已有项目目录尚未就绪/)).toBeVisible();
+  await expect(
+    setup.getByText('选中的项目目录不可用，请取消该项目或重新确认目录。', { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole('button', { name: '新建另一个接入', exact: true })).toBeDisabled();
+  storage.repositories.projectWorkspaceConfigs.upsert(savedWorkspace);
+  await page.getByRole('button', { name: '重新读取项目', exact: true }).click();
+  await page.getByRole('button', { name: '关闭应用接入', exact: true }).click();
+  checks.push(
+    'Fresh-machine MCP onboarding explains failed reads, empty/missing/deselected projects and creates a local project without granting access until explicit authorization',
+  );
+  await seedReadingTask();
   await page.goto(base + '/?task=task');
   await expect(page.getByRole('heading', { name: task.title, exact: true })).toBeVisible();
   const composer = page.locator('textarea').first();

@@ -70,7 +70,7 @@
   font-size: 13px;
   margin-bottom: 18px;
 }
-.dialog input:not([type='radio']),
+.dialog input:not([type='radio']):not([type='checkbox']),
 .dialog select,
 .dialog textarea {
   width: 100%;
@@ -100,7 +100,7 @@
 }
 .dialog button:disabled {
   opacity: 0.5;
-  cursor: wait;
+  cursor: not-allowed;
 }
 .dialog button:hover:not(:disabled),
 .installLink:hover {
@@ -393,6 +393,23 @@
   bottom: -24px;
   background: var(--h-bg-pane, #fff);
   padding: 12px 0 0;
+}
+.blockedReason {
+  margin: 0 0 10px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--h-text, #292823);
+}
+.emptyProjects {
+  padding: 12px;
+  margin-bottom: 12px;
+  border: 1px solid var(--h-line, #ddd8ce);
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.emptyProjects label {
+  margin-bottom: 8px;
 }
 .setup {
   max-height: calc(100dvh - 245px);
