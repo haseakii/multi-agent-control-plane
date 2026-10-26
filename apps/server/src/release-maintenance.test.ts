@@ -22,6 +22,11 @@ vi.mock('node:fs', async (importOriginal) => {
   const fs = await importOriginal<typeof import('node:fs')>();
   return { ...fs, unlinkSync: vi.fn(fs.unlinkSync) };
 });
+vi.mock('./instance-lock-remover.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./instance-lock-remover.js')>();
+  const { fixtureLockRemover } = await import('../fixtures/instance-lock-remover.js');
+  return { ...actual, windowsInstanceLockRemover: fixtureLockRemover };
+});
 import { openSqliteStorage, inspectSqliteSnapshot } from '@control-plane/storage';
 import { seedDemoState } from './control-center.js';
 import { acquireInstanceLock, maintenanceMarker, readReleaseConfig } from './release-config.js';

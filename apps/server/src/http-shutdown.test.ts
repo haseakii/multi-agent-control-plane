@@ -1,13 +1,18 @@
-import { existsSync, mkdtempSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { connect, type Socket } from 'node:net';
 import { request, Agent } from 'node:http';
 import { once } from 'node:events';
 import { describe, expect, it } from 'vitest';
 import { openSqliteStorage } from '@control-plane/storage';
-import { acquireInstanceLock } from './release-config.js';
+import { acquireInstanceLock as acquireNativeInstanceLock } from './release-config.js';
+import { fixtureLockRemover } from '../fixtures/instance-lock-remover.js';
 import { buildServer } from './server.js';
 import { closeHttpServer, HttpDrainTimeoutError } from './http-shutdown.js';
+
+mkdirSync(resolve('.data'), { recursive: true });
+const acquireInstanceLock = (directory: string) =>
+  acquireNativeInstanceLock(directory, undefined, fixtureLockRemover);
 
 function deferred() {
   let resolve!: () => void;
