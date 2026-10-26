@@ -1,5 +1,4 @@
-import { spawn } from 'node:child_process';
-import { existsSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { join, isAbsolute } from 'node:path';
 import { z } from 'zod';
 import { assertNoPotentialSecrets } from '@control-plane/storage';
@@ -62,14 +61,11 @@ export function managedAgentRuntime(options: {
     runtimeEnvironment,
   });
   const file = join(options.directory, 'managed-agent.mjs');
-  const sibling = new URL('./agent-launcher.js', import.meta.url);
-  const moduleUrl = (
-    existsSync(sibling) ? sibling : new URL('../dist/agent-launcher.js', import.meta.url)
-  ).href;
-  if (!existsSync(new URL(moduleUrl))) throw new Error('Compiled ACP launcher unavailable.');
+  // Installation-owned launcher survives source execution and release replacement.
+  // Config is validated above; generated code imports only Node built-ins.
   writeFileSync(
     file,
-    `import { runManagedAgent } from ${JSON.stringify(moduleUrl)};\nrunManagedAgent(${JSON.stringify(config)});\n`,
+    `import { spawn } from 'node:child_process';\nimport { join } from 'node:path';\nconst config = ${JSON.stringify(config)};\n${launcherSource}`,
     { flag: 'wx', mode: 0o600 },
   );
   return {
@@ -79,8 +75,8 @@ export function managedAgentRuntime(options: {
   };
 }
 
-export function runManagedAgent(raw: unknown) {
-  const config = Config.parse(raw);
+// Fixed launcher body. No installed server modules or credentials are copied.
+const launcherSource = String.raw`
   const environment = {
     ...process.env,
     ...(process.env.CP_TERMINAL_AUTH === '1' ? {} : config.environment),
@@ -102,7 +98,7 @@ export function runManagedAgent(raw: unknown) {
           '/s',
           '/v:off',
           '/c',
-          `""%CP_AGENT_BATCH%" ${args.map((arg) => `"${arg}"`).join(' ')}"`,
+          '""%CP_AGENT_BATCH%" ' + args.map((arg) => '"' + arg + '"').join(' ') + '"' ,
         ]
       : args,
     {
@@ -121,4 +117,4 @@ export function runManagedAgent(raw: unknown) {
   });
   process.on('SIGINT', () => child.kill('SIGINT'));
   process.on('SIGTERM', () => child.kill('SIGTERM'));
-}
+`;

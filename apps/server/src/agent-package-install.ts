@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { InstallProcessError, runInstallProcess } from './agent-install-process.js';
-import { existsSync, lstatSync, mkdirSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, realpathSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { installedPackageEntries } from './agent-installed-package.js';
 import { verifyNpmPlatformPackages } from './agent-npm-integrity.js';
@@ -123,10 +123,12 @@ export function packagePlan(entry: CatalogEntry, platform: string, npmAvailable:
   };
 }
 
-export function npmRuntime(root: string) {
+export function npmRuntime(root: string, nodeExecutable = process.execPath) {
+  const nodeDirectory = dirname(realpathSync(nodeExecutable));
   const candidates = [
     join(root, 'runtime/npm/bin/npm-cli.js'),
-    join(process.execPath, '../node_modules/npm/bin/npm-cli.js'),
+    join(nodeDirectory, 'node_modules/npm/bin/npm-cli.js'),
+    join(nodeDirectory, '../lib/node_modules/npm/bin/npm-cli.js'),
   ];
   return candidates.find(existsSync);
 }

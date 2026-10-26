@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
@@ -231,7 +232,9 @@ export class AgentInstallationsService {
             directory,
             releaseRoot: this.options.releaseRoot,
             runtimeRoot: join(dirname(this.options.root), 'runtimes'),
-            nodeExecutable: join(dirname(this.options.root), 'runtime/node.exe'),
+            nodeExecutable: existsSync(join(dirname(this.options.root), 'runtime/node.exe'))
+              ? join(dirname(this.options.root), 'runtime/node.exe')
+              : process.execPath,
             network: this.options.network,
             signal,
             phase: (state, message) => {

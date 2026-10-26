@@ -90,7 +90,9 @@ it('B0 private backup preserves binding metadata, excludes external source, and 
     expect(restoredDb.repositories.tasks.list()).toEqual([]);
     expect(readdirSync(restored).sort()).toEqual(['RESTORE-INFO.txt', 'config.json', 'data']);
     const service = new LocalDirectoryBindings(restoredDb, [join(restored, 'data')]);
-    expect(() => service.inspect(actual)).toThrow(/Directory/);
+    expect(() => service.inspect(actual)).toThrow(
+      process.platform === 'win32' ? /Directory/ : /supports Windows local fixed disks only/,
+    );
   } finally {
     restoredDb.close();
   }
