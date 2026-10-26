@@ -295,6 +295,13 @@ export class LocalRunner implements Runner {
     this.attachOutput(record, child.stdout, 'process.stdout');
     this.attachOutput(record, child.stderr, 'process.stderr');
 
+    // A failed write calls its callback and also emits an error on stdin.
+    // Keep a listener for the full pipe lifetime, including cancellation/close.
+    child.stdin.on('error', (error: Error) => {
+      record.stdoutTransport.fail(error);
+      this.publish(record, { type: 'process.error', message: error.message });
+    });
+
     child.once('error', (error) => {
       record.stdoutTransport.fail(error);
       this.publish(record, {

@@ -10,9 +10,12 @@ vi.mock('node:fs', async (importOriginal) => {
 import {
   ReleaseConfigSchema,
   readReleaseConfig,
-  acquireInstanceLock,
+  acquireInstanceLock as acquireNativeInstanceLock,
   maintenanceMarker,
 } from './release-config.js';
+import { fixtureLockRemover } from '../fixtures/instance-lock-remover.js';
+const acquireInstanceLock = (directory: string, configFile?: string) =>
+  acquireNativeInstanceLock(directory, configFile, fixtureLockRemover);
 
 describe('release configuration and ownership', () => {
   it('anchors data to the config, validates strict config and only exposes loopback', () => {
