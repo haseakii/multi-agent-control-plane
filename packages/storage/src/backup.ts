@@ -42,7 +42,7 @@ export async function createConsistentSqliteSnapshot(
     sqlite?.close();
     const local = relative(parent, resolve(working));
     if (local.startsWith('sqlite-source-') && !local.includes(sep))
-      rmSync(working, { recursive: true, force: true });
+      rmSync(working, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 }
 

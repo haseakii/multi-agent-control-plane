@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
 import { existsSync } from 'node:fs';
+import { windowsSystemEnvironment } from './windows-system-environment.js';
 import type { Runner } from '@control-plane/runner';
 import type { TerminalAuthenticationHandler } from '@control-plane/acp-runtime';
 
@@ -59,6 +60,7 @@ export function windowsTerminalAuthentication(
       ],
       cwd: request.cwd,
       env: {
+        ...windowsSystemEnvironment(),
         CP_AUTH_ENTRY: entry,
         CP_AUTH_LOADER: loader ?? '',
         CP_AUTH_NODE: process.execPath,

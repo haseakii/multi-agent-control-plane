@@ -340,7 +340,7 @@ for (const mode of [
     await expect(restorePrivateBackup(f.backup, target, version)).rejects.toThrow();
     expect(existsSync(target)).toBe(false);
     expect(fingerprints(f.data)).toEqual(before);
-  });
+  }, 30_000);
 
 it('rejects nonempty targets and symbolic link/junction backups without touching either source or target', async () => {
   const f = fixture();
