@@ -45,7 +45,6 @@ const evidence = output + '-validation';
 fs.mkdirSync(evidence, { recursive: true });
 run('node_modules/vitest/vitest.mjs', [
   'run',
-  '--maxWorkers=4',
   '--reporter=json',
   '--outputFile=' + path.join(evidence, 'tests.json'),
 ]);
