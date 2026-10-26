@@ -4,10 +4,13 @@ import { AgentProgressRecorder } from './agent-progress.js';
 import { agentPermissionDecision } from './agent-permission-policy.js';
 import { LivePreviewService, LivePreviewInput } from './live-preview.js';
 import { taskResultSummary } from './task-result-summary.js';
+import { SessionSettingsService } from './session-settings.js';
+import { windowsTerminalAuthentication } from './terminal-authentication.js';
 import { mkdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { workspaceGuidance, LocalWorkspaceInventory } from './workspace-guidance.js';
+import { diagnoseTaskRecovery } from './task-recovery.js';
 import {
   LocalDirectoryBindings,
   type DirectoryInspectionOptions,
@@ -17,10 +20,12 @@ import * as acp from '@agentclientprotocol/sdk';
 import {
   AcpClientRuntime,
   AcpTurnFailure,
+  AcpSessionSettingsError,
   CapabilitySelector,
   InMemoryAgentRegistry,
   ProcessAgentRuntimeControl,
   type AcpRuntimeConnection,
+  type AgentEvent,
   type PermissionRequest,
   permissionIdentity,
   resolveNativeToolPermission,
@@ -55,6 +60,8 @@ import {
   ContextSearchQuerySchema,
   ProjectPolicySchema,
   ProjectPolicyInputSchema,
+  SessionSettingValuesSchema,
+  SessionSettingsSnapshotSchema,
 } from '@control-plane/core';
 import {
   ClientSubmitSchema,
@@ -88,7 +95,13 @@ import {
 } from '@control-plane/policy';
 import { LocalRunner, type ProcessHandle, type Runner } from '@control-plane/runner';
 import type { SqliteStorage } from '@control-plane/storage';
-import { SqliteContextSearch, isSearchableText, TEXT_INDEX_BYTES } from '@control-plane/storage';
+import {
+  SqliteContextSearch,
+  SqliteSessionSettingsRepository,
+  SqliteSessionPresetsRepository,
+  isSearchableText,
+  TEXT_INDEX_BYTES,
+} from '@control-plane/storage';
 import {
   ContextBuilder,
   TaskEngine,
@@ -110,6 +123,11 @@ import {
 } from '@control-plane/workspace';
 import { LocalAssignmentWorkspaceProvisioner } from './assignment-workspace-provisioner.js';
 import { AgentControlService } from './agent-control.js';
+import { NetworkSettingsService, applyNetworkEnvironment } from './network-settings.js';
+import { SqliteNetworkSettingsRepository } from '@control-plane/storage';
+import { SqliteInputAttachmentRepository } from '@control-plane/storage';
+import { InputAttachmentIdsSchema } from '@control-plane/core';
+import { InputAttachmentService } from './input-attachments.js';
 import { TaskRecords } from './task-records.js';
 import {
   TaskDraftInputSchema,
@@ -130,6 +148,20 @@ import {
 const terminal = new Set(['completed', 'failed', 'cancelled']);
 const now = () => new Date().toISOString();
 const id = (kind: string) => `${kind}-${randomUUID()}`;
+const canonicalSettings = (values: Record<string, string>) =>
+  Object.fromEntries(Object.entries(values).sort(([a], [b]) => a.localeCompare(b)));
+const settingsHash = (values?: Record<string, string>, presetId?: string) =>
+  createHash('sha256')
+    .update(
+      JSON.stringify(
+        presetId === undefined
+          ? values === undefined
+            ? null
+            : canonicalSettings(values)
+          : { sessionPresetId: presetId },
+      ),
+    )
+    .digest('hex');
 const messageCommitUncertainFailure = {
   code: 'MESSAGE_COMMIT_UNCERTAIN',
   message: 'Message submission could not be verified. Inspect saved messages before resuming.',
@@ -177,7 +209,10 @@ export type ControlPlaneRuntimeOptions = {
 
 /** Local V0 application composition. SQLite is durable; ACP sessions and grants are not task state. */
 export class ControlPlaneRuntime {
+  readonly inputAttachments: InputAttachmentService;
+  readonly network: NetworkSettingsService;
   readonly agentControl: AgentControlService;
+  readonly sessionSettings: SessionSettingsService;
   readonly taskEngine: TaskEngine;
   readonly approvals: ApprovalService;
   readonly artifacts: ArtifactStore;
@@ -235,9 +270,37 @@ export class ControlPlaneRuntime {
     );
     this.grants = new InMemoryFleetBridgeGrantStore({ ttlMs: this.executionTimeoutMs + 60_000 });
     this.storage.repositories.runners.upsert(this.runner.descriptor());
-    this.agentControl = new AgentControlService(
-      this.storage,
-      new ProcessAgentRuntimeControl(this.runner),
+    this.inputAttachments = new InputAttachmentService(
+      new SqliteInputAttachmentRepository(this.storage.sqlite),
+    );
+    this.network = new NetworkSettingsService(
+      new SqliteNetworkSettingsRepository(this.storage.sqlite),
+      () => this.storage.repositories.agentDefinitions.list(),
+    );
+    const runtimeControl = new ProcessAgentRuntimeControl(this.runner, {
+      prepareEnvironment: (agent) => this.network.environment(agent),
+      terminalAuthentication: windowsTerminalAuthentication(this.runner),
+    });
+    this.agentControl = new AgentControlService(this.storage, runtimeControl);
+    this.sessionSettings = new SessionSettingsService(
+      new SqliteSessionSettingsRepository(this.storage.sqlite),
+      {
+        agent: (agentId) => this.requireAgent(agentId),
+        readiness: (agentId) => this.agentControl.state(this.requireAgent(agentId).id).readiness,
+        networkFingerprint: (agentId) => this.network.effective(agentId).fingerprint,
+        cwd: (projectId) => {
+          if (projectId) {
+            const workspace = this.projectWorkspace(projectId);
+            this.directoryBindings.validateIdentity(workspace);
+            return workspace.rootPath;
+          }
+          const probe = join(this.workspaceRoot, '.session-settings-probe');
+          mkdirSync(probe, { recursive: true });
+          return probe;
+        },
+        inspect: (agent, cwd, values) => runtimeControl.inspectSessionSettings(agent, cwd, values),
+      },
+      { presets: new SqliteSessionPresetsRepository(this.storage.sqlite) },
     );
     this.taskEngine = new TaskEngine(this.storage.repositories);
     this.contextSearch = new SqliteContextSearch(this.storage.sqlite);
@@ -332,17 +395,20 @@ export class ControlPlaneRuntime {
       },
       new LocalGitReviewAdapter(),
       {
-        publish: async (input) =>
+        publish: async (input, beforeCommit) =>
           (
-            await this.artifacts.publish({
-              ...input,
-              mimeType: input.kind === 'diff' ? 'text/x-diff' : 'application/json',
-              content: new TextEncoder().encode(input.content),
-              links: [
-                { entityType: 'task', entityId: input.taskId },
-                { entityType: 'assignment', entityId: input.assignmentId },
-              ],
-            })
+            await this.artifacts.publish(
+              {
+                ...input,
+                mimeType: input.kind === 'diff' ? 'text/x-diff' : 'application/json',
+                content: new TextEncoder().encode(input.content),
+                links: [
+                  { entityType: 'task', entityId: input.taskId },
+                  { entityType: 'assignment', entityId: input.assignmentId },
+                ],
+              },
+              beforeCommit ? { beforeCommit } : {},
+            )
           ).artifact,
       },
       new PolicyGate(this.projectPolicy, this.approvals),
@@ -811,10 +877,13 @@ export class ControlPlaneRuntime {
     await this.workspaceProvisioner.validate(workspace);
     await this.workspaceProvisioner.validate(source);
   }
-  prepareWorkspaceReview(taskId: string) {
+  prepareWorkspaceReview(taskId: string, requireAccess: () => void = () => undefined) {
+    requireAccess();
     return this.reviewOperation(taskId, () =>
-      this.workspaceReviews.prepare(taskId, (workspace, source) =>
-        this.validateReviewWorkspaces(workspace, source),
+      this.workspaceReviews.prepare(
+        taskId,
+        (workspace, source) => this.validateReviewWorkspaces(workspace, source),
+        requireAccess,
       ),
     );
   }
@@ -1264,6 +1333,14 @@ export class ControlPlaneRuntime {
         objective: goal.objective,
         state: 'ready',
       });
+      this.inputAttachments.repository.bind(task.id, task.id, goal.attachmentIds ?? []);
+      this.sessionSettings.prepare(
+        task.id,
+        agent.id,
+        goal.sessionSettings,
+        undefined,
+        goal.sessionPresetId,
+      );
       const { assignment, attempt } = this.prepareExecution(task, agent, task.objective, {
         name: 'Boss',
       });
@@ -1305,7 +1382,16 @@ export class ControlPlaneRuntime {
       createHash('sha256')
         .update(JSON.stringify([clientId, request.projectId, request.idempotencyKey]))
         .digest('hex');
-    const requestHash = createHash('sha256').update(JSON.stringify(request)).digest('hex');
+    const requestHash = createHash('sha256')
+      .update(
+        JSON.stringify({
+          ...request,
+          ...(request.sessionSettings === undefined
+            ? {}
+            : { sessionSettings: canonicalSettings(request.sessionSettings) }),
+        }),
+      )
+      .digest('hex');
     const saved = this.storage.repositories.events.get(eventId);
     if (saved?.taskId) {
       if (saved.payload.requestHash !== requestHash)
@@ -1327,6 +1413,14 @@ export class ControlPlaneRuntime {
         objective: request.objective,
         state: 'ready',
       });
+      this.inputAttachments.repository.bind(task.id, task.id, request.attachmentIds ?? []);
+      this.sessionSettings.prepare(
+        task.id,
+        agent.id,
+        request.sessionSettings,
+        undefined,
+        request.sessionPresetId,
+      );
       const { assignment, attempt } = this.prepareExecution(task, agent, task.objective, {
         name: 'Collaborator',
       });
@@ -1366,10 +1460,85 @@ export class ControlPlaneRuntime {
   get taskRecords() {
     return new TaskRecords(this.storage.repositories);
   }
+  private inputAttachmentScope(task: Task) {
+    return this.inputAttachments.taskScope(
+      task,
+      (id) => this.getTask(id),
+      this.storage.repositories.events.listByProject(task.projectId, {
+        taskIds: [],
+        types: ['task.followup.created'],
+      }),
+    );
+  }
+
+  taskInputAttachments(taskId: string) {
+    const task = this.getTask(taskId);
+    return [
+      ...new Map(
+        this.inputAttachmentScope(task)
+          .flatMap((id) => this.inputAttachments.repository.forTask(id))
+          .map((item) => [item.id, item]),
+      ).values(),
+    ];
+  }
 
   projectEvents(projectId: string) {
     this.getProject(projectId);
     return this.storage.repositories.events.listByProject(projectId);
+  }
+
+  taskRecovery(taskId: string, observedAt = Date.now()) {
+    const task = this.getTask(taskId);
+    const tasks = this.storage.repositories.tasks
+      .list()
+      .filter((t) => t.projectId === task.projectId);
+    const tree = new Set([task.id]);
+    for (let size = -1; size !== tree.size; ) {
+      size = tree.size;
+      for (const t of tasks) if (t.parentTaskId && tree.has(t.parentTaskId)) tree.add(t.id);
+    }
+    const events = this.projectEvents(task.projectId);
+    let latestTaskId = task.id;
+    const visited = new Set<string>([task.id]);
+    for (;;) {
+      const next = events
+        .filter(
+          (e) => e.type === 'task.followup.created' && e.payload.sourceTaskId === latestTaskId,
+        )
+        .at(-1)?.taskId;
+      if (!next || visited.has(next) || !tasks.some((t) => t.id === next)) break;
+      visited.add(next);
+      latestTaskId = next;
+    }
+    const latestAttempt = this.storage.repositories.executionAttempts
+      .list()
+      .filter((a) => a.taskId === task.id)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.number - a.number)[0];
+    const pending = this.approvals
+      .listPending(task.projectId)
+      .filter((a) => a.taskId && tree.has(a.taskId));
+    const review = pending.filter((a) => a.action === 'git.merge').length;
+    const push = pending.filter((a) => a.action === 'git.push').length;
+    return {
+      latestTaskId,
+      diagnostic: diagnoseTaskRecovery({
+        // Network observations are separate from task-state/approval diagnosis.
+        task,
+        latestTaskId,
+        executionActive: this.taskExecutionActive(task.id),
+        ...(latestAttempt ? { latestAttempt } : {}),
+        pendingApprovalCount: pending.length,
+        pendingApprovals: { execution: pending.length - review - push, review, push },
+        events,
+        now: observedAt,
+      }),
+      network: this.network.diagnostic(
+        latestAttempt?.id,
+        latestAttempt
+          ? this.storage.repositories.assignments.get(latestAttempt.assignmentId)?.agentId
+          : undefined,
+      ),
+    };
   }
 
   createDraft(projectId: string, input: unknown) {
@@ -1399,6 +1568,7 @@ export class ControlPlaneRuntime {
         objective: draft.objective,
         state: 'draft',
       });
+      this.inputAttachments.repository.bind(task.id, task.id, draft.attachmentIds ?? []);
       if (eventId)
         this.storage.repositories.events.append(
           AuditEventSchema.parse({
@@ -1418,13 +1588,20 @@ export class ControlPlaneRuntime {
   startDraft(taskId: string, input: unknown) {
     this.assertAvailable();
     const common = ResumeTaskSchema.extend({
+      attachmentIds: InputAttachmentIdsSchema.optional(),
       ...TaskRecordConfirmationSchema.shape,
+      sessionSettings: SessionSettingValuesSchema.optional(),
+      sessionPresetId: z.string().uuid().optional(),
     });
     const choice = z
       .union([
         common.extend({ bossAgentId: AgentIdSchema }).strict(),
         common.extend({ mode: z.literal('direct'), agentId: AgentIdSchema }).strict(),
       ])
+      .refine(
+        (input) => input.sessionSettings === undefined || input.sessionPresetId === undefined,
+        'Choose session settings or a preset, not both.',
+      )
       .parse(input);
     return this.storage.repositories.transaction(() => {
       const view = this.taskRecords.confirm(taskId, choice.version);
@@ -1442,6 +1619,19 @@ export class ControlPlaneRuntime {
       this.directoryBindings.requireGoalConfirmation(workspace, choice.workspaceConfirmation);
       if (!direct) this.agentControl.selectBoss(project.id, agent.id);
       const task = this.taskEngine.transitionTask(taskId, 'ready');
+      this.inputAttachments.repository.bind(
+        task.id,
+        task.id,
+        choice.attachmentIds ?? this.inputAttachments.repository.forOwner(task.id).map((a) => a.id),
+        true,
+      );
+      this.sessionSettings.prepare(
+        task.id,
+        agent.id,
+        choice.sessionSettings,
+        undefined,
+        choice.sessionPresetId,
+      );
       const { assignment, attempt } = this.prepareExecution(task, agent, task.objective, {
         name: direct ? 'Collaborator' : 'Boss',
       });
@@ -1545,18 +1735,29 @@ export class ControlPlaneRuntime {
     if (
       !terminal.has(task.state) ||
       this.instructionQueue.list(task).some((i) => i.idempotencyKeyHash === keyHash)
-    )
-      return {
-        kind: 'instruction' as const,
-        ...this.submitTaskInstruction(
+    ) {
+      if (request.sessionSettings !== undefined || request.sessionPresetId !== undefined)
+        throw new TaskControlError(
+          409,
+          '运行中的补充要求沿用当前设置；请在本轮结束后选择下一轮设置。',
+        );
+      return this.storage.repositories.transaction(() => {
+        const result = this.submitTaskInstruction(
           taskId,
           {
             content: request.content,
             idempotencyKey: request.idempotencyKey,
           },
           clientId,
-        ),
-      };
+        );
+        this.inputAttachments.repository.bind(
+          taskId,
+          result.instruction.id,
+          request.attachmentIds ?? [],
+        );
+        return { kind: 'instruction' as const, ...result };
+      });
+    }
     return { kind: 'followup' as const, ...this.followUpTask(taskId, request, clientId) };
   }
 
@@ -1576,7 +1777,15 @@ export class ControlPlaneRuntime {
       const existing = events.find((e) => e.id === eventId);
       if (existing?.taskId) {
         const task = this.getTask(existing.taskId);
-        if (task.objective !== request.content)
+        if (
+          JSON.stringify(existing.payload.attachmentIds ?? []) !==
+            JSON.stringify(request.attachmentIds ?? []) ||
+          task.objective !== request.content ||
+          (existing.payload.settingsHash !== undefined &&
+            existing.payload.settingsHash !==
+              settingsHash(request.sessionSettings, request.sessionPresetId)) ||
+          (request.sessionPresetId !== undefined && existing.payload.settingsHash === undefined)
+        )
           throw new TaskControlError(409, '该发送标识已用于另一条追问。');
         return { task, reused: true };
       }
@@ -1643,6 +1852,7 @@ export class ControlPlaneRuntime {
           ),
         ].slice(0, 32),
       });
+      this.inputAttachments.repository.bind(task.id, task.id, request.attachmentIds ?? []);
       this.storage.repositories.events.append(
         AuditEventSchema.parse({
           id: eventId,
@@ -1652,9 +1862,21 @@ export class ControlPlaneRuntime {
           actor: clientId
             ? { type: 'agent', id: 'mcp-client:' + clientId }
             : { type: 'user', id: 'local-operator' },
-          payload: { sourceTaskId: previous.id, conversationRootTaskId: history[0]!.id },
+          payload: {
+            sourceTaskId: previous.id,
+            conversationRootTaskId: history[0]!.id,
+            ...(request.attachmentIds?.length ? { attachmentIds: request.attachmentIds } : {}),
+            settingsHash: settingsHash(request.sessionSettings, request.sessionPresetId),
+          },
           occurredAt: now(),
         }),
+      );
+      this.sessionSettings.prepare(
+        task.id,
+        agent.id,
+        request.sessionSettings,
+        previous.id,
+        request.sessionPresetId,
       );
       const { assignment, attempt } = this.prepareExecution(
         task,
@@ -1858,6 +2080,7 @@ export class ControlPlaneRuntime {
       throw new TaskControlError(409, 'Task already has an execution or is not ready.');
     // Assignment, attempt, and their audit records must commit together.
     return this.storage.repositories.transaction(() => {
+      this.sessionSettings.prepare(task.id, agent.id);
       const assignment = this.taskEngine.createAssignment({
         id: id('assignment'),
         taskId: task.id,
@@ -2070,10 +2293,25 @@ export class ControlPlaneRuntime {
         },
         task.id,
       );
-      const environment = Object.fromEntries(
-        (agent.runtime.environmentAllowlist ?? []).flatMap((key) =>
-          process.env[key] === undefined ? [] : [[key, process.env[key]!]],
+      stage = 'network_prepare';
+      const effectiveNetwork = this.network.effective(agent.id);
+      const networkObservation = {
+        attemptId: attempt.id,
+        taskId: task.id,
+        agentId: agent.id,
+        effective: effectiveNetwork,
+        observedAt: now(),
+        state: 'prepared' as const,
+        trafficVerified: false as const,
+      };
+      this.network.repository.putAttempt(networkObservation);
+      const environment = applyNetworkEnvironment(
+        Object.fromEntries(
+          (agent.runtime.environmentAllowlist ?? []).flatMap((key) =>
+            process.env[key] === undefined ? [] : [[key, process.env[key]!]],
+          ),
         ),
+        effectiveNetwork,
       );
       stage = 'process_spawn';
       const handle = await this.runner.spawn({
@@ -2086,6 +2324,17 @@ export class ControlPlaneRuntime {
         signal: execution.abort.signal,
       });
       execution.handle = handle;
+      this.network.repository.putAttempt({
+        ...networkObservation,
+        state: 'started',
+        observedAt: now(),
+      });
+      this.event(
+        task.projectId,
+        'execution.network.started',
+        { attemptId: attempt.id, effective: effectiveNetwork, trafficVerified: false },
+        task.id,
+      );
       const transport = this.runner.transport(handle);
       const scopes = agent.controlBridge.scopes.filter(
         (scope) => boss || scope !== 'boss.orchestration',
@@ -2105,6 +2354,7 @@ export class ControlPlaneRuntime {
       });
       stage = 'acp_initialize';
       const connection = await new AcpClientRuntime({
+        eventSink: (event) => this.observeSessionSettings(execution, event),
         permissionTtlMs: this.permissionTtlMs,
         permissionBroker: { decide: (request) => this.permission(execution, request) },
         permissionResolver: (request) =>
@@ -2209,6 +2459,56 @@ export class ControlPlaneRuntime {
         protocol: 'acp',
         sessionId: session.sessionId,
       });
+      stage = 'session_settings';
+      this.sessionSettings.prepare(task.id, agent.id);
+      const settingsRequest = this.sessionSettings.repository.getTask(task.id)!;
+      if (settingsRequest.agentId !== agent.id) throw new AcpSessionSettingsError('invalid-values');
+      try {
+        const confirmed = await connection.applySessionSettings(
+          session.sessionId,
+          settingsRequest.requested,
+        );
+        this.sessionSettings.repository.putTask({
+          ...settingsRequest,
+          state: 'applied',
+          confirmed,
+          attemptId: attempt.id,
+          error: undefined,
+        });
+        this.event(
+          task.projectId,
+          'execution.settings.applied',
+          {
+            attemptId: attempt.id,
+            agentId: agent.id,
+            requested: settingsRequest.requested,
+            confirmed,
+          },
+          task.id,
+        );
+      } catch (error) {
+        const message =
+          error instanceof AcpSessionSettingsError
+            ? error.message
+            : 'Agent could not confirm the requested session settings. No prompt was sent.';
+        this.sessionSettings.repository.putTask({
+          ...settingsRequest,
+          state: 'failed',
+          attemptId: attempt.id,
+          error: message,
+          confirmed:
+            error instanceof AcpSessionSettingsError
+              ? error.snapshot
+              : connection.getSessionSettings(session.sessionId),
+        });
+        this.event(
+          task.projectId,
+          'execution.settings.failed',
+          { attemptId: attempt.id, agentId: agent.id, error: message },
+          task.id,
+        );
+        throw error;
+      }
       this.event(
         task.projectId,
         'execution.boundary',
@@ -2397,17 +2697,35 @@ export class ControlPlaneRuntime {
       // Never persist arbitrary exception strings: transport failures may include credentials.
       const current = this.storage.repositories.executionAttempts.get(attempt.id);
       if (!this.closing && current && ['running', 'waiting'].includes(current.state)) {
+        if (error instanceof AcpSessionSettingsError) {
+          const settings = this.sessionSettings.repository.getTask(task.id);
+          if (settings)
+            this.sessionSettings.repository.putTask({
+              ...settings,
+              state: 'failed',
+              attemptId: attempt.id,
+              error: error.message,
+              confirmed: error.snapshot,
+            });
+          stage = 'session_settings';
+        }
         const failure =
           execution.abort.signal.reason instanceof MessageCommitUncertainError
             ? messageCommitUncertainFailure
             : error instanceof AcpTurnFailure
               ? error.failure
-              : {
-                  code: 'EXECUTION_FAILED',
-                  message:
-                    'Agent execution failed. Inspect runtime and authorization readiness before retrying.',
-                  retryable: true,
-                };
+              : error instanceof AcpSessionSettingsError
+                ? {
+                    code: 'SESSION_SETTINGS_' + error.code.toUpperCase().replaceAll('-', '_'),
+                    message: error.message,
+                    retryable: true,
+                  }
+                : {
+                    code: 'EXECUTION_FAILED',
+                    message:
+                      'Agent execution failed. Inspect runtime and authorization readiness before retrying.',
+                    retryable: true,
+                  };
         this.event(
           task.projectId,
           'execution.failed',
@@ -2597,6 +2915,23 @@ export class ControlPlaneRuntime {
   private async prompt(execution: ActiveExecution, text: string): Promise<string> {
     let output = '';
     const task = this.getTask(execution.assignment.taskId);
+    const binding = this.storage.repositories.assignmentWorkspaces.get(execution.assignment.id);
+    const workspace = binding && this.storage.repositories.workspaces.get(binding.workspaceId);
+    if (!workspace) throw new Error('Attachment workspace is unavailable.');
+    const inputTasks = this.inputAttachmentScope(task);
+    const attachments = await this.inputAttachments.prepare(inputTasks, workspace.rootPath);
+    if (attachments.content.length)
+      this.event(
+        task.projectId,
+        'execution.inputs.prepared',
+        {
+          attemptId: execution.attempt.id,
+          sourceTaskIds: inputTasks,
+          imageCount: attachments.content.filter((a) => a.type === 'image').length,
+          fileCount: attachments.content.filter((a) => a.type === 'resource_link').length,
+        },
+        task.id,
+      );
     const progress = new AgentProgressRecorder(
       {
         turnId: id('turn'),
@@ -2607,7 +2942,16 @@ export class ControlPlaneRuntime {
     );
     let completed = false;
     try {
-      for await (const event of execution.connection!.prompt(execution.sessionId!, text)) {
+      for await (const event of execution.connection!.prompt(
+        execution.sessionId!,
+        text + attachments.text,
+        attachments.content,
+      )) {
+        if (event.type === 'status' && event.updateType === 'session_settings_invalid')
+          throw new AcpSessionSettingsError(
+            'invalid-advertisement',
+            this.sessionSettings.repository.getTask(task.id)?.confirmed,
+          );
         if (event.type === 'text_delta') {
           output += event.text;
           if (Buffer.byteLength(output) > 10 * 1024 * 1024)
@@ -2630,6 +2974,41 @@ export class ControlPlaneRuntime {
       execution.transcripts.push({ output, completed, progress });
       progress.text(output, completed ? 'complete' : 'interrupted');
     }
+  }
+
+  /** Notifications can arrive between prompts; durable confirmation is not tied to a prompt queue. */
+  private observeSessionSettings(execution: ActiveExecution, event: AgentEvent): void {
+    if (
+      event.type !== 'status' ||
+      !['config_option_update', 'current_model_update', 'session_settings_invalid'].includes(
+        event.updateType,
+      ) ||
+      event.sessionId !== execution.sessionId ||
+      this.closing ||
+      execution.abort.signal.aborted ||
+      this.active.get(execution.assignment.taskId) !== execution
+    )
+      return;
+    const owner = this.storage.repositories.assignments.get(execution.assignment.id);
+    if (!owner || owner.attempt !== execution.attempt.number) return;
+    const task = this.getTask(execution.assignment.taskId);
+    const stored = this.sessionSettings.repository.getTask(task.id);
+    if (!stored || stored.attemptId !== execution.attempt.id || stored.state !== 'applied') return;
+    if (event.updateType === 'session_settings_invalid') {
+      const error = new AcpSessionSettingsError('invalid-advertisement', stored.confirmed);
+      this.sessionSettings.repository.putTask({ ...stored, state: 'failed', error: error.message });
+      if (!terminal.has(task.state)) execution.abort.abort(error);
+      return;
+    }
+    const confirmed = SessionSettingsSnapshotSchema.parse(event.payload);
+    if (JSON.stringify(stored.confirmed) === JSON.stringify(confirmed)) return;
+    this.sessionSettings.repository.putTask({ ...stored, confirmed });
+    this.event(
+      task.projectId,
+      'execution.settings.updated',
+      { attemptId: execution.attempt.id, agentId: owner.agentId, confirmed },
+      task.id,
+    );
   }
 
   private async permission(execution: ActiveExecution, request: PermissionRequest) {

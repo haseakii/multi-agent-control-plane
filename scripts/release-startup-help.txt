@@ -2,3 +2,9 @@
 CP_RUNTIME_MISSING 对应 runtime/node.exe；CP_ENTRY_MISSING 对应 apps/server/dist/release-main.js。
 请重新复制完整候选包到新的可写私有目录，不要只复制 start.cmd。无需安装系统 Node、IDE 或 pnpm。
 原数据和旧包请保留；本程序不自动安装、下载或删除文件。
+
+如果出现 Access is denied，或 CP_LAUNCH_FAILED：
+请在完整解压目录打开 PowerShell，先执行 .\runtime\node.exe --version。
+若能输出版本，再执行 .\runtime\node.exe .\launcher\control-plane.mjs open-package --release "$PWD"，保留完整输出及当前目录路径。
+若提示 Unexpected release file: data/...，该目录已包含运行数据。保留整个原目录，从原 ZIP 完整解压到一个新文件夹后再安装，不要删除 data。
+若目标安装目录有文件但无完整安装记录，可用 打开工作台.cmd --directory "新的空安装目录" 明确选择其他位置；原目录继续保留。

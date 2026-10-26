@@ -17,6 +17,9 @@ import { readReleaseWorkbench } from './release-workbench.js';
 import { readClientAccessFile } from './client-gateway.js';
 import { createInstanceControl, stopInstance } from './instance-control.js';
 import { warmStartupAgents } from './startup-agents.js';
+import { deploymentContext, waitForDeployment } from './deployment-context.js';
+import { createLocalIntegrations } from './local-integrations.js';
+import { preferBundledRuntime } from './bundled-runtime.js';
 
 const bundleRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 async function startRelease(args: string[]) {
@@ -35,6 +38,8 @@ async function startRelease(args: string[]) {
       throw new Error('Usage: start.cmd [--config ABSOLUTE_CONFIG_PATH]');
     const configPath = args[1] ?? join(bundleRoot, 'config.json');
     const config = readReleaseConfig(configPath);
+    preferBundledRuntime(bundleRoot);
+    const deployment = deploymentContext(process.env.CONTROL_PLANE_DEPLOYMENT_CONTEXT);
     startupPort = config.port;
     startupStage = 'assets';
     const webRoot = join(bundleRoot, 'apps/web/dist');
@@ -65,24 +70,38 @@ async function startRelease(args: string[]) {
     });
     const activeRuntime = runtime;
     const activeStorage = storage;
+    const readLegacy = config.clientAccessFile
+      ? readClientAccessFile(config.clientAccessFile)
+      : () => ({ version: 1, clients: [] });
+    const agentCatalog = new AgentCatalogService(
+      new FileCatalogCache(join(config.dataDir, 'cache/agent-catalog.json')),
+      runtime.network.fetch,
+    );
+    const local = createLocalIntegrations({
+      storage,
+      runtime,
+      catalog: agentCatalog,
+      dataDir: config.dataDir,
+      releaseRoot: bundleRoot,
+      baseUrl: `http://${config.host}:${config.port}`,
+      readLegacy,
+      ...(deployment
+        ? { installationFile: join(dirname(deployment.operationFile), 'installation.json') }
+        : {}),
+    });
+    const { externalClients, agentMembers, agentInstallations } = local;
     app = buildServer({
+      agentMembers,
+      externalClients,
+      agentInstallations,
+      ...(deployment ? { deployment } : {}),
       fastify: { logger: { level: config.logLevel, stream: log } },
       webRoot,
       agentControl: runtime.agentControl,
-      agentCatalog: new AgentCatalogService(
-        new FileCatalogCache(join(config.dataDir, 'cache/agent-catalog.json')),
-      ),
+      agentCatalog,
       taskControl: runtime,
       fleetGateway: runtime.fleetGateway,
-      ...(config.clientAccessFile
-        ? {
-            clientGateway: {
-              storage,
-              runtime,
-              readAccess: readClientAccessFile(config.clientAccessFile),
-            },
-          }
-        : {}),
+      clientGateway: { storage, runtime, readAccess: externalClients.readAccess },
       controlCenter: (options) =>
         readControlCenterSnapshot(
           activeStorage,
@@ -108,6 +127,7 @@ async function startRelease(args: string[]) {
     });
     startupStage = 'listen';
     const address = await app.listen({ host: config.host, port: config.port });
+    local.setBaseUrl(address);
     runtime.setBridgeBaseUrl(address);
     const health = (await fetch(`${address}/health`).then((response) => response.json())) as {
       status?: string;
@@ -131,19 +151,23 @@ async function startRelease(args: string[]) {
     process.on('SIGTERM', stop);
     closeControl = await createInstanceControl(config.dataDir, stop);
     // Serve history and register normal shutdown before any network-dependent authentication.
-    warmup = warmStartupAgents(config.startupAgents, activeRuntime.agentControl, {
-      signal: warmupStop.signal,
-      report: (agentId, state) =>
-        console.log(
-          `${agentId}: ${
-            state === 'ready'
-              ? '已有登录就绪'
-              : state === 'retrying'
-                ? '登录服务暂时未响应，正在自动重试一次'
-                : '启动检查未完成，请在协作成员中查看原因'
-          }`,
-        ),
-    });
+    warmup = waitForDeployment(deployment, warmupStop.signal).then(() =>
+      warmupStop.signal.aborted
+        ? undefined
+        : warmStartupAgents(config.startupAgents, activeRuntime.agentControl, {
+            signal: warmupStop.signal,
+            report: (agentId, state) =>
+              console.log(
+                `${agentId}: ${
+                  state === 'ready'
+                    ? '已有登录就绪'
+                    : state === 'retrying'
+                      ? '登录服务暂时未响应，正在自动重试一次'
+                      : '启动检查未完成，请在协作成员中查看原因'
+                }`,
+              ),
+          }),
+    );
   } catch (error) {
     const portConflict = startupFailureDiagnostic(error, startupPort, startupStage);
     if (portConflict) console.error(portConflict);

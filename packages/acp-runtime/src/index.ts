@@ -1,4 +1,5 @@
 export * from './process-control.js';
+export * from './terminal-auth.js';
 export * from './capability-selector.js';
 export * from './permission.js';
 export * from './permission-review.js';
@@ -6,5 +7,6 @@ export * from './native-permission-resolver.js';
 export * from './registry.js';
 export * from './runtime.js';
 export * from './types.js';
+export * from './session-settings.js';
 export * from './usage.js';
 export * from './turn-failure.js';

@@ -4,6 +4,8 @@
 
 ## 直接使用
 
+启动、升级、恢复现统一到固定安装入口，日常步骤见[简化交付流程](simple-delivery.md)。后续升级只选择新版目录，无需再替换多个日期路径或编辑 Codex 配置。
+
 1. 直接在 Codex 发起协作任务，`local_collaboration` 在首次调用时自动启动后台引擎。网页入口仍为 `http://127.0.0.1:8057/`；双击 `启动工作台.cmd` 也会启动或复用后台实例并打开网页，窗口可关闭。
 2. 在首页选择“直接交给成员”或“由负责人安排协作”，确认执行成员与工作目录，再输入实际目标。执行方式和成员选择会保留；不会在成员不可用时悄悄替换成另一位。“工作目录”可选择已有项目、关联本机目录或新建空目录。
 3. 点击“发送”或按 Ctrl+Enter，Enter 换行。执行中可在同一输入框补充要求，并通过右侧“过程 / 文件改动 / 页面预览”查看执行情况。顶部“使用说明”可随时打开流程指引，并直接进入成员管理或当前任务过程。
@@ -28,17 +30,15 @@
 
 ## 当前文件
 
-- 标准 release：以根目录 `启动工作台.cmd` 和个人启动器当前引用为准；不要直接运行历史验证目录中的旧包。
-- 个人启动器：`.run/hermes-usable-20261023-r1/start-daily.mjs`
-- 配置：`.run/hermes-usable-20261023-r1/daily-config.json`
-- 数据：`.run/antigravity-native-20261023/restored-daily-r7/data/control-plane.sqlite`
-- 产物与工作区：同级 `artifacts`、`workspaces`
-- 日志：`.run/antigravity-native-20261023/restored-daily-r7/data/logs/server.log`
+- 当前版本选择：`.data/control-plane/installation.json`；启动、MCP 和升级共用。`current.releaseDir` 指向完整版本，`current.configFile` 指向当前数据配置。
+- 固定启动器：`.data/control-plane/launcher/control-plane.mjs`。原个人启动器保留为这个入口的兼容转发。
+- 数据、产物与日志：按当前配置的 `dataDir` 解析，升级前的原目录保留；已有工作区仍引用原路径。
+- 启动及升级诊断：`.data/control-plane/logs`、`history`；一致备份在 `backups`，新数据代次在 `generations`。
 - MCP 客户端权限：`.run/hermes-usable-20261023-r1/client-access.json`
 - 本机 MCP 连接文件：`.run/hermes-usable-20261023-r1/mcp-connection.json`（含本地令牌，不提交或公开）
 - 验证记录：`docs/reviews/hermes-usable-validation-20261023.md`
 
-个人启动入口适用于当前机器；标准包本身仍用随包 `start.cmd --config ABSOLUTE_CONFIG_PATH`。移动包不等于迁移外部 Agent 安装及授权。数据锁、备份、恢复均复用标准 release，不再另造一套 Hermes 数据维护实现。
+标准包日常使用“打开工作台”，高级维护仍支持 `start.cmd --config ABSOLUTE_CONFIG_PATH`。移动包不等于迁移外部 Agent 安装及授权。统一管理器编排已有标准 release 的数据锁、备份与恢复，不另造数据库维护实现。
 
 ## 备份和恢复
 

@@ -1,7 +1,109 @@
-import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import {
+  index,
+  blob,
+  integer,
+  primaryKey,
+  sqliteTable,
+  text,
+  uniqueIndex,
+} from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
 
 const payload = () => text('payload').notNull();
+
+export const inputAttachments = sqliteTable('input_attachments', {
+  id: text('id').primaryKey().notNull(),
+  payload: payload(),
+  content: blob('content', { mode: 'buffer' }).notNull(),
+});
+export const inputAttachmentMessages = sqliteTable(
+  'input_attachment_messages',
+  {
+    ownerId: text('owner_id').primaryKey().notNull(),
+    taskId: text('task_id')
+      .notNull()
+      .references(() => tasks.id, { onDelete: 'cascade' }),
+    idsJson: text('ids_json').notNull(),
+  },
+  (table) => [index('input_attachment_messages_task').on(table.taskId)],
+);
+
+export const networkSettings = sqliteTable('network_settings', {
+  id: text('id').primaryKey().notNull(),
+  revision: integer('revision').notNull(),
+  globalJson: text('global_json').notNull(),
+  updatedAt: text('updated_at').notNull(),
+});
+export const agentNetworkSettings = sqliteTable('agent_network_settings', {
+  agentId: text('agent_id')
+    .primaryKey()
+    .notNull()
+    .references(() => agentDefinitions.id, { onDelete: 'cascade' }),
+  payload: payload(),
+});
+export const executionNetworkObservations = sqliteTable(
+  'execution_network_observations',
+  {
+    attemptId: text('attempt_id')
+      .primaryKey()
+      .notNull()
+      .references(() => executionAttempts.id),
+    taskId: text('task_id')
+      .notNull()
+      .references(() => tasks.id),
+    payload: payload(),
+  },
+  (table) => [index('execution_network_task_idx').on(table.taskId)],
+);
+
+export const agentCatalogSources = sqliteTable(
+  'agent_catalog_sources',
+  {
+    agentId: text('agent_id')
+      .primaryKey()
+      .notNull()
+      .references(() => agentDefinitions.id, { onDelete: 'cascade' }),
+    entryId: text('entry_id').notNull(),
+    revision: integer('revision').notNull(),
+    payload: payload(),
+  },
+  (table) => [index('agent_catalog_sources_entry_idx').on(table.entryId)],
+);
+
+export const agentSessionPresets = sqliteTable(
+  'agent_session_presets',
+  {
+    agentId: text('agent_id').notNull(),
+    id: text('id').notNull(),
+    name: text('name').notNull(),
+    revision: integer('revision').notNull(),
+    archived: integer('archived').notNull(),
+    payload: payload(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.agentId, table.id] }),
+    uniqueIndex('agent_session_presets_active_name_idx')
+      .on(table.agentId, sql`${table.name} COLLATE NOCASE`)
+      .where(sql`${table.archived} = 0`),
+  ],
+);
+
+export const agentSessionDefaults = sqliteTable('agent_session_defaults', {
+  agentId: text('agent_id').primaryKey().notNull(),
+  revision: integer('revision').notNull(),
+  valuesJson: text('values_json').notNull(),
+});
+
+export const taskSessionSettings = sqliteTable(
+  'task_session_settings',
+  {
+    taskId: text('task_id').primaryKey().notNull(),
+    agentId: text('agent_id').notNull(),
+    state: text('state').notNull(),
+    payload: payload(),
+  },
+  (table) => [index('task_session_settings_agent_idx').on(table.agentId)],
+);
 
 export const workspaceCleanups = sqliteTable(
   'workspace_cleanups',
@@ -392,3 +494,15 @@ export const workspaceReviews = sqliteTable(
   },
   (table) => [index('workspace_reviews_task_idx').on(table.taskId)],
 );
+export const externalClients = sqliteTable('external_clients', {
+  id: text('id').primaryKey().notNull(),
+  payload: payload(),
+});
+export const agentInstallations = sqliteTable('agent_installations', {
+  id: text('id').primaryKey().notNull(),
+  payload: payload(),
+});
+export const agentMemberOrigins = sqliteTable('agent_member_origins', {
+  id: text('id').primaryKey().notNull(),
+  payload: payload(),
+});

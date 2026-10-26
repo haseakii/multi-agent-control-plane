@@ -63,6 +63,26 @@ export const AgentDefinition = z
     { message: '关闭协作接口时不能保留协作权限。', path: ['controlBridge'] },
   );
 export type AgentDefinitionData = z.infer<typeof AgentDefinition>;
+export const AgentRegistrationSource = z
+  .object({
+    status: z.enum(['linked', 'entry-changed', 'unavailable']),
+    record: z
+      .object({
+        agentId: z.string(),
+        entryId: z.string(),
+        entryName: z.string(),
+        catalogVersion: z.string(),
+        catalogUrl: z.string().url(),
+        revision: z.number().int().positive(),
+        runtimeFingerprint: z.string(),
+        createdAt: z.string(),
+        updatedAt: z.string(),
+      })
+      .nullable(),
+  })
+  .refine((value) =>
+    value.status === 'unavailable' ? value.record === null : value.record !== null,
+  );
 export const AgentConnection = z.object({
   definitionHash: z
     .string()
@@ -77,6 +97,7 @@ export const AgentConnection = z.object({
   authMethods: z.array(z.object({ id: z.string(), name: z.string(), type: z.string().optional() })),
   error: z.string().optional(),
   negotiation: z.object({ agentInfo: z.unknown().optional() }).optional(),
+  registrationSource: AgentRegistrationSource.optional(),
   localEntry: z
     .object({
       offlineChecksPassed: z.boolean(),

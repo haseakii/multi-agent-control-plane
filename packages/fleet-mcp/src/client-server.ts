@@ -1,8 +1,19 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { clientToolDefinitions, type ClientToolName } from './client-contract.js';
+import { ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { z } from 'zod';
+import {
+  clientToolDefinitions,
+  ClientMcpSubmitSchema,
+  ClientMcpContinueSchema,
+  type ClientToolName,
+  ClientToolNameSchema,
+} from './client-contract.js';
+import { loopbackFetch } from './loopback-fetch.js';
+import { prepareClientAttachments } from './client-input-attachments.js';
 
 export interface ClientToolTransport {
   invoke(toolName: ClientToolName, input: unknown): Promise<Record<string, unknown>>;
+  getTools?(): Promise<ClientToolName[]>;
 }
 export function createClientMcpServer(transport: ClientToolTransport) {
   const server = new McpServer(
@@ -13,11 +24,21 @@ export function createClientMcpServer(transport: ClientToolTransport) {
     },
   );
   for (const tool of clientToolDefinitions) {
+    const schema =
+      tool.name === 'collaboration_submit_task'
+        ? ClientMcpSubmitSchema
+        : tool.name === 'collaboration_continue_task'
+          ? ClientMcpContinueSchema
+          : tool.schema;
     server.registerTool(
       tool.name,
       {
-        description: tool.description,
-        inputSchema: tool.schema,
+        description:
+          tool.description +
+          (tool.name === 'collaboration_submit_task' || tool.name === 'collaboration_continue_task'
+            ? ' Optional attachments accepts explicitly user-authorized absolute local file paths; the stdio client uploads actual bytes without placing base64 or local paths in task payloads. Existing inputs are inherited on followup; omit attachments to retain them. Do not search for credentials or attach unrequested files.'
+            : ''),
+        inputSchema: schema,
         annotations: {
           readOnlyHint: tool.readOnly,
           destructiveHint: tool.name === 'collaboration_cancel_task',
@@ -26,7 +47,7 @@ export function createClientMcpServer(transport: ClientToolTransport) {
       },
       async (input: unknown) => {
         try {
-          const result = await transport.invoke(tool.name, tool.schema.parse(input));
+          const result = await transport.invoke(tool.name, schema.parse(input));
           return {
             content: [{ type: 'text' as const, text: JSON.stringify(result) }],
             structuredContent: result,
@@ -41,6 +62,39 @@ export function createClientMcpServer(transport: ClientToolTransport) {
       },
     );
   }
+  // Tool visibility follows live grants; the gateway still authorizes every call.
+  server.server.setRequestHandler(ListToolsRequestSchema, async () => {
+    const allowed = transport.getTools
+      ? await transport.getTools()
+      : clientToolDefinitions.map((tool) => tool.name);
+    return {
+      tools: clientToolDefinitions
+        .filter((tool) => allowed.includes(tool.name))
+        .map((tool) => {
+          const schema =
+            tool.name === 'collaboration_submit_task'
+              ? ClientMcpSubmitSchema
+              : tool.name === 'collaboration_continue_task'
+                ? ClientMcpContinueSchema
+                : tool.schema;
+          return {
+            name: tool.name,
+            description:
+              tool.description +
+              (tool.name === 'collaboration_submit_task' ||
+              tool.name === 'collaboration_continue_task'
+                ? ' Optional attachments accepts explicitly user-authorized absolute local file paths; prior attachments are retained on followup.'
+                : ''),
+            inputSchema: { ...z.toJSONSchema(schema, { io: 'input' }), type: 'object' as const },
+            annotations: {
+              readOnlyHint: tool.readOnly,
+              destructiveHint: tool.name === 'collaboration_cancel_task',
+              openWorldHint: !tool.readOnly,
+            },
+          };
+        }),
+    };
+  });
   return server;
 }
 export class ClientTransportError extends Error {}
@@ -58,15 +112,53 @@ export function createClientHttpTransport(baseUrl: string, token: string): Clien
     throw new Error('Client bridge must use a plain loopback HTTP origin.');
   if (!/^[a-f0-9]{64}$/.test(token)) throw new Error('Invalid local client credential.');
   return {
+    async getTools() {
+      const response = await loopbackFetch(new URL('/internal/client/capabilities', url), {
+        redirect: 'error',
+        signal: AbortSignal.timeout(15000),
+        headers: { authorization: `Bearer ${token}` },
+      });
+      const data = (await response.json()) as { tools?: unknown; error?: string };
+      if (!response.ok)
+        throw new ClientTransportError(data.error ?? 'Client authorization is unavailable.');
+      return z.array(ClientToolNameSchema).max(clientToolDefinitions.length).parse(data.tools);
+    },
     async invoke(toolName, input) {
+      let prepared: unknown;
+      try {
+        prepared = await prepareClientAttachments(toolName, input, async (query, bytes) => {
+          const response = await loopbackFetch(
+            new URL('/internal/client/input-attachments?' + query, url),
+            {
+              method: 'POST',
+              signal: AbortSignal.timeout(45_000),
+              headers: {
+                authorization: `Bearer ${token}`,
+                'content-type': 'application/octet-stream',
+              },
+              body: bytes,
+            },
+          );
+          const result = (await response.json()) as { attachment?: unknown; error?: string };
+          if (!response.ok || !result.attachment)
+            throw Error(result.error ?? 'Attachment upload failed.');
+          return result.attachment;
+        });
+      } catch (error) {
+        throw new ClientTransportError(
+          error instanceof Error
+            ? error.message
+            : 'Attachment could not be prepared. Task was not sent; retain the same idempotency key for the same files.',
+        );
+      }
       let response: Response;
       try {
-        response = await fetch(new URL('/internal/client/tool', url), {
+        response = await loopbackFetch(new URL('/internal/client/tool', url), {
           method: 'POST',
           redirect: 'error',
           signal: AbortSignal.timeout(45_000),
           headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-          body: JSON.stringify({ toolName, input }),
+          body: JSON.stringify({ toolName, input: prepared }),
         });
       } catch {
         throw new ClientTransportError(

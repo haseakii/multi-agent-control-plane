@@ -9,6 +9,7 @@ import { agentActivity } from './agent-activity';
 import { attemptNotices, executionEnded, toolPresentation } from './activity-presentation';
 import { failureSummary } from './failure-presentation';
 import { selectableAgents, type ExecutionMode } from './agent-selection';
+import { InputAttachment, attachmentText, type InputAttachmentData } from './input-attachments';
 
 const Task = z.object({
   id: z.string(),
@@ -24,6 +25,11 @@ const Task = z.object({
   updatedAt: z.string(),
 });
 export const Snapshot = z.object({
+  inputAttachments: z
+    .array(
+      z.object({ taskId: z.string(), ownerId: z.string(), attachments: z.array(InputAttachment) }),
+    )
+    .default([]),
   generatedAt: z.string(),
   timelineScope: z.string().nullable().optional(),
   projects: z.array(
@@ -246,10 +252,12 @@ export const sendChat = (
   content: string,
   idempotencyKey: string,
   workspaceConfirmation?: WorkspaceConfirmation,
+  sessionSettings?: Record<string, string>,
+  attachmentIds?: string[],
 ) =>
   postJSON(
     `/api/tasks/${encodeURIComponent(id)}/chat`,
-    { content, idempotencyKey, workspaceConfirmation },
+    { content, idempotencyKey, workspaceConfirmation, sessionSettings, attachmentIds },
     z.discriminatedUnion('kind', [
       z.object({ kind: z.literal('instruction'), instruction: Instruction }),
       z.object({ kind: z.literal('followup'), task: Task }),
@@ -423,6 +431,7 @@ export function conversationMessages(
         snapshot?.executionAttempts
           .filter((a) => a.taskId === task.id)
           .sort((a, b) => b.number - a.number)[0],
+        snapshot?.inputAttachments.find((item) => item.ownerId === task.id)?.attachments,
       ),
       ...instructions
         .filter((i) => i.taskId === task.id)
@@ -431,7 +440,11 @@ export function conversationMessages(
             id: i.id,
             role: 'user',
             createdAt: Date.parse(i.createdAt),
-            text: i.content,
+            text:
+              i.content +
+              attachmentText(
+                snapshot?.inputAttachments.find((item) => item.ownerId === i.id)?.attachments ?? [],
+              ),
             status: 'complete',
           }),
         ),
@@ -480,7 +493,12 @@ export async function startTask(
       create: (projectId, objective, idempotencyKey) =>
         postJSON(
           `/api/projects/${encodeURIComponent(projectId)}/tasks`,
-          { title: objective.slice(0, 70), objective, idempotencyKey },
+          {
+            title: objective.slice(0, 70),
+            objective,
+            idempotencyKey,
+            attachmentIds: submission.creationAttachmentIds ?? submission.attachmentIds,
+          },
           Task,
         ),
       read: (taskId) =>
@@ -511,6 +529,8 @@ export async function startTask(
             version,
             ...(mode === 'direct' ? { mode, agentId: bossId } : { bossAgentId: bossId }),
             workspaceConfirmation,
+            sessionSettings: submission.sessionSettings,
+            attachmentIds: submission.attachmentIds,
           },
           z.object({ task: Task }),
         );
@@ -577,13 +597,14 @@ export function toMessages(
   content: Record<string, string>,
   artifacts: SnapshotData['artifacts'] = [],
   attempt?: { failure?: { message: string; code?: string }; finishedAt?: string },
+  attachments: InputAttachmentData[] = [],
 ): ChatMessage[] {
   const messages: ChatMessage[] = [
     {
       id: `goal-${root.id}`,
       role: 'user',
       createdAt: Date.parse(root.createdAt),
-      text: root.objective,
+      text: root.objective + attachmentText(attachments),
       status: 'complete',
     },
   ];

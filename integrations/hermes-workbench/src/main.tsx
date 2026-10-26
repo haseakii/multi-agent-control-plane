@@ -5,7 +5,8 @@ import { getDefaultStore, Provider } from 'jotai';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { z } from 'zod';
 import { DEFAULT_THEME_CONFIG, applyPlatformToDOM, applyThemeToDOM } from '@hermes/shared-ui';
-import { GooseComposer } from '@/components/chat/goose-composer';
+import { AttachmentComposer } from './attachment-composer';
+import { sameAttachmentIds, type InputAttachmentData } from './input-attachments';
 import { MessageTimeline } from '@/components/chat/message-timeline';
 import { SubagentPanel } from '@/components/chat/subagent-panel';
 import { PanelHero } from '@/components/panel/panel-hero';
@@ -25,6 +26,12 @@ import {
   Moon,
   ListChecks,
   Pencil,
+  Eye,
+  GitPullRequest,
+  PanelLeft,
+  Settings2,
+  Maximize2,
+  Minimize2,
 } from 'lucide-react';
 import {
   artifactUrl,
@@ -60,6 +67,8 @@ import { activeAgents } from './agent-config';
 import { MemberActivity, recentMemberTask } from './member-history';
 import { MemberWorkHint } from './member-work-hint';
 import { WorkbenchHelp } from './workbench-help';
+import { SystemSettings } from './system-settings';
+import { ExternalClients } from './external-clients';
 import { composerDrafts } from './composer-drafts';
 import { followUpSubmissions } from './followup-submissions';
 import { goalSubmissions } from './goal-submissions';
@@ -82,10 +91,18 @@ import {
 import '@/styles/global.css';
 import s from './workbench.module.css';
 import { AgentConnections } from './agent-connections';
+import { ComposerRuntimeSettings, TaskRuntimeSettings } from './agent-session-settings';
+import {
+  canApplyNextSessionSettings,
+  sameSessionValues,
+  type SessionSettingValuesData,
+} from './session-setting-values';
+import { readTaskExecutionActive } from './session-settings';
+import { conversationControlKeys } from './conversation-control-keys';
 import { AgentPermissions } from './agent-permissions';
 import { ExecutionDetails } from './execution-details';
 import { TaskFeedback } from './task-feedback';
-import { PermissionEditPreview } from './permission-edit-preview';
+import { ApprovalCard, ApprovalDialog } from './approval-card';
 import { PermissionNotice } from './permission-notice';
 import { workbenchError } from './workbench-error';
 import { WorkspaceReviewPanel } from './workspace-review';
@@ -253,7 +270,9 @@ function FollowUpComposer({
   const draft = useComposerDraft(key);
   return (
     <div className={s.followUp}>
-      <GooseComposer
+      <AttachmentComposer
+        key={key}
+        attachmentKey={key}
         plainTextOnly
         variant="default"
         headerLabel={busy || paused ? '补充要求' : '继续追问'}
@@ -321,12 +340,14 @@ function DraftStorageNotice({ persisted }: { persisted: boolean }) {
 }
 
 function GoalComposer({
+  initialAttachments,
   storageKey,
   initial,
   editing,
   sending,
   onSend,
 }: {
+  initialAttachments?: InputAttachmentData[];
   storageKey: string;
   initial: string;
   editing: boolean;
@@ -337,7 +358,10 @@ function GoalComposer({
   const draft = useComposerDraft(storageKey, initial);
   return (
     <>
-      <GooseComposer
+      <AttachmentComposer
+        key={storageKey}
+        attachmentKey={storageKey}
+        initialAttachments={initialAttachments}
         plainTextOnly
         variant="big"
         headerLabel={editing ? '继续编辑目标' : '这次想完成什么？'}
@@ -383,6 +407,9 @@ function Workbench() {
     writeExecutionPreferences(next);
   }, []);
   const [sending, setSending] = useState(false);
+  const [runtimeOverrides, setRuntimeOverrides] = useState<
+    Record<string, SessionSettingValuesData | undefined>
+  >({});
   const [submissionPersisted, setSubmissionPersisted] = useState(true);
   const [content, setContent] = useState<Record<string, string>>({});
   const [previewErrors, setPreviewErrors] = useState<Record<string, string>>({});
@@ -393,8 +420,20 @@ function Workbench() {
   const [rail, setRail] = useState<'agents' | 'results' | 'process' | 'files' | 'preview' | null>(
     'process',
   );
+  const [approvalTarget, setApprovalTarget] = useState<string>();
   const [previewOpened, setPreviewOpened] = useState(false);
   const [fileFocus, setFileFocus] = useState<FileFocus | null>(null);
+  const [reviewFocus, setReviewFocus] = useState<{ taskId: string }>();
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [reading, setReading] = useState(false);
+  useEffect(() => {
+    if (!reading) return;
+    const restore = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !document.querySelector('dialog[open]')) setReading(false);
+    };
+    window.addEventListener('keydown', restore);
+    return () => window.removeEventListener('keydown', restore);
+  }, [reading]);
   const [workspaceChoice, setWorkspaceChoice] = useState<WorkspaceSelection>(readWorkspaceDraft);
   useEffect(() => {
     saveWorkspaceDraft(workspaceChoice);
@@ -402,6 +441,10 @@ function Workbench() {
   const { confirmForProject, confirmationDialog } = useWorkspaceConfirmation();
   const [connectionsOpen, setConnectionsOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [systemSettingsOpen, setSystemSettingsOpen] = useState(false);
+  const [externalClientsOpen, setExternalClientsOpen] = useState(false);
+  const [networkVersion, setNetworkVersion] = useState(0);
+  const [networkMemberId, setNetworkMemberId] = useState<string>();
   const [connectionTarget, setConnectionTarget] = useState<string>();
   const [connectionAdd, setConnectionAdd] = useState(false);
   function openConnections(memberId?: string, add = false) {
@@ -533,6 +576,7 @@ function Workbench() {
   }, [synchronizePreviews, synchronizeInstructions, changePreferences]);
   const select = (id: string | null) => {
     setFileFocus(null);
+    setReviewFocus(undefined);
     if (id !== activeRef.current) {
       submission.current = undefined;
       setActionError('');
@@ -560,6 +604,29 @@ function Workbench() {
     ? { kind: 'saved-project', projectId: editingDraft.projectId }
     : workspaceChoice;
   const conversation = rounds[0];
+  const controlKeys =
+    root && conversation ? conversationControlKeys(root.id, conversation.id) : undefined;
+  const goalSettingsKey = `${goalDraftKey}:${bossId}:${JSON.stringify(goalWorkspace)}`;
+  const savedGoalSettings = goalSubmissions.read(goalDraftKey, goalWorkspace);
+  const goalSettings = Object.prototype.hasOwnProperty.call(runtimeOverrides, goalSettingsKey)
+    ? runtimeOverrides[goalSettingsKey]
+    : savedGoalSettings?.settingsAgentId === bossId
+      ? savedGoalSettings.sessionSettings
+      : undefined;
+  const followSettingsKey = conversation ? `follow:${conversation.id}` : '';
+  const followSettings = Object.prototype.hasOwnProperty.call(runtimeOverrides, followSettingsKey)
+    ? runtimeOverrides[followSettingsKey]
+    : conversation
+      ? followUpSubmissions.read(conversation.id)?.sessionSettings
+      : undefined;
+  const currentAgentId =
+    root?.ownerAgentId ??
+    snapshot?.assignments
+      .filter((assignment) => assignment.taskId === root?.id)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]?.agentId;
+  const currentAgentName =
+    snapshot?.agents.find((agent) => agent.definition.id === currentAgentId)?.definition.name ??
+    currentAgentId;
   const currentProject = snapshot?.projects.find((project) => project.id === root?.projectId);
   const roots = snapshot ? conversationList(snapshot) : [];
   const indexedConversations = roots.map((task) => {
@@ -649,6 +716,19 @@ function Workbench() {
     previewLoader.current?.retry(id);
   };
   const approvals = pendingTaskApprovals(snapshot?.approvals ?? [], snapshot?.tasks ?? [], root);
+  const executionApprovals = approvals.filter((approval) => approval.action === 'acp.tool');
+  const pendingReviews =
+    snapshot?.approvals.filter(
+      (approval) =>
+        approval.state === 'pending' &&
+        approval.action === 'git.merge' &&
+        approval.projectId === root?.projectId &&
+        family.some((task) => task.id === approval.taskId),
+    ) ?? [];
+  const openApproval = (id: string) => {
+    setActionError('');
+    setApprovalTarget(id);
+  };
   const action = async (fn: () => Promise<unknown>) => {
     setSending(true);
     setActionError('');
@@ -666,7 +746,7 @@ function Workbench() {
   };
   const send = async ({ text, attachments }: { text: string; attachments: unknown[] }) => {
     if (!workbench) throw new Error('正在连接协作引擎，草稿已保留，请稍后发送。');
-    if (attachments.length) throw new Error('目前支持文字任务，请使用文字描述要求。');
+    const attachmentIds = attachments.map((item) => (item as { id: string }).id);
     setSending(true);
     try {
       submission.current =
@@ -680,6 +760,9 @@ function Workbench() {
                   : `hermes-${crypto.randomUUID()}`,
               createKey: crypto.randomUUID(),
               creationObjective: text.trim(),
+              creationAttachmentIds: attachmentIds,
+              sessionSettings: goalSettings,
+              settingsAgentId: bossId,
             });
       const saveProgress = () => {
         const saved = goalSubmissions.write(goalDraftKey, goalWorkspace, submission.current!);
@@ -692,7 +775,15 @@ function Workbench() {
         if (accepted && accepted.state !== 'draft' && accepted.state !== 'created') {
           submission.current = undefined;
           goalSubmissions.clear(goalDraftKey);
-          if (accepted.objective !== text.trim())
+          if (
+            accepted.objective !== text.trim() ||
+            !sameAttachmentIds(
+              fresh.inputAttachments
+                .find((item) => item.ownerId === accepted.id)
+                ?.attachments.map((a) => a.id),
+              attachmentIds,
+            )
+          )
             throw new Error(
               '上一次目标已启动，当前编辑尚未发送。请打开原会话补充，或再次发送当前目标。',
             );
@@ -710,6 +801,12 @@ function Workbench() {
             : '暂时没有符合当前执行方式的成员。请在“协作成员”中检查连接和登录，草稿已保留。',
         );
       }
+      // Accepted starts were reconciled above. The still-editable draft can use
+      // the current choice; freeze it before the start request is issued.
+      submission.current.sessionSettings = goalSettings;
+      submission.current.attachmentIds = attachmentIds;
+      submission.current.settingsAgentId = bossId;
+      saveProgress();
       if (!editingDraft) {
         await resolveWorkspaceProject(
           workspaceChoice,
@@ -749,7 +846,15 @@ function Workbench() {
         if (task && task.state !== 'draft' && task.state !== 'created') {
           submission.current = undefined;
           goalSubmissions.clear(goalDraftKey);
-          if (task.objective !== text.trim())
+          if (
+            task.objective !== text.trim() ||
+            !sameAttachmentIds(
+              data.inputAttachments
+                .find((item) => item.ownerId === task.id)
+                ?.attachments.map((a) => a.id),
+              attachmentIds,
+            )
+          )
             throw new Error(
               '上一次目标已启动，保留在左侧历史中。当前编辑尚未发送，草稿已保留；可打开原任务补充，或再次发送当前目标。',
             );
@@ -773,7 +878,7 @@ function Workbench() {
   const newTask = () => openNewTask(workspaceChoice);
   const followUp = async ({ text, attachments }: { text: string; attachments: unknown[] }) => {
     if (!root || !conversation) throw new Error('请先选择会话。');
-    if (attachments.length) throw new Error('请先使用文字描述要求。');
+    const attachmentIds = attachments.map((item) => (item as { id: string }).id);
     setSending(true);
     try {
       const fresh = await readSnapshot();
@@ -782,7 +887,7 @@ function Workbench() {
       if (!latest) throw new Error('暂时无法读取当前会话，输入已保留，请刷新后重试。');
       const previous = followUpSubmissions.read(conversation.id);
       const source =
-        previous?.text === text.trim()
+        previous?.text === text.trim() && sameAttachmentIds(previous.attachmentIds, attachmentIds)
           ? currentRounds.find((round) => round.id === previous.taskId)
           : undefined;
       if (previous && source) {
@@ -794,6 +899,9 @@ function Workbench() {
             throw new Error('发送回执与当前内容不一致，请核对会话记录；当前文字尚未发送。');
           followUpSubmissions.clear(conversation.id);
           composerDrafts.clear(`hermes-followup-${conversation.id}`);
+          if (!sameSessionValues(previous.sessionSettings, followSettings))
+            setActionError('上一条追问已被接收。新选择的运行设置仍保留，供下一次发送使用。');
+          else setRuntimeOverrides((saved) => ({ ...saved, [followSettingsKey]: undefined }));
           await refresh();
           return;
         }
@@ -801,6 +909,10 @@ function Workbench() {
       // An in-flight instruction uses the already approved workspace. A new
       // follow-up execution still requires the existing directory confirmation.
       const target = source ?? latest;
+      const canChangeSettings = canApplyNextSessionSettings(
+        terminal(target),
+        terminal(target) ? await readTaskExecutionActive(target.id) : true,
+      );
       const confirmation = terminal(target)
         ? await confirmForProject(target.projectId, '发送')
         : undefined;
@@ -809,9 +921,24 @@ function Workbench() {
         currentRounds.map((round) => round.id),
         latest.id,
         text,
+        canChangeSettings ? followSettings : undefined,
+        attachmentIds,
       );
-      await sendChat(pending.taskId, pending.text, pending.key, confirmation);
+      await sendChat(
+        pending.taskId,
+        pending.text,
+        pending.key,
+        confirmation,
+        pending.sessionSettings,
+        pending.attachmentIds,
+      );
       followUpSubmissions.clear(conversation.id);
+      if (canChangeSettings)
+        setRuntimeOverrides((previous) => ({ ...previous, [followSettingsKey]: undefined }));
+      else if (followSettings)
+        setActionError(
+          '补充要求已按本轮设置发送；你选择的下轮设置已保留，执行结束后的追问再使用。',
+        );
       composerDrafts.clear(`hermes-followup-${conversation.id}`);
       await refresh();
     } catch (e) {
@@ -821,10 +948,23 @@ function Workbench() {
     }
   };
   return (
-    <div className={s.app}>
+    <div className={`${s.app} ${reading ? s.reading : ''}`}>
       <header className={s.topbar}>
         <div className={s.brand}>
-          <strong>Hermes 工作台</strong>
+          <div className={s.brandRow}>
+            <button
+              type="button"
+              className={s.sidebarToggle}
+              aria-label={sidebarCollapsed ? '展开任务列表' : '收起任务列表'}
+              title={sidebarCollapsed ? '展开任务列表' : '收起任务列表'}
+              aria-expanded={!sidebarCollapsed}
+              aria-controls="task-history"
+              onClick={() => setSidebarCollapsed((value) => !value)}
+            >
+              <PanelLeft size={18} />
+            </button>
+            <strong>Hermes 工作台</strong>
+          </div>
           <small>本地多 Agent 协作</small>
         </div>
         <span className={s.activeTab}>01 工作台</span>
@@ -838,8 +978,17 @@ function Workbench() {
         <button disabled={sending} onClick={() => openConnections()}>
           <Users size={16} /> 协作成员
         </button>
+        <button onClick={() => setExternalClientsOpen(true)}>接入应用 · MCP</button>
         <button disabled={sending} onClick={() => setHelpOpen(true)}>
           使用说明
+        </button>
+        <button
+          onClick={() => {
+            setNetworkMemberId(undefined);
+            setSystemSettingsOpen(true);
+          }}
+        >
+          <Settings2 size={16} /> 系统设置
         </button>
         <button
           aria-label="切换主题"
@@ -855,7 +1004,7 @@ function Workbench() {
         </button>
       </header>
       <div className={s.layout}>
-        <aside className={s.sidebar}>
+        <aside className={s.sidebar} id="task-history" hidden={sidebarCollapsed}>
           <button className={s.newTask} disabled={sending} onClick={newTask}>
             <Plus size={16} /> 新任务
           </button>
@@ -1240,7 +1389,25 @@ function Workbench() {
                   onInspect={() => openConnections(bossId)}
                 />
               )}
+              {bossId && (
+                <ComposerRuntimeSettings
+                  agentId={bossId}
+                  agentName={selectedMemberName}
+                  projectId={
+                    goalWorkspace.kind === 'saved-project' ? goalWorkspace.projectId : undefined
+                  }
+                  values={goalSettings}
+                  disabled={sending}
+                  onChange={(values) =>
+                    setRuntimeOverrides((previous) => ({ ...previous, [goalSettingsKey]: values }))
+                  }
+                />
+              )}
               <GoalComposer
+                initialAttachments={
+                  snapshot?.inputAttachments.find((item) => item.ownerId === editingDraft?.id)
+                    ?.attachments
+                }
                 key={`${editingDraft?.id ?? 'new'}-${nonce}`}
                 storageKey={goalDraftKey}
                 initial={editingDraft?.objective ?? draft}
@@ -1300,43 +1467,85 @@ function Workbench() {
           ) : (
             <>
               <div className={s.taskHeader}>
-                <button aria-label="返回工作台" disabled={sending} onClick={() => select(null)}>
-                  <ArrowLeft size={16} />
-                </button>
-                <div>
-                  <h1>{conversation?.title}</h1>
-                  <small>
-                    {leader ?? '执行成员'} · 第 {rounds.length} 轮 · {stateLabel(root.state)}
-                  </small>
+                <div className={s.taskHeading}>
+                  <button aria-label="返回工作台" disabled={sending} onClick={() => select(null)}>
+                    <ArrowLeft size={16} />
+                  </button>
+                  <div className={s.taskTitle}>
+                    <h1 title={conversation?.title}>{conversation?.title}</h1>
+                    <small>
+                      {leader ?? '执行成员'} · 第 {rounds.length} 轮
+                      <span className={s.statePill} data-state={root.state}>
+                        {stateLabel(root.state)}
+                      </span>
+                    </small>
+                  </div>
+                  <div className={s.taskNextActions}>
+                    {executionApprovals.length > 0 && (
+                      <button
+                        className={s.pendingShortcut}
+                        onClick={() => openApproval(executionApprovals[0]!.id)}
+                      >
+                        <ListChecks size={16} /> 待确认 {executionApprovals.length}
+                      </button>
+                    )}
+                    {pendingReviews.length > 0 && (
+                      <button
+                        className={s.reviewShortcut}
+                        onClick={() => {
+                          setFileFocus(null);
+                          setReviewFocus({ taskId: pendingReviews[0]!.taskId! });
+                          setRail('files');
+                        }}
+                      >
+                        <GitPullRequest size={16} /> 审阅改动 {pendingReviews.length}
+                      </button>
+                    )}
+                  </div>
                 </div>
-                <button onClick={() => setRail(rail === 'agents' ? null : 'agents')}>
-                  <Users size={16} /> 协作 {allSubagents.length}
-                </button>
-                <button onClick={() => setRail(rail === 'results' ? null : 'results')}>
-                  <FileText size={16} /> 结果 {artifacts.length}
-                </button>
-                <button
-                  aria-pressed={rail === 'process'}
-                  onClick={() => setRail(rail === 'process' ? null : 'process')}
-                >
-                  <ListChecks size={16} /> 过程
-                </button>
-                <button
-                  aria-pressed={rail === 'files'}
-                  onClick={() => setRail(rail === 'files' ? null : 'files')}
-                >
-                  <FileText size={16} /> 文件改动
-                </button>
-                <button
-                  aria-pressed={rail === 'preview'}
-                  onClick={() => {
-                    setPreviewOpened(true);
-                    setRail(rail === 'preview' ? null : 'preview');
-                  }}
-                >
-                  页面预览
-                </button>
-                <AgentPermissions key={root.projectId} projectId={root.projectId} />
+                <div className={s.taskToolbar}>
+                  <nav className={s.viewSwitch} aria-label="任务查看方式">
+                    <button
+                      aria-pressed={rail === 'process'}
+                      onClick={() => setRail(rail === 'process' ? null : 'process')}
+                    >
+                      <ListChecks size={16} /> 过程
+                    </button>
+                    <button
+                      aria-pressed={rail === 'files'}
+                      onClick={() => {
+                        setReviewFocus(undefined);
+                        setRail(rail === 'files' ? null : 'files');
+                      }}
+                    >
+                      <FileText size={16} /> 文件改动
+                    </button>
+                    <button
+                      aria-pressed={rail === 'preview'}
+                      onClick={() => {
+                        setPreviewOpened(true);
+                        setRail(rail === 'preview' ? null : 'preview');
+                      }}
+                    >
+                      <Eye size={16} /> 页面预览
+                    </button>
+                  </nav>
+                  <div className={s.taskUtilities}>
+                    <button
+                      aria-pressed={rail === 'agents'}
+                      onClick={() => setRail(rail === 'agents' ? null : 'agents')}
+                    >
+                      <Users size={15} /> 协作 {allSubagents.length}
+                    </button>
+                    <button
+                      aria-pressed={rail === 'results'}
+                      onClick={() => setRail(rail === 'results' ? null : 'results')}
+                    >
+                      <FileText size={15} /> 产物 {artifacts.length}
+                    </button>
+                    <AgentPermissions key={root.projectId} projectId={root.projectId} />
+                  </div>
+                </div>
               </div>
               {currentProject && (
                 <div className={s.projectContext}>
@@ -1356,46 +1565,60 @@ function Workbench() {
               )}
               <div className={s.execution}>
                 <section className={s.conversation}>
-                  <div className={s.steps} aria-label="协作进度">
-                    <span data-done>1 已接收目标</span>
-                    <span data-done={subagents.length > 0}>
-                      2{' '}
-                      {subagents.length
-                        ? '已委派协作者'
-                        : root.state === 'failed' || root.state === 'cancelled'
-                          ? '本轮执行已结束'
-                          : root.state === 'blocked' || recoverable
-                            ? '等待处理'
-                            : root.state === 'completed'
-                              ? '处理完成'
-                              : '成员处理中'}
-                    </span>
-                    <span
-                      data-done={
-                        root.state === 'completed' ||
-                        subagents.some((t) => t.status === 'completed')
-                      }
+                  <div className={s.readingToolbar}>
+                    <button
+                      type="button"
+                      aria-pressed={reading}
+                      onClick={() => setReading(!reading)}
                     >
-                      3{' '}
-                      {subagents.some((t) => t.status === 'completed') || root.state === 'completed'
-                        ? '结果已保存'
-                        : '等待结果'}
-                    </span>
-                    <span data-done={root.state === 'completed'}>
-                      4{' '}
-                      {root.state === 'completed'
-                        ? '汇总完成'
-                        : root.state === 'failed' || root.state === 'cancelled'
-                          ? '本轮未完成'
-                          : root.state === 'blocked' || recoverable
-                            ? '恢复后继续'
-                            : '等待汇总'}
-                    </span>
+                      {reading ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+                      {reading ? '退出阅读（Esc）' : '放大对话'}
+                    </button>
                   </div>
+                  {allSubagents.length > 0 && (
+                    <div className={s.steps} aria-label="协作进度">
+                      <span data-done>1 已接收目标</span>
+                      <span data-done={subagents.length > 0}>
+                        2{' '}
+                        {subagents.length
+                          ? '已委派协作者'
+                          : root.state === 'failed' || root.state === 'cancelled'
+                            ? '本轮执行已结束'
+                            : root.state === 'blocked' || recoverable
+                              ? '等待处理'
+                              : root.state === 'completed'
+                                ? '处理完成'
+                                : '成员处理中'}
+                      </span>
+                      <span
+                        data-done={
+                          root.state === 'completed' ||
+                          subagents.some((t) => t.status === 'completed')
+                        }
+                      >
+                        3{' '}
+                        {subagents.some((t) => t.status === 'completed') ||
+                        root.state === 'completed'
+                          ? '结果已保存'
+                          : '等待结果'}
+                      </span>
+                      <span data-done={root.state === 'completed'}>
+                        4{' '}
+                        {root.state === 'completed'
+                          ? '汇总完成'
+                          : root.state === 'failed' || root.state === 'cancelled'
+                            ? '本轮未完成'
+                            : root.state === 'blocked' || recoverable
+                              ? '恢复后继续'
+                              : '等待汇总'}
+                      </span>
+                    </div>
+                  )}
                   {snapshot && (
                     <PermissionNotice
                       snapshot={snapshot}
                       task={root}
+                      onLocate={openApproval}
                       onInspect={() => setRail('process')}
                     />
                   )}
@@ -1435,6 +1658,8 @@ function Workbench() {
                   )}
                   <div
                     className={s.timeline}
+                    role="region"
+                    aria-label="会话消息"
                     onClickCapture={(event) => {
                       const link =
                         event.target instanceof Element ? event.target.closest('a') : null;
@@ -1446,6 +1671,7 @@ function Workbench() {
                       event.preventDefault();
                       event.stopPropagation();
                       setFileFocus(focus);
+                      setReviewFocus(undefined);
                       setRail('files');
                     }}
                   >
@@ -1491,57 +1717,18 @@ function Workbench() {
                                     <button onClick={() => setRail('files')}>查看文件改动</button>
                                   </div>
                                 ) : (
-                                  <div key={a.id}>
-                                    <strong>成员请求执行操作</strong>
-                                    <dl>
-                                      <dt>来自任务</dt>
-                                      <dd>
-                                        {snapshot?.tasks.find((task) => task.id === a.taskId)
-                                          ?.title ?? a.taskId}
-                                      </dd>
-                                      <dt>工具</dt>
-                                      <dd>{a.acp?.review.tool ?? '未提供'}</dd>
-                                      <dt>操作</dt>
-                                      <dd>{a.acp?.review.action ?? a.action}</dd>
-                                      <dt>目标</dt>
-                                      <dd>{a.acp?.review.target ?? '未提供'}</dd>
-                                    </dl>
-                                    <PermissionEditPreview resource={a.resource} />
-                                    <p>
-                                      {a.decisionEligibility.canApprove
-                                        ? '请查看请求内容，确认后再继续。'
-                                        : '请求信息不完整或已失效，暂不能允许。可以拒绝该操作，让 Agent 继续处理。'}
-                                    </p>
-                                    <details>
-                                      <summary>查看请求详情</summary>
-                                      <pre>{JSON.stringify(a.resource, null, 2)}</pre>
-                                    </details>
-                                    <small>
-                                      执行边界：{a.boundary ?? '未提供'} · {a.enforcementMode}
-                                    </small>
-                                    <button
-                                      disabled={sending || !a.decisionEligibility.canReject}
-                                      onClick={() =>
-                                        void action(() => decideApproval(a.id, 'reject'))
-                                      }
-                                    >
-                                      拒绝
-                                    </button>
-                                    <button
-                                      disabled={
-                                        sending ||
-                                        !a.decisionEligibility.canApprove ||
-                                        Date.now() >
-                                          Date.parse(a.decisionEligibility.checkedAt) +
-                                            a.decisionEligibility.validForMs
-                                      }
-                                      onClick={() =>
-                                        void action(() => decideApproval(a.id, 'approve'))
-                                      }
-                                    >
-                                      允许本次
-                                    </button>
-                                  </div>
+                                  <ApprovalCard
+                                    key={a.id}
+                                    approval={a}
+                                    taskTitle={
+                                      snapshot?.tasks.find((t) => t.id === a.taskId)?.title ??
+                                      '当前任务'
+                                    }
+                                    busy={sending}
+                                    onDecide={(id, decision) =>
+                                      void action(() => decideApproval(id, decision))
+                                    }
+                                  />
                                 ),
                               )}
                             </div>
@@ -1578,9 +1765,27 @@ function Workbench() {
                       </button>
                     )}
                   </div>
+                  {conversation && currentAgentId && currentAgentName && (
+                    <TaskRuntimeSettings
+                      key={controlKeys!.runtimeSettings}
+                      taskId={root.id}
+                      agentId={currentAgentId}
+                      agentName={currentAgentName}
+                      projectId={root.projectId}
+                      values={followSettings}
+                      disabled={sending}
+                      settingsLocked={!terminal(root)}
+                      onChange={(values) =>
+                        setRuntimeOverrides((previous) => ({
+                          ...previous,
+                          [followSettingsKey]: values,
+                        }))
+                      }
+                    />
+                  )}
                   {conversation && (
                     <FollowUpComposer
-                      key={conversation.id}
+                      key={controlKeys!.followUpComposer}
                       conversationId={conversation.id}
                       busy={busy}
                       paused={!terminal(root) && (root.state === 'blocked' || recoverable)}
@@ -1607,12 +1812,17 @@ function Workbench() {
                   <WorkspaceReviewPanel
                     taskIds={rounds.map((r) => r.id)}
                     focus={fileFocus}
+                    reviewFocus={reviewFocus}
                     onClose={() => setRail(null)}
                   />
                 )}
                 {rail === 'process' && (
                   <ExecutionDetails
                     taskIds={rounds.map((r) => r.id)}
+                    onNetwork={(agentId) => {
+                      setNetworkMemberId(agentId);
+                      setSystemSettingsOpen(true);
+                    }}
                     onClose={() => setRail(null)}
                   />
                 )}
@@ -1667,12 +1877,39 @@ function Workbench() {
       <footer className={s.bottom}>
         Hermes 工作台 · 任务和对话保存在本机 <span>执行引擎：Multi-Agent Control Plane · ACP</span>
       </footer>
+      {approvalTarget && snapshot && (
+        <ApprovalDialog
+          error={actionError}
+          approval={snapshot.approvals.find((a) => a.id === approvalTarget)}
+          taskTitle={
+            snapshot.tasks.find(
+              (t) => t.id === snapshot.approvals.find((a) => a.id === approvalTarget)?.taskId,
+            )?.title ?? '当前任务'
+          }
+          busy={sending}
+          onDecide={(id, decision) => void action(() => decideApproval(id, decision))}
+          onClose={() => setApprovalTarget(undefined)}
+        />
+      )}
+      {externalClientsOpen && (
+        <ExternalClients
+          projectId={
+            root?.projectId ??
+            (goalWorkspace.kind === 'saved-project' ? goalWorkspace.projectId : undefined)
+          }
+          onClose={() => setExternalClientsOpen(false)}
+        />
+      )}
       {connectionsOpen && (
         <AgentConnections
           initialMemberId={connectionTarget}
           initialAdd={connectionAdd}
           selectedMemberId={!root || editingDraft ? bossId : undefined}
           selectingForDraft={!root || !!editingDraft}
+          projectId={
+            root?.projectId ??
+            (goalWorkspace.kind === 'saved-project' ? goalWorkspace.projectId : undefined)
+          }
           onClose={() => setConnectionsOpen(false)}
           onChanged={refresh}
           onOpenTask={(taskId) => {
@@ -1692,6 +1929,11 @@ function Workbench() {
             setConnectionsOpen(false);
           }}
           activeAgentIds={snapshot ? [...activeMemberIds] : undefined}
+          onNetwork={(agentId) => {
+            setNetworkMemberId(agentId);
+            setSystemSettingsOpen(true);
+          }}
+          networkVersion={networkVersion}
         />
       )}
       {helpOpen && (
@@ -1709,6 +1951,19 @@ function Workbench() {
           onCurrentTask={() => {
             setHelpOpen(false);
             setRail('process');
+          }}
+        />
+      )}
+      {systemSettingsOpen && (
+        <SystemSettings
+          initialMemberId={networkMemberId}
+          onClose={() => {
+            setSystemSettingsOpen(false);
+            setNetworkVersion((value) => value + 1);
+          }}
+          onSaved={() => {
+            setNetworkVersion((value) => value + 1);
+            void refresh();
           }}
         />
       )}

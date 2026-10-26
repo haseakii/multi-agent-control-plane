@@ -2,6 +2,17 @@ import { z } from 'zod';
 import { parseAgentCommand, sameAgentRuntime } from './agent-quick-config';
 
 export const onboardingDraftKey = 'control-plane-agent-onboarding-v1';
+export const CatalogSelection = z
+  .object({
+    entryId: z
+      .string()
+      .min(1)
+      .max(128)
+      .regex(/^[a-z][a-z0-9-]*$/),
+    version: z.string().trim().min(1).max(128),
+  })
+  .strict();
+export type CatalogSelectionData = z.infer<typeof CatalogSelection>;
 const Runtime = z
   .object({
     type: z.literal('acp-stdio'),
@@ -21,6 +32,7 @@ const Row = z
     runtime: Runtime.optional(),
     selected: z.boolean(),
     leader: z.boolean(),
+    catalogSelection: CatalogSelection.optional(),
   })
   .strict();
 const Draft = z.object({ version: z.literal(1), rows: z.array(Row).max(20) }).strict();
@@ -51,12 +63,13 @@ export function writeOnboardingDraft(storage: Store, rows: OnboardingRow[]) {
     // Only editable inputs are cached. Readiness, errors and authentication stay on the server.
     const data = Draft.parse({
       version: 1,
-      rows: rows.map(({ id, name, runtime, selected, leader }) => ({
+      rows: rows.map(({ id, name, runtime, selected, leader, catalogSelection }) => ({
         id,
         name,
         runtime,
         selected,
         leader,
+        ...(catalogSelection ? { catalogSelection } : {}),
       })),
     });
     if (!data.rows.length) {

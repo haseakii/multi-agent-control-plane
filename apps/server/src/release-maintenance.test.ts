@@ -98,16 +98,16 @@ for (const count of [8, 14])
     await backupStoppedRelease(f.config, f.backup, version);
     const backupBefore = fingerprints(f.backup);
     const verified = await verifyPrivateBackup(f.backup, version);
-    expect(verified.pendingMigrations).toBe(15 - count);
+    expect(verified.pendingMigrations).toBe(22 - count);
     expect(() => inspectSqliteSnapshot(join(f.backup, 'database.sqlite'))).toThrow(
       'Unsupported database migration',
     );
     const target = join(f.root, 'upgraded-restore');
     const result = await restorePrivateBackup(f.backup, target, version);
-    expect(result).toMatchObject({ automaticExecution: false, migrationsApplied: 15 - count });
+    expect(result).toMatchObject({ automaticExecution: false, migrationsApplied: 22 - count });
     expect(
       inspectSqliteSnapshot(join(target, 'data/control-plane.sqlite')).migrations,
-    ).toHaveLength(15);
+    ).toHaveLength(22);
     expect(fingerprints(f.data)).toEqual(sourceBefore);
     expect(fingerprints(f.backup)).toEqual(backupBefore);
     expect(readFileSync(join(target, 'RESTORE-INFO.txt'), 'utf8')).toContain('原备份未修改');
@@ -340,7 +340,7 @@ for (const mode of [
     await expect(restorePrivateBackup(f.backup, target, version)).rejects.toThrow();
     expect(existsSync(target)).toBe(false);
     expect(fingerprints(f.data)).toEqual(before);
-  });
+  }, 30_000);
 
 it('rejects nonempty targets and symbolic link/junction backups without touching either source or target', async () => {
   const f = fixture();

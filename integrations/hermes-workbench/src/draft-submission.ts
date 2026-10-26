@@ -1,9 +1,13 @@
 /** UI submission state. Durable task and optimistic version remain server-owned. */
 export interface DraftSubmission {
+  attachmentIds?: string[];
+  creationAttachmentIds?: string[];
   projectId: string;
   taskId?: string;
   createKey?: string;
   creationObjective?: string;
+  sessionSettings?: Record<string, string>;
+  settingsAgentId?: string;
 }
 
 interface DraftTask {

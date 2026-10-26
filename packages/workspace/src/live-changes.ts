@@ -154,7 +154,9 @@ export class LocalGitLiveChangesReader implements WorkspaceLiveChangesReader {
           .split('\0')
           .filter(Boolean),
       ]),
-    ].sort();
+    ]
+      .filter((path) => !/^\.control-plane-inputs(?:\/|$)/i.test(path))
+      .sort();
     if (paths.length > 5000)
       throw new WorkspaceReviewError('项目超过实时读取的 5000 文件范围，请使用固定快照审阅。');
     if (selectedPath && !paths.includes(selectedPath))

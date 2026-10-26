@@ -25,13 +25,16 @@ export interface WorkspaceReviewStore {
   audit(event: AuditEvent): void;
 }
 export interface ReviewArtifactPublisher {
-  publish(input: {
-    projectId: string;
-    taskId: string;
-    assignmentId: string;
-    kind: 'diff' | 'json';
-    content: string;
-  }): Promise<Artifact>;
+  publish(
+    input: {
+      projectId: string;
+      taskId: string;
+      assignmentId: string;
+      kind: 'diff' | 'json';
+      content: string;
+    },
+    beforeCommit?: () => void,
+  ): Promise<Artifact>;
 }
 
 /** Approval binds immutable content and a target revision; execution remains a separate operator action. */
@@ -96,7 +99,9 @@ export class WorkspaceReviewService {
   async prepare(
     taskId: string,
     validate: (workspace: Workspace, source: Workspace) => Promise<void>,
+    requireAccess: () => void = () => undefined,
   ) {
+    requireAccess();
     const task = this.store.task(taskId);
     if (!task || !['completed', 'failed', 'cancelled'].includes(task.state))
       throw new WorkspaceReviewError('请等待任务结束后生成变更审阅。');
@@ -106,25 +111,35 @@ export class WorkspaceReviewService {
     if (!binding || binding.mode !== 'git-worktree' || !workspace || !source)
       throw new WorkspaceReviewError('此任务没有可审阅的独立 Git 工作区。');
     await validate(workspace, source);
+    requireAccess();
     const id = randomUUID(),
       prepared = await this.adapter.prepare(workspace, source, id);
-    const patch = await this.publisher.publish({
-      projectId: task.projectId,
-      taskId,
-      assignmentId: binding.id,
-      kind: 'diff',
-      content: prepared.patch,
-    });
+    requireAccess();
+    const patch = await this.publisher.publish(
+      {
+        projectId: task.projectId,
+        taskId,
+        assignmentId: binding.id,
+        kind: 'diff',
+        content: prepared.patch,
+      },
+      requireAccess,
+    );
     const { patch: _patch, ...manifest } = prepared;
-    const metadata = await this.publisher.publish({
-      projectId: task.projectId,
-      taskId,
-      assignmentId: binding.id,
-      kind: 'json',
-      content: JSON.stringify({ reviewId: id, ...manifest }, null, 2),
-    });
+    requireAccess();
+    const metadata = await this.publisher.publish(
+      {
+        projectId: task.projectId,
+        taskId,
+        assignmentId: binding.id,
+        kind: 'json',
+        content: JSON.stringify({ reviewId: id, ...manifest }, null, 2),
+      },
+      requireAccess,
+    );
     await validate(workspace, source);
     return this.store.transaction(() => {
+      requireAccess();
       const at = this.now();
       const base = {
         id,

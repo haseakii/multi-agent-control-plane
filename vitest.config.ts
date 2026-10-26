@@ -25,6 +25,7 @@ export default defineConfig({
       'apps/**/*.test.ts',
       'packages/**/*.test.ts',
       'integrations/hermes-workbench/tests/*.test.{ts,mjs}',
+      'scripts/tests/*.test.mjs',
     ],
     environment: 'node',
     restoreMocks: true,

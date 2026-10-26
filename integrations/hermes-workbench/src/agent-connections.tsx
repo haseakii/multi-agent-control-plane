@@ -24,11 +24,14 @@ import {
 } from './agent-editor-draft';
 import { AgentQuickAdd } from './agent-quick-add';
 import { AgentManagement } from './agent-management';
+import { SessionSettingsControl } from './agent-session-settings';
+import { NetworkSettingsView, type NetworkViewData } from './network-settings-model';
 import { MemberOverviewReader } from './member-overview-reader';
 import { selectableAgents, type ExecutionMode } from './agent-selection';
 import { filterMembers, memberStatus, type MemberFilter } from './member-list';
 import { entryConnectionError, entryIssueText } from './agent-entry-feedback';
 import s from './agent-connections.module.css';
+import { AgentMemberCreate } from './agent-member-create';
 
 const runtimeLabels = { unknown: '尚未检查', ready: '连接正常', error: '连接失败' };
 const authLabels = {
@@ -78,7 +81,10 @@ export type AgentConnectionsProps = {
   onChanged: () => void;
   onUse: (agentId: string, mode: ExecutionMode) => void;
   onOpenTask: (taskId: string) => void;
+  onNetwork?: (agentId: string) => void;
+  networkVersion?: number;
   activeAgentIds?: readonly string[];
+  projectId?: string;
 };
 
 /** Connection actions are deliberate user actions; opening this drawer only reads state. */
@@ -91,11 +97,28 @@ export function AgentConnections({
   onChanged,
   onUse,
   onOpenTask,
+  onNetwork,
+  networkVersion,
   activeAgentIds,
+  projectId,
 }: AgentConnectionsProps) {
   const dialog = useRef<HTMLDialogElement>(null);
   const actionInFlight = useRef(false);
   const [agents, setAgents] = useState<Connection[]>([]);
+  const [network, setNetwork] = useState<NetworkViewData>();
+  const networkMembersKey = agents
+    .map((agent) => agent.definition.id)
+    .sort()
+    .join('\0');
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetchJSON('/api/system/network', { signal: controller.signal }, NetworkSettingsView)
+      .then((value) => {
+        if (!controller.signal.aborted) setNetwork(value);
+      })
+      .catch(() => {});
+    return () => controller.abort();
+  }, [networkVersion, networkMembersKey]);
   const [loading, setLoading] = useState(true);
   const [pending, setPending] = useState<{ id: string; kind: 'probe' | 'auth' } | null>(null);
   const [error, setError] = useState('');
@@ -281,19 +304,27 @@ export function AgentConnections({
               刷新状态
             </button>
           </div>
-          {!editing && (
+          <nav className={s.views} aria-label="成员管理视图">
             <button
               type="button"
-              className={s.addMember}
+              aria-pressed={editing !== 'new'}
+              disabled={pending !== null || configBusy}
+              onClick={() => setEditing(null)}
+            >
+              已接入 <span>{agents.length}</span>
+            </button>
+            <button
+              type="button"
+              aria-pressed={editing === 'new'}
               disabled={loading || pending !== null || configBusy}
               onClick={() => {
                 setManual(false);
                 setEditing('new');
               }}
             >
-              {hasOnboardingDraft ? '继续接入草稿' : '＋ 接入本机协作者'}
+              {hasOnboardingDraft ? '添加 / 下载 ACP · 有草稿' : '＋ 添加 / 下载 ACP'}
             </button>
-          )}
+          </nav>
           {error && (
             <p className={s.error} role="alert">
               {error}
@@ -310,7 +341,9 @@ export function AgentConnections({
             </p>
           )}
           {!loading && !error && !agents.length && !editing && (
-            <p className={s.empty}>当前服务没有注册协作者。请先接入本机已安装的 ACP 协作者。</p>
+            <p className={s.empty}>
+              当前服务没有注册协作者。点击“添加 / 下载 ACP”，选择下载安装或使用本机已有入口。
+            </p>
           )}
           {editing === 'new' && !manual && (
             <AgentQuickAdd
@@ -408,12 +441,17 @@ export function AgentConnections({
               )}
             </section>
           )}
-          {(editing ? agents : visibleMembers).map((agent) => {
+          {(editing === 'new'
+            ? []
+            : editing
+              ? agents.filter((agent) => agent.definition.id === editing.definition.id)
+              : visibleMembers
+          ).map((agent) => {
             const id = agent.definition.id;
             const busy = active.has(id);
             const working = pending?.id === id;
             const availableMethods = agent.authMethods.filter(
-              (method) => method.type !== 'terminal',
+              (method) => !method.type || ['agent', 'terminal'].includes(method.type),
             );
             const selectedMethod = availableMethods.some((method) => method.id === methods[id])
               ? methods[id]
@@ -459,6 +497,26 @@ export function AgentConnections({
                   </span>
                 </div>
                 {program && <p className={s.programIdentity}>程序上报：{program}</p>}
+                <div className={s.memberSource} aria-label={`${agent.definition.name} 目录来源`}>
+                  {agent.registrationSource?.record ? (
+                    <>
+                      <span>
+                        目录来源：<strong>{agent.registrationSource.record.entryName}</strong> ·{' '}
+                        {agent.registrationSource.record.catalogVersion}
+                      </span>
+                      {agent.registrationSource.status === 'entry-changed' && (
+                        <span className={s.sourceAttention}>入口已变化，来源待重新确认</span>
+                      )}
+                      <small>这是你选择的目录关联，不代表软件签名或已登录。</small>
+                    </>
+                  ) : (
+                    <span>
+                      {agent.registrationSource?.status === 'unavailable'
+                        ? '目录来源暂不可读取；连接与登录状态仍单独保留。'
+                        : '自定义或历史入口 · 尚未关联目录产品'}
+                    </span>
+                  )}
+                </div>
                 <p className={s.role}>{leaderStatus(agent)}</p>
                 {recent && (
                   <section
@@ -516,6 +574,52 @@ export function AgentConnections({
                       </button>
                     )}
                   </div>
+                )}
+                <div className={s.actions}>
+                  <SessionSettingsControl
+                    agentId={id}
+                    agentName={agent.definition.name}
+                    projectId={projectId}
+                    disabled={disabled || editing !== null}
+                  />
+                  {onNetwork && (
+                    <button
+                      type="button"
+                      disabled={configBusy || !!pending || editing !== null}
+                      onClick={() => onNetwork(id)}
+                    >
+                      {(() => {
+                        const effective = network?.effective.find((value) => value.agentId === id);
+                        return !effective
+                          ? '网络设置 · 待核对'
+                          : effective.source === 'member'
+                            ? effective.mode === 'direct'
+                              ? '网络：独立直连'
+                              : '网络：单独代理'
+                            : '网络：跟随全局';
+                      })()}
+                    </button>
+                  )}
+                </div>
+                {agent.definition.auth.mode === 'agent-managed' && (
+                  <AgentMemberCreate
+                    endpoint={'/api/agents/' + encodeURIComponent(id) + '/members'}
+                    defaultName={agent.definition.name + ' · 新成员'}
+                    disabled={
+                      loading ||
+                      pending !== null ||
+                      configBusy ||
+                      editing !== null ||
+                      agent.localEntry?.offlineChecksPassed === false
+                    }
+                    onBusy={setConfigBusy}
+                    onCreated={(newId, message) => {
+                      revealMember(newId);
+                      setNotice(message);
+                      void refresh(false);
+                      onChanged();
+                    }}
+                  />
                 )}
                 <dl className={s.status}>
                   <div>
@@ -610,7 +714,7 @@ export function AgentConnections({
                 )}
                 {loginNeeded && agent.authMethods.some((method) => method.type === 'terminal') && (
                   <p className={s.hint}>
-                    此协作者也提供终端登录；请在它的命令行中完成，然后重新检查连接。
+                    选择终端登录后，工作台会自动打开此成员的登录窗口。完成后返回这里继续使用。
                   </p>
                 )}
                 {loginNeeded &&
@@ -655,7 +759,9 @@ export function AgentConnections({
           })}
         </div>
         <footer className={s.footer}>
-          选择成员后回到工作台填写目标；点击发送才开始执行。连接检查不会发送任务提示。
+          {editing === 'new'
+            ? '从产品目录选择或导入启动入口；接入后查看登录状态，再开始使用。'
+            : '选择成员后回到工作台填写目标；运行设置可为每位成员保存模型偏好。'}
         </footer>
       </div>
     </dialog>

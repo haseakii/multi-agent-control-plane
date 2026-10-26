@@ -5,6 +5,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { createClientMcpServer, createClientHttpTransport } from './client-server.js';
 import { BackgroundStartSchema, launchBackgroundHost } from './background-launch.js';
 import { createEngineLifecycle } from './engine-lifecycle.js';
+import { loopbackFetch } from './loopback-fetch.js';
 
 export const ClientConnectionSchema = z
   .object({
@@ -23,7 +24,7 @@ try {
   const transport = createClientHttpTransport(config.baseUrl, config.token);
   const lifecycle = createEngineLifecycle({
     health: async () => {
-      const response = await fetch(new URL('/health', config.baseUrl), {
+      const response = await loopbackFetch(new URL('/health', config.baseUrl), {
         redirect: 'error',
         signal: AbortSignal.timeout(2000),
       });
@@ -35,6 +36,10 @@ try {
   });
   // Connect stdio immediately; engine warmup happens on demand and after outages.
   await createClientMcpServer({
+    getTools: async () => {
+      await lifecycle.ensure();
+      return transport.getTools!();
+    },
     invoke: async (name, input) => {
       await lifecycle.ensure();
       // Never replay an uncertain mutation. Retain the task/idempotency key.

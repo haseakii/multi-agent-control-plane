@@ -32,7 +32,7 @@ it('upgrades eleven migrations to project policy storage without changing projec
     expect(storage.repositories.projects.get('p')).toEqual(project);
     expect(storage.repositories.projectPolicies.list()).toEqual([]);
     expect(storage.sqlite.prepare('SELECT COUNT(*) AS n FROM __drizzle_migrations').get()).toEqual({
-      n: 15,
+      n: 22,
     });
     expect(storage.sqlite.pragma('foreign_key_check')).toEqual([]);
   } finally {

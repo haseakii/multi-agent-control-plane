@@ -1,5 +1,6 @@
 import { registerAgentCatalogRoutes, type AgentCatalogService } from './agent-catalog.js';
 import { registerWebUi } from './web-ui.js';
+import { registerAgentMemberRoutes, type AgentMembersService } from './agent-members.js';
 import { registerHttpShutdown } from './http-shutdown.js';
 import Fastify, { type FastifyServerOptions } from 'fastify';
 import {
@@ -17,12 +18,24 @@ import { registerFleetBridgeGateway, type FleetBridgeGatewayOptions } from './fl
 import { registerTaskControlRoutes } from './task-control.js';
 import { registerClientGateway, type ClientGatewayOptions } from './client-gateway.js';
 import type { ControlPlaneRuntime } from './runtime-composition.js';
+import { registerNetworkSettingsRoutes } from './network-settings-routes.js';
+import { registerInputAttachmentRoutes } from './input-attachment-routes.js';
+import { deploymentMaintenance, type DeploymentContext } from './deployment-context.js';
+import { registerExternalClientRoutes, type ExternalClientsService } from './external-clients.js';
+import {
+  registerAgentInstallationRoutes,
+  type AgentInstallationsService,
+} from './agent-installations.js';
 
 export type ControlCenterProvider = (
   options?: ControlCenterReadOptions,
 ) => Promise<ControlCenterSnapshot> | ControlCenterSnapshot;
 
 export type BuildServerOptions = {
+  externalClients?: ExternalClientsService;
+  agentInstallations?: AgentInstallationsService;
+  agentMembers?: AgentMembersService;
+  deployment?: DeploymentContext;
   fastify?: FastifyServerOptions;
   webRoot?: string;
   controlCenter?: ControlCenterProvider;
@@ -40,6 +53,14 @@ export function buildServer(options: BuildServerOptions = {}) {
   // Local-owner API, not a multi-user service. Reject DNS rebinding and foreign
   // browser origins; this does not authenticate other processes of the same user.
   app.addHook('onRequest', async (request, reply) => {
+    if (
+      !['GET', 'HEAD', 'OPTIONS'].includes(request.method) &&
+      deploymentMaintenance(options.deployment)
+    )
+      return reply.code(503).send({
+        code: 'DEPLOYMENT_IN_PROGRESS',
+        error: '工作台正在升级或恢复，记录仍保留，请稍后再发送。',
+      });
     const host = request.headers.host;
     try {
       if (!host || /[\s/@\\,]/.test(host)) throw new Error('Invalid host.');
@@ -79,18 +100,38 @@ export function buildServer(options: BuildServerOptions = {}) {
     registerFleetBridgeGateway(app, options.fleetGateway);
   }
   if (options.clientGateway) registerClientGateway(app, options.clientGateway);
+  if (options.externalClients) registerExternalClientRoutes(app, options.externalClients);
+  if (options.agentInstallations) registerAgentInstallationRoutes(app, options.agentInstallations);
+  if (options.agentMembers) registerAgentMemberRoutes(app, options.agentMembers);
   if (options.agentControl) {
     registerAgentControlRoutes(app, options.agentControl);
     if (options.agentCatalog)
-      registerAgentCatalogRoutes(app, options.agentCatalog, options.agentControl);
+      registerAgentCatalogRoutes(
+        app,
+        options.agentCatalog,
+        options.agentControl,
+        !!options.agentInstallations,
+      );
   }
   if (options.taskControl) {
     registerTaskControlRoutes(app, options.taskControl);
+    registerNetworkSettingsRoutes(app, options.taskControl.network);
+    registerInputAttachmentRoutes(app, options.taskControl.inputAttachments);
   }
 
   app.get('/health', async () => ({
     status: 'ok' as const,
     service: 'multi-agent-control-plane',
+    ...(options.deployment
+      ? {
+          deployment: {
+            installationId: options.deployment.installationId,
+            generationId: options.deployment.generationId,
+            releaseId: options.deployment.releaseId,
+          },
+          maintenance: deploymentMaintenance(options.deployment),
+        }
+      : {}),
   }));
 
   app.get('/api/control-center', async (request, reply) => {

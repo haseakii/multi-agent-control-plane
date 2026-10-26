@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { createHash } from 'node:crypto';
 import {
   resolveNativeCommandPermission,
   resolveNativeToolPermission,
@@ -69,6 +70,150 @@ describe('pinned native command review', () => {
       expect(review.status).not.toBe('complete');
       expect(review.reasons).toContain(reason);
     }
+  });
+});
+
+describe('pinned native file create review', () => {
+  const input = {
+    CodeContent: '<h1>New page</h1>',
+    Description: 'Create a static page',
+    Overwrite: true,
+    TargetFile: 'D:/project/settings-check.html',
+  };
+  const create = {
+    toolCallId: 'create',
+    title: 'An arbitrary display title',
+    kind: 'edit',
+    status: 'pending',
+    rawInput: input,
+    locations: [{ path: input.TargetFile }],
+    content: [
+      {
+        type: 'diff',
+        path: input.TargetFile,
+        newText: input.CodeContent,
+        _meta: { kind: 'add' },
+      },
+    ],
+  };
+  const collector = () =>
+    new PermissionReviewCollector(
+      Date.now,
+      300_000,
+      (sessionId, toolCall) => resolveNativeToolPermission({ sessionId, agentInfo, toolCall }),
+      undefined,
+      (sessionId, toolCall, metadata) =>
+        validateNativeEditMetadata({ sessionId, agentInfo, toolCall, metadata }),
+      (sessionId, toolCall) => summarizeNativeEditPermission({ sessionId, agentInfo, toolCall }),
+    );
+  it('recognizes only the exact create input and matching create diff without using its title', () => {
+    expect(collector().review('session', create, permissionWireShape(create))).toMatchObject({
+      status: 'complete',
+      tool: 'create_file',
+      action: 'file.write',
+      target: input.TargetFile,
+      reasons: [],
+      parameters: {
+        resolved: { fileOperation: 'write', overwrite: true, confinement: 'unavailable' },
+      },
+    });
+    expect(
+      validateNativeEditMetadata({
+        sessionId: 'session',
+        agentInfo,
+        toolCall: create,
+        metadata: { kind: 'modify' },
+      }),
+    ).toBe(false);
+    const changed = [
+      { ...create, name: 'edit_file' },
+      { ...create, kind: 'create' },
+      { ...create, _meta: {} },
+      { ...create, rawInput: { ...input, Overwrite: 'false' } },
+      { ...create, rawInput: { ...input, unknown: true } },
+      { ...create, content: [{ ...create.content[0], oldText: '' }] },
+      { ...create, content: [{ ...create.content[0], newText: 'Different body' }] },
+      { ...create, content: [{ ...create.content[0], path: 'D:/other.html' }] },
+      { ...create, content: [{ ...create.content[0], _meta: { kind: 'modify' } }] },
+      { ...create, content: [{ ...create.content[0], _meta: { kind: 'create' } }] },
+      { ...create, content: [{ ...create.content[0], _meta: { kind: 'add', unknown: true } }] },
+    ];
+    for (const toolCall of changed)
+      expect(resolveNativeToolPermission({ sessionId: 'session', agentInfo, toolCall })).toBeNull();
+    expect(
+      resolveNativeToolPermission({
+        sessionId: 'session',
+        agentInfo: { ...agentInfo, version: 'next' },
+        toolCall: create,
+      }),
+    ).toBeNull();
+  });
+  it('accepts the observed non-overwriting create with a bounded instruction and rejects unknown input keys', () => {
+    const actual = {
+      ...create,
+      rawInput: {
+        ...input,
+        Overwrite: false,
+        Instruction: '新建 settings-check.html 静态中文页面，符合无外部依赖与品牌规范要求',
+      },
+    };
+    expect(collector().review('session', actual, permissionWireShape(actual))).toMatchObject({
+      status: 'complete',
+      tool: 'create_file',
+      action: 'file.write',
+      reasons: [],
+      parameters: { rawInput: actual.rawInput, resolved: { overwrite: false } },
+    });
+    for (const rawInput of [
+      { ...actual.rawInput, unknown: true },
+      { ...actual.rawInput, Instruction: 'x'.repeat(769) },
+    ])
+      expect(
+        resolveNativeToolPermission({
+          sessionId: 'session',
+          agentInfo,
+          toolCall: { ...actual, rawInput },
+        }),
+      ).toBeNull();
+  });
+  it('scans the full create body before retaining a bounded exact-byte fingerprint', () => {
+    const body = '<p>完整页面内容</p>\n'.repeat(1400);
+    const large = {
+      ...create,
+      rawInput: { ...input, CodeContent: body },
+      content: [{ ...create.content[0], newText: body }],
+    };
+    const c = collector(),
+      update = { ...large, sessionUpdate: 'tool_call' };
+    c.observe('session', update, permissionWireShape(update));
+    const review = c.review('session', large, permissionWireShape(large));
+    const digest = `[file-content bytes=${Buffer.byteLength(body)} sha256=${createHash('sha256').update(body).digest('hex')}]`;
+    expect(review).toMatchObject({
+      status: 'complete',
+      action: 'file.write',
+      reasons: [],
+      parameters: {
+        rawInput: { ...input, CodeContent: digest },
+        content: [{ ...create.content[0], newText: digest }],
+      },
+    });
+    expect(JSON.stringify(review)).not.toContain(body);
+    expect(Buffer.byteLength(JSON.stringify(review))).toBeLessThan(6000);
+    const secret = body + '\n--password synthetic';
+    const sensitive = {
+      ...large,
+      rawInput: { ...input, CodeContent: secret },
+      content: [{ ...create.content[0], newText: secret }],
+    };
+    expect(
+      summarizeNativeEditPermission({ sessionId: 'session', agentInfo, toolCall: sensitive }),
+    ).toBeNull();
+    expect(
+      collector().review('session', sensitive, permissionWireShape(sensitive)).reasons,
+    ).toContain('sensitive_redacted');
+    expect(
+      c.review('session', large, permissionWireShape({ ...large, extra: true })).reasons,
+    ).toContain('sdk_filtered');
   });
 });
 

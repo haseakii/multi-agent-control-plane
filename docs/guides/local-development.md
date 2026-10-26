@@ -68,7 +68,10 @@ proof of successful model authentication. The setup panel is guidance, not a rep
 for execution-time workspace and policy checks.
 
 Stop your own API/Web sessions before the browser check: it starts dedicated
-services on ports 3000 and 4173 and uses `.data/playwright.sqlite`.
+services on ports 3000 and 4173 and defaults to a fresh temporary data directory.
+If setting `CONTROL_PLANE_E2E_DATA_DIR`, choose a new dedicated directory for each run.
+The default suite uses deterministic local catalog metadata; `pnpm test:e2e:live`
+checks the public official catalog separately.
 
 ```powershell
 pnpm exec prettier --check apps/web/vite.config.ts tests/e2e/local-api.e2e.ts

@@ -88,4 +88,8 @@ export type NewSessionInput = {
 
 export type SessionRef = {
   sessionId: string;
+  settings?: import('@control-plane/core').SessionSettingsSnapshot;
 };
+export type PromptAttachment =
+  | { type: 'image'; mimeType: string; data: string }
+  | { type: 'resource_link'; uri: string; name: string; mimeType: string; size: number };

@@ -1,11 +1,19 @@
 import { z } from 'zod';
 import { composerDrafts, type createComposerDrafts } from './composer-drafts';
+import { AttachmentIds, sameAttachmentIds } from './input-attachments';
+import {
+  SessionSettingValues,
+  sameSessionValues,
+  type SessionSettingValuesData,
+} from './session-setting-values';
 
 const Pending = z
   .object({
+    attachmentIds: AttachmentIds.optional(),
     taskId: z.string().min(1).max(128),
     text: z.string().trim().min(1).max(8000),
     key: z.string().uuid(),
+    sessionSettings: SessionSettingValues.optional(),
   })
   .strict();
 export function createFollowUpSubmissions(
@@ -23,13 +31,30 @@ export function createFollowUpSubmissions(
   };
   return {
     read,
-    prepare(conversationId: string, taskIds: string[], latestTaskId: string, text: string) {
+    prepare(
+      conversationId: string,
+      taskIds: string[],
+      latestTaskId: string,
+      text: string,
+      sessionSettings?: SessionSettingValuesData,
+      attachmentIds?: string[],
+    ) {
       const previous = read(conversationId);
       const reused =
-        !!previous && previous.text === text.trim() && taskIds.includes(previous.taskId);
+        !!previous &&
+        previous.text === text.trim() &&
+        sameAttachmentIds(previous.attachmentIds, attachmentIds) &&
+        taskIds.includes(previous.taskId) &&
+        sameSessionValues(previous.sessionSettings, sessionSettings);
       const request = reused
         ? previous
-        : Pending.parse({ taskId: latestTaskId, text: text.trim(), key: newKey() });
+        : Pending.parse({
+            taskId: latestTaskId,
+            text: text.trim(),
+            key: newKey(),
+            ...(attachmentIds?.length ? { attachmentIds } : {}),
+            ...(sessionSettings === undefined ? {} : { sessionSettings }),
+          });
       const stored = drafts.write(storageKey(conversationId), JSON.stringify(request));
       return { request, reused, persisted: stored.persisted };
     },

@@ -6,6 +6,7 @@ import s from './execution-details.module.css';
 import { ExecutionObservations } from './execution-observations';
 import { failureSummary } from './failure-presentation';
 import { SnapshotRefresh } from './snapshot-refresh';
+import { TaskRecovery } from './task-recovery';
 import {
   executionRecordUrl,
   executionTaskScope,
@@ -146,6 +147,7 @@ const stages: Record<string, string> = {
 };
 const events: Record<string, string> = {
   'execution.session.attached': '成员会话已建立',
+  'execution.inputs.prepared': '已准备用户附件',
   'agent.usage': '成员上报用量与缓存',
   'workspace.preview.saved': '页面预览快照已保存',
   'agent.progress': '成员回复记录',
@@ -242,11 +244,20 @@ function TechnicalDetails({ value }: { value: unknown }) {
   );
 }
 
-export function ExecutionDetails({ taskIds, onClose }: { taskIds: string[]; onClose: () => void }) {
+export function ExecutionDetails({
+  taskIds,
+  onClose,
+  onNetwork,
+}: {
+  taskIds: string[];
+  onClose: () => void;
+  onNetwork?: (agentId: string) => void;
+}) {
   const [records, setRecords] = useState<Records>();
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
   const [selectedRound, setSelectedRound] = useState('');
+  const [activeSection, setActiveSection] = useState('执行状态');
   const body = useRef<HTMLDivElement>(null);
   const recordUrl = executionRecordUrl(taskIds);
   const viewingRound = taskIds.includes(selectedRound) ? selectedRound : '';
@@ -416,14 +427,10 @@ export function ExecutionDetails({ taskIds, onClose }: { taskIds: string[]; onCl
               key={name}
               type="button"
               disabled={!records}
+              aria-pressed={activeSection === name}
               onClick={() => {
-                const section = body.current?.querySelector<HTMLElement>(
-                  `section[aria-label="${name}"]`,
-                );
-                if (!section) return;
-                section.tabIndex = -1;
-                section.scrollIntoView({ block: 'start' });
-                section.focus({ preventScroll: true });
+                setActiveSection(name);
+                body.current?.scrollTo({ top: 0 });
               }}
             >
               {name === '上下文、记忆与缓存' ? '上下文与记忆' : name}
@@ -451,8 +458,15 @@ export function ExecutionDetails({ taskIds, onClose }: { taskIds: string[]; onCl
             <p className={s.note}>
               更新于 {date(records.generatedAt)}。查看记录不会启动成员或重试任务。
             </p>
-            <section aria-label="执行状态">
+            <section aria-label="执行状态" hidden={activeSection !== '执行状态'}>
               <h3>执行状态</h3>
+              {(viewingRound || taskIds.at(-1)) && (
+                <TaskRecovery
+                  key={viewingRound || taskIds.at(-1)}
+                  taskId={viewingRound || taskIds.at(-1)!}
+                  onNetwork={onNetwork}
+                />
+              )}
               {tasks.length ? (
                 tasks.map((task) => {
                   const history = attempts
@@ -481,8 +495,14 @@ export function ExecutionDetails({ taskIds, onClose }: { taskIds: string[]; onCl
                 <p className={s.note}>当前会话没有可显示的任务记录。</p>
               )}
             </section>
-            <ExecutionObservations events={timeline} taskTitle={taskTitle} agentName={agentName} />
-            <section aria-label="成员交接">
+            <div hidden={activeSection !== '上下文、记忆与缓存'}>
+              <ExecutionObservations
+                events={timeline}
+                taskTitle={taskTitle}
+                agentName={agentName}
+              />
+            </div>
+            <section aria-label="成员交接" hidden={activeSection !== '成员交接'}>
               <h3>
                 成员交接 <span>{messages.length}</span>
               </h3>
@@ -547,7 +567,7 @@ export function ExecutionDetails({ taskIds, onClose }: { taskIds: string[]; onCl
                 <p className={s.note}>尚未记录成员之间的交接消息。</p>
               )}
             </section>
-            <section aria-label="工作目录">
+            <section aria-label="工作目录" hidden={activeSection !== '工作目录'}>
               <h3>工作目录</h3>
               {[...workspaceList, ...pendingWorkspaces].map((workspace) => {
                 const usedBy = bindings.filter((binding) => binding.workspaceId === workspace.id);
@@ -589,7 +609,7 @@ export function ExecutionDetails({ taskIds, onClose }: { taskIds: string[]; onCl
                 自有工具的文件、命令和网络访问仍取决于 Agent 及操作系统的权限。
               </p>
             </section>
-            <section aria-label="过程时间线">
+            <section aria-label="过程时间线" hidden={activeSection !== '过程时间线'}>
               <h3>过程时间线</h3>
               <p className={s.note}>
                 最近事件在前。优先显示关键进展和异常；逐条工具、回复与用量记录可在下方展开。

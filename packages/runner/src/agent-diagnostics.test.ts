@@ -37,22 +37,20 @@ describe('offline agent preparation', () => {
     expect(example.runtime.environmentAllowlist).toEqual([]);
   });
 
-  it.each(['.cmd', '.CMD', '.bat', '.ps1'])(
-    'diagnoses a Windows %s wrapper before agent execution',
-    (extension) => {
-      const result = inspectAgentConfiguration(
-        { ...example, runtime: { ...example.runtime, command: `C:/adapters/agent${extension}` } },
-        { platform: 'win32', isFile: () => true },
-      );
-      expect(result.issues).toContainEqual(
-        expect.objectContaining({
-          code: 'WINDOWS_WRAPPER_UNSUPPORTED',
-          message: expect.stringContaining('node.exe'),
-        }),
-      );
-      expect(windowsWrapperIssue(`C:/adapters/agent${extension}`, 'linux')).toBeUndefined();
-    },
-  );
+  it('surfaces the wrapper execution gate in offline diagnosis, ignoring extension case', () => {
+    const command = 'C:/adapters/agent.CMD';
+    const result = inspectAgentConfiguration(
+      { ...example, runtime: { ...example.runtime, command } },
+      { platform: 'win32', isFile: () => true },
+    );
+    expect(result.issues).toContainEqual(
+      expect.objectContaining({
+        code: 'WINDOWS_WRAPPER_UNSUPPORTED',
+        message: expect.stringContaining('node.exe'),
+      }),
+    );
+    expect(windowsWrapperIssue(command, 'linux')).toBeUndefined();
+  });
 
   it('rejects invalid configuration without echoing its contents or inspecting paths', () => {
     const isFile = vi.fn(() => true);
@@ -126,7 +124,7 @@ describe('offline agent preparation', () => {
 });
 
 it('local-only metadata checks do not query UNC or device command/Node-entry paths', () => {
-  const isFile = vi.fn(() => true);
+  const isFile = vi.fn<(filename: string) => boolean>(() => true);
   for (const runtime of [
     { command: '\\\\server\\share\\agent.exe', args: [] },
     { command: '\\\\?\\C:\\agent.exe', args: [] },

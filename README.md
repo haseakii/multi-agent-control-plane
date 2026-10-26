@@ -1,225 +1,196 @@
 # Multi-Agent Control Plane
 
-A **local-first, vendor-neutral control plane for ACP-compatible AI agents**.
+本地优先、供应商中立的多 Agent 协作控制台。通过 ACP 连接本机 Agent，让用户选择执行成员或负责人，统一管理任务、工作目录、消息、附件、产物和人工审批。
 
-The project does not hard-code Codex, Gemini, Claude, OpenHands, Antigravity, or any other agent into fixed roles. Agents are registered as generic runtimes with capabilities and permissions; roles are task-scoped; any eligible agent can be selected as the **Boss / Orchestrator**.
+Agent 与角色分开：任何具备资格和权限的成员都可以担任 **Boss / 负责人**。任务与结果持久保存，独立于某次 ACP 会话；提供商登录由 Agent 自身管理。
 
-## Start the Hermes workbench on this machine
+## Quick Start
 
-Double-click `启动工作台.cmd` to start or reuse the background service and open `http://127.0.0.1:8057/`. You can close the launcher window. Codex's configured `local_collaboration` entry also starts the same engine when needed. Use `停止工作台.cmd` for a normal shutdown; a later MCP call can start it again. `start-hermes.cmd start` / `stop` and the integration directory's `start.cmd` / `start-real.cmd` are aliases for this same daily service. The historical PowerShell development scripts are separate, explicit development tools, not daily startup instructions.
+### Windows：下载一个 EXE，直接打开
 
-Choose an execution mode, member and working directory, then enter your goal and send it. Direct execution works with an ordinary ready member; orchestration requires a member with the Boss role and MCP orchestration scope. The same conversation accepts instructions while running and follow-up requests after completion. Use the workbench's **使用说明** button for the complete flow and links to member setup, a new task and the current task process. The earlier three-prompt acceptance cap does not limit daily use.
+在 [GitHub Releases](https://github.com/haseakii/multi-agent-control-plane/releases) 下载 Windows x64 的 **Hermes-Workbench-…-windows-x64.exe**，双击即可。**无需解压、安装系统 Node / pnpm、修改配置或手填端口。** 工作台程序与配套 Node/npm、网页和依赖均在 EXE 内，首次自动准备私有安装并打开浏览器；添加 ACP 成员时再按需联网下载和登录。
 
-Use “协作成员” to register or edit local agents and check their connections. Editing a display name, description or capability labels preserves the observed connection and login state. Changes to runtime, authentication or collaboration authority require a fresh check. See the [current delivery guide](docs/guides/hermes-local-delivery.md) for startup, data, backup, recovery and verification scope.
+以后打开同一个 EXE、安装目录的 **工作台.exe**，或开始菜单中的 **Hermes 工作台** 即可；重复打开会复用已有服务。下载新版后直接打开，空闲时自动备份、升级并核对历史与权限；有任务未结束时先打开当前版本，稍后重开新版再升级。打开旧 EXE 不会自动降级。
 
-For multiple ACP products, search registered members by name or capability and filter those ready for tasks, needing connection/login attention, or disabled. “查看已有成员” in the product catalog and the member link after registration take you directly to that member's card; unfinished onboarding entries remain available to continue later.
+安装默认位于 `%LOCALAPPDATA%\MultiAgentControlPlane`，程序缓存位于 `%LOCALAPPDATA%\MultiAgentControlPlaneCache`。数据与下载文件分开，删除下载文件不影响已安装入口；关闭网页后后台继续运行。Windows 10/11 x64 使用系统内置 .NET Framework 4.8；当前 EXE 尚未代码签名，系统可能提示未知发布者。
 
-You can reopen a task using its workbench URL (`/?task=...`), including links from Codex or bookmarks. Opening the link only restores the conversation; it does not send or retry a task. Use the conversation's round markers to jump directly to earlier requests while reviewing a long exchange.
+ACP 下载和安装可在“协作成员 → 添加 / 下载 ACP → 已下载程序与安装记录”查看。每条新记录从安装开始就显示可复制的完整安装位置，默认在 `%LOCALAPPDATA%\MultiAgentControlPlane\agents` 下；Python 共享环境位于同级 `runtimes`。直接下载显示已接收大小，有总大小时显示百分比；npm / Python 依赖安装等无法获知总量的步骤显示当前阶段和耗时。关闭安装窗口后后台继续，重新打开记录即可查看；下载完成后还需要安装和连接检查。
 
-## Use the same engine from Codex or another MCP client
+进行中的安装也会显示在产品目录上方，每个步骤都有进度条；总量未知时显示活动条，不编造百分比。点击“取消下载 / 安装”会停止本次网络下载及安装进程，等后台停止后显示“已取消”。未完成文件保留，“重新安装”会使用新的目录；已安装成员和账号不受影响。进入“检查连接”时程序已安装完成，此阶段等待检查结束即可。
 
-The `local_collaboration` stdio MCP service exposes project/agent discovery, task submission,
-incremental progress, artifacts, follow-up, cancellation and preparation of a fixed code review.
-It is registered in this machine's Codex configuration and can start the local engine in the
-background; opening the web interface is optional. Both entries use the same durable data.
-An external client coordinates its selected ACP agents directly. The web Boss/Worker flow
-remains available, with no hard-coded vendor roles.
+### 从源码启动开发控制台
 
-Follow-up rounds inherit unmerged code in a new isolated workspace. Human permission decisions,
-review approval, merge and push remain in the web workbench. The MCP connection does not copy
-provider credentials or automatically inherit an external client's complete chat or model cache.
-See [external client setup and limits](docs/guides/hermes-local-delivery.md#网页与外部-agent-入口).
+前置条件：**Node.js 22+（当前验证版本为 22.22.2）、pnpm 10.11.0**；使用 Git 工作树和代码审阅时还需要 Git。下面命令均从仓库根目录执行，终端示例使用 PowerShell。
 
-## Core idea
+**1. 安装锁定依赖并构建工作区包。**
 
-```text
-User / API / UI
-      |
-      v
-+---------------------------+
-|   Agent Control Plane     |
-|---------------------------|
-| Agent Registry            |
-| Task Engine               |
-| Boss Runtime              |
-| Message Router            |
-| Context / Memory          |
-| Artifact Store            |
-| Policy / Approval         |
-| Runner / Workspace        |
-+-------------+-------------+
-              |
-              v
-          ACP Runtime
-      /       |        \
-  Agent A   Agent B   Agent C
+```powershell
+node --version
+pnpm --version
+pnpm install --frozen-lockfile
+pnpm build
 ```
 
-## Principles
+`pnpm --version` 应为 `10.11.0`，与根目录 `packageManager` 和 CI 一致。共享包通过 `dist` 导出，首次启动前必须构建；修改 `packages/*` 后也需要重新构建相关包及其依赖方。
 
-- **ACP-first, vendor-neutral.** Specific vendors are adapters/configuration, not domain concepts.
-- **Agent != role.** Roles are dynamic and task-scoped.
-- **Boss is an agent with bounded orchestration privileges.** No fixed supervisor model is required.
-- **Agent-managed auth by default.** Authentication remains owned by each ACP agent.
-- **All agent-to-agent communication is observable.** Logical A→B communication is routed through the control plane.
-- **Tasks outlive conversations.** Durable task state is independent from ACP session state.
-- **Artifacts are references, not chat payloads.** Large outputs live in a content-addressed artifact store.
-- **Policy has an explicit boundary.** Opaque agent-owned tools are not assumed to be intercepted.
-- **LocalRunner is not a security sandbox.** Git worktrees do not restrict OS-level access.
-- **OpenHands is optional integration, not a core dependency.**
+**2. 在第一个终端启动 API，明确使用开发数据目录。**
 
-## Current implementation progress
+```powershell
+$env:HOST = '127.0.0.1'
+$env:PORT = '3000'
+$env:CONTROL_PLANE_DB = "$PWD/.data/development/control-plane.sqlite"
+pnpm dev:server
+```
 
-R5 adds operator task drafts: save a goal before connecting an Agent, edit its title and
-objective, then explicitly start the same durable task. Unexecuted, unreferenced drafts
-can be deleted after confirmation. Executed tasks retain their objective/history and
-allow display-title changes; further requirements use task instructions. See the
-[task-record lifecycle and API](docs/architecture/task-record-management.md).
+**3. 在第二个终端启动网页。**
 
-R6 adds project SSE notifications: task changes refresh the workbench as audit events
-arrive, and reconnects can replay missed event notices. The console falls back to timed
-refresh if the stream is unavailable. Subscriptions never start or retry Agent work.
+```powershell
+pnpm dev:web
+```
 
-The main workspace now includes mediated task-to-task messaging with correlated result
-delivery, explicit routing and retry receipts; durable operator instructions delivered at
-the next ACP prompt boundary; atomic assignment/attempt creation; and live execution
-authority checks before mediated mutations. ContextBuilder supplies and records selected
-task/dependency/artifact context before each execution. The console puts child-task progress,
-result access and operator input ahead of the collapsed execution history. Assignments now
-use durable task-local directories or Git worktrees, reuse them on recovery, and publish
-tracked and non-ignored new Git files for review. Shared-directory execution is an explicit project choice.
-The console can prepare immutable change reviews, approve a specific snapshot and separately
-merge it into the unchanged clean local target branch. Existing compatible target changes
-are retained. Reviewed commits can be pushed through a separate explicit approval and
-confirmation flow. Operator cleanup previews the managed directory, safe branch deletion
-and merged review refs; it preserves durable history and refuses content that has not been
-preserved. Unmerged refs and independent branch history remain available.
-Project memory now supports manual proposals, acceptance/rejection, corrections and archive,
-with task/artifact provenance. Accepted records are saved in each execution context snapshot;
-SQLite FTS5 searches accepted memory and published text artifacts from the console.
-Boss and Worker can also search project knowledge and propose memory through explicitly
-scoped MCP tools. Proposals retain the actual Agent/task provenance and require human
-acceptance. The console can edit each Agent's collaboration scopes independently of Boss eligibility.
-Existing Agents can also become Boss candidates through the settings UI. A first-collaboration
-guide links registration, role selection, explicit ACP connection checks, workspace setup and
-goal entry. Initial Boss discovery works without capability filters, then can narrow candidates.
-Project policy is versioned and editable from the console: mediated Fleet tools can be
-allowed or denied per project, local Git merges require approval or can be denied, and
-requiring OS isolation refuses new execution on the current LocalRunner.
+打开 [开发控制台](http://127.0.0.1:5173/)。API 使用 [3000 端口](http://127.0.0.1:3000/health)，Vite 将 `/api` 和 `/health` 代理给它。可在另一个终端检查：
 
-The message panel now shows persisted delivery receipts, pending/attention filters and direct
-recipient-task navigation. Reading the view never starts or retries an Agent, and a completed
-turn is not presented as proof that the Agent understood the message.
+```powershell
+Invoke-RestMethod http://127.0.0.1:3000/health
+Invoke-RestMethod http://127.0.0.1:5173/health
+```
 
-Deterministic ACP subprocess collaboration and the bounded real Codex + Antigravity
-Boss-to-Worker-to-Boss mainline have recorded evidence. The agreed V0 delivery and local
-acceptance gates are complete: standard pnpm checks passed with 425 tests, and an authorized
-fresh offline frozen-lockfile installation reused 250 packages with zero downloads.
-Broader real Worker-to-Worker and external-adapter permission compatibility remain outside
-that evidence. See the [V0 delivery checklist](docs/roadmap/v0-delivery-checklist.md).
-Richer resource/Agent-specific policy is an enhancement, not an additional V0 gate.
-Search indexes text prefixes and reports
-unindexed legacy artifacts; it does not promise exhaustive large-file search. Source integration does not update any
-already-running release service.
+两处都应返回 `status: ok` 和 `service: multi-agent-control-plane`。首次默认空库，启动与查看页面不会发送模型提示。分别在两个服务终端按 Ctrl+C 停止。IDE 调试、热更新和数据隔离见 [本地开发指南](docs/guides/local-development.md)。
 
-## Stack
+### 使用 Windows 完整发布包
 
-- Node.js 22+ and pnpm 10
-- TypeScript strict mode
-- Fastify API
-- React + Vite
-- SQLite + Drizzle ORM
-- Zod runtime schemas
-- Vitest + Playwright
-- GitHub Actions
+ZIP 完整目录包保留给维护和自定义部署：完整解压后双击 **打开工作台.cmd**，或在 PowerShell 中运行 `.\打开工作台.cmd`。它与 EXE 共用安装、启动和升级逻辑，首次安装默认放在 `%LOCALAPPDATA%\MultiAgentControlPlane`。安装目录继续提供 **启动工作台.cmd**、**停止工作台.cmd**、**升级工作台.cmd** 和 **恢复工作台.cmd**。ACP 程序在“协作成员 → 添加 / 下载 ACP”中下载和登录，也可使用本机已有入口。
 
-## Quick start
+工作台地址由启动器直接打开；新安装优先使用 **3000**，被占用时自动选择可用端口并保存。已有安装保留原端口和客户端连接配置；本机已有的日用 Hermes 安装使用 [8057](http://127.0.0.1:8057/)。关闭浏览器不会停止后台服务。
 
-Prerequisites: Node.js 22+ and pnpm 10.
+源码开发控制台与日用 Hermes 工作台共用核心引擎，启动方式和页面功能各有侧重。`pnpm build` 构建 `apps/*` 与 `packages/*`；Hermes 网页还依赖单独准备的上游源码和依赖，构建方法见 [Hermes 集成说明](integrations/hermes-workbench/README.md)。新克隆的仓库不包含本机安装目录，根目录的中文快捷脚本仅适用于已经完成安装的本机环境。
 
-The default install targets Windows, macOS, and Linux (glibc or musl) on x64 or
-arm64, using the native SQLite binaries bundled with the pinned `better-sqlite3`
-package. Its unnecessary install-time rebuild is disabled so Windows does not
-require Visual Studio C++ build tools. Other operating systems or architectures
-need a separately configured source build and are not covered by this setup.
+日常启动、首次安装、升级与恢复见 [交付指南](docs/guides/simple-delivery.md)。
 
-```bash
-pnpm install
+## 完成第一次协作
+
+1. **准备项目和工作目录。** 新建项目时可使用托管空目录；Windows 也支持验证并关联已有本地目录。处理代码时选择合适的独立任务目录或 Git 工作树；Git 工作树需要源仓库已有提交。核对执行影响确认中的实际路径后再发送。
+2. **一键安装 ACP 成员。** Hermes 打开“协作成员 → 添加 / 下载 ACP”，在产品卡上点击“安装”，工作台自动下载固定版本、准备运行环境、配置入口并检查连接，无需填写路径。Node.js 使用工作台自带版本；Python 包使用自动下载的私有 uv / Python 环境，不修改系统 Python、全局 PATH 或注册表。“已有程序 / 详情”保留本机入口方式；“已下载程序与安装记录”可查看进度、失败重试和路径。源码控制台使用“成员与设置 → 添加成员”。
+3. **登录后直接使用。** 安装完成后点击“登录并使用”；需要终端的成员会打开独立登录窗口。登录成功即选入未发送草稿，保留原目标和工作目录；不会自动发送任务。连接、登录和安装状态分别显示，登录取消或失败可在原页面重试。不报告登录状态的成员会明确标注。源码控制台需选择有负责人资格及 `boss.orchestration` 权限的成员；Hermes 也支持“直接交给成员”。
+4. **发送目标并跟踪原任务。** Boss 可以发现成员、委派子任务、读取持久化产物后继续汇总。运行中的补充要求在安全提示边界带入；结束后的追问建立关联轮次，保留前文、结果引用和原始附件。
+5. **检查结果并处理审批。** 任务完成、实时文件差异和页面预览用于检查执行结果；固定代码审阅、批准、本地合并和远端推送是分别确认的操作。失败、中断或回复丢失时，先查询原任务与工作目录，再决定恢复或追问。
+
+可以先保存任务草稿，准备好成员后再执行。真实 Agent 的安装、登录和模型使用由你选择；启动控制台不要求预先绑定某个供应商。已有适配器的离线配置检查见 [真实 Agent 预检](docs/guides/real-agent-preflight.md)。
+
+## 从 MCP 客户端接入
+
+在 Hermes 的 **接入应用 · MCP** 中选择项目和客户端，授予“任务与追问”或“只查看”，再使用直接显示的完整配置或安装入口连接。“其他 MCP 客户端”生成通用 stdio 配置，无需手填 HTTP 地址。已有连接可管理多个项目，撤销某个连接不会删除任务和附件。客户端连接与提供商登录分别管理。
+
+首次使用没有项目时，可在此窗口填写项目名称并点击“创建项目并选中”，然后点击“授权并生成接入”；创建项目不会自动授权或运行任务。按钮不可点时，旁边会说明是未勾选项目、项目目录不可用，还是列表读取失败；读取失败可点“重新读取项目”。
+
+外部 stdio MCP 客户端通过同一个引擎读取项目、成员、任务进展和产物，也可按授权提交、追问、取消任务或准备固定审阅。提交后保留返回的任务 ID，使用游标读取增量进展；同一请求重试保留原幂等键，后续轮次使用最新任务 ID。人工权限决定、批准、合并和推送在网页处理。
+
+源码 API、发行包前台入口与安装后入口均提供客户端管理和 ACP 安装接口。前台模式的 MCP 连接需要服务保持运行；安装模式继续使用统一启动器按需启动。新环境需要自行建立客户端连接，本机既有的 `local_collaboration` 配置不会随源码克隆提供。连接文件包含私有本地令牌，应保留在私有目录。详见 [MCP 接入与权限边界](docs/guides/hermes-local-delivery.md#网页与外部-agent-入口)。
+
+运行设置先显示已缓存选项，点击“读取可用设置”会通过无提示 ACP 会话读取模型和参数，最多等待 60 秒。运行中的任务可查看已确认参数，结束后再调整下一轮。对话区可点“放大对话”阅读，按 Esc 返回，未发送草稿保留。成员自己的 MCP 初始化失败需结合该成员日志排查；工作台接入配置不会代替它管理的 MCP 配置。
+
+自动安装支持 Windows 的 ZIP、tar.gz / tgz、原生可执行文件、固定版本 npm 和 uvx 分发；目录需要提供本平台入口。npm 安装禁用脚本，Python 仅安装 wheel，依赖源代码构建或额外外部组件的产品可能需要已有本机入口。手动注册仍需绝对路径；`.cmd` / `.bat` 由下载管理的适配器处理，不能直接作为手动 ACP 主进程入口。账号授权始终由成员自己管理。
+
+## 项目逻辑与目录
+
+```text
+用户 / 网页 / MCP 客户端
+          |
+    项目、成员与权限
+          |
+    持久任务、分派与执行尝试
+          |
+    工作目录 → LocalRunner → ACP 会话 → Agent
+          |
+    消息投递、产物落库、负责人继续汇总
+          |
+    人工检查、固定审阅、独立确认合并 / 推送
+```
+
+| 目录                                            | 职责                                                |
+| ----------------------------------------------- | --------------------------------------------------- |
+| `apps/server`                                   | Fastify API、运行组合、成员接入、任务编排、发布服务 |
+| `apps/web`                                      | 源码开发控制台，React + Vite                        |
+| `integrations/hermes-workbench`                 | Hermes Web 适配与构建，复用同一核心引擎             |
+| `packages/core`                                 | 领域模型、ID、Zod 契约与共享规则                    |
+| `packages/task-engine`                          | 任务状态机、执行尝试、指令、上下文与项目记忆        |
+| `packages/acp-runtime`、`packages/runner`       | ACP 生命周期与本机进程管理，分别负责协议和进程      |
+| `packages/message-router`、`packages/fleet-mcp` | 可审计消息投递、内部协作桥及外部 MCP 客户端         |
+| `packages/policy`、`packages/workspace`         | 策略、审批、工作目录、Git 审阅、合并、推送与清理    |
+| `packages/storage`、`packages/artifact-store`   | SQLite / Drizzle、迁移、仓储接口与文件产物存储      |
+| `tests/e2e`、`scripts`                          | 浏览器回归、完整发布包与安装维护工具                |
+| `docs`                                          | 架构、ADR、开发指南、路线与按日期保留的验收记录     |
+
+V0 聚焦单机协作闭环：**用户 → Boss → 发现成员 → 委派 Worker → 持久化结果 → Boss 继续 → 最终回复**。已有实现还覆盖任务草稿、取消与恢复、关联追问、输入附件、项目记忆与搜索、SSE 进展、独立工作区和人工 Git 交付。预留的 CLI、Context、Orchestrator 等目录不等于已经提供独立产品或分布式部署。
+
+架构与范围见 [总览](docs/architecture/overview.md)、[V0 范围](docs/architecture/v0-scope.md) 和 [V0 交付记录](docs/roadmap/v0-delivery-checklist.md)。按日期的真实 Agent 记录与确定性模拟测试分别说明验证范围。
+
+## 开发数据与配置
+
+按 Quick Start 启动时，SQLite 位于仓库的 `.data/development/control-plane.sqlite`，附件保存在 SQLite 中，结果产物、工作目录和目录缓存默认在同级的 `artifacts`、`workspaces` 和 `cache` 下。数据库打开时自动应用仓库内的迁移。
+
+| 源码 API 环境变量          | 用途                                              |
+| -------------------------- | ------------------------------------------------- |
+| `HOST`、`PORT`             | API 监听地址和端口，默认 `127.0.0.1:3000`         |
+| `CONTROL_PLANE_DB`         | SQLite 路径，建议像 Quick Start 一样设为绝对路径  |
+| `CONTROL_PLANE_ARTIFACTS`  | 可选覆盖结果产物目录，默认跟随数据库所在目录      |
+| `CONTROL_PLANE_WORKSPACES` | 可选覆盖托管工作目录，默认跟随数据库所在目录      |
+| `CONTROL_PLANE_DEMO`       | 显式设为 `1` 时填入演示记录；真实使用保持默认关闭 |
+
+`pnpm dev:server` 的进程工作目录为 `apps/server`；未设置数据库变量时，默认文件为该目录下的 `.data/control-plane.sqlite`。设置绝对路径可以让终端与 IDE 使用明确、独立的数据。源码开发入口要求每个数据目录只运行一个 API 进程；发布服务另有实例锁和安装管理，开发服务应使用自己的数据目录。
+
+完整发布服务通过 `config.json` 配置端口、数据目录和日志；`dataDir` 相对该配置文件解析。安装后的当前版本与配置由 `installation.json` 选择。源码数据、发布数据及本机旧验收目录分别管理，升级不会将源码构建自动替换进已运行的服务。
+
+## 验证
+
+安装依赖后从仓库根目录执行：
+
+```powershell
 pnpm lint
 pnpm typecheck
 pnpm test
 pnpm build
+```
+
+浏览器回归另需 Playwright 浏览器：
+
+```powershell
+pnpm exec playwright install chromium
 pnpm test:e2e
 ```
 
-Browser tests start their own API and web servers; stop any existing services on
-ports 3000 and 4173 before running them. Tests never reuse your normal local API
-or its database.
+Windows 已安装 Edge 时，可改为：
 
-Start the API and web UI in separate terminals:
-
-```bash
-pnpm dev:server
-pnpm dev:web
+```powershell
+$env:PLAYWRIGHT_CHANNEL = 'msedge'
+pnpm test:e2e
 ```
 
-The API health endpoint is available at [http://127.0.0.1:3000/health](http://127.0.0.1:3000/health). The web control-center bootstrap runs at [http://127.0.0.1:5173](http://127.0.0.1:5173).
+浏览器测试会启动自己的 API / Web 服务，占用 **3000 / 4173**，每次默认使用新的临时数据目录。运行前先停止自己启动的冲突开发服务；若设置 `CONTROL_PLANE_E2E_DATA_DIR`，每轮使用新的专用目录。默认套件使用确定性目录元数据；联网检查独立执行：
 
-See [local development and IDEA debugging](docs/guides/local-development.md) for
-the shared API/Web run configurations, isolated data paths, and source debugging.
+```powershell
+pnpm test:e2e:live
+```
 
-## Repository status
+该命令只验证官方 ACP 目录元数据刷新。单元、进程及浏览器回归使用模拟 Agent，不调用真实模型。状态矩阵由纯逻辑测试负责，入口保留代表性集成验证；增加用例前见 [测试范围与成本](CONTRIBUTING.md#test-scope-and-cost)。
 
-The local V0 implementation includes durable SQLite tasks, assignments, execution attempts, messages, artifacts and approvals; ACP runtime registration; explicit Boss selection; task submission/cancellation/recovery; and a task-first web workspace. Deterministic fixture and local API/browser regressions cover these paths. Opaque Agent tools are not guaranteed intercepted, and LocalRunner is not an OS sandbox.
+## 发布、升级与备份
 
-Real two-Agent Boss delegation completed with Codex and Antigravity; the durable result and restart evidence are recorded in the V0 delivery checklist. External ACP executables require their own installation and authorization; `.cmd`, `.bat` and `.ps1` wrappers are rejected. New projects can create an empty managed workspace or explicitly validate and bind an existing Windows local directory; see B0 below.
+发布构建当前限定已准备锁定依赖和 Hermes 上游源码的 **Windows x64** 机器，Node 需为带有效 OpenJS 签名的 **22.22.2**。从仓库根目录生成一个新目录：
 
-## Windows directory release (A0-R1, including stopped backup/restore)
+```powershell
+node scripts/publish.mjs --output release/new-version
+```
 
-Builders run `pnpm release:windows --output NEW_DIRECTORY` on the verified Windows x64 machine with existing locked dependencies. The builder includes the local official Node runtime and its LICENSE, production dependencies (no pnpm links), workspace dist, web dist and SQLite migration journal. The package also includes the repository Apache LICENSE and full notices for the actual bundled frontend dependencies. The builder requires Node v22.22.2 with a valid OpenJS Foundation signature and never downloads a replacement. It refuses to overwrite a directory and checks native SQLite loading before reporting success.
+统一入口编译服务端与工作区包，运行本地测试，检查并构建 Hermes 网页，打包 Node、依赖和迁移，再逐文件验证完整性。构建输出和旁边的 `*-validation` 保存验证证据；构建不安装软件，也不自动升级当前服务。
 
-Recipients run **`start.cmd`** in a foreground terminal. They need no IDE, pnpm or compiler. A single Fastify loopback port serves the UI and API with the same Host/Origin checks. `config.json` controls port/dataDir/logLevel; dataDir is anchored to that file, with SQLite/artifacts/workspaces/logs kept together and separate from developer environment settings. The package starts empty and never seeds or calls Agents automatically. It excludes first-party test data and user credentials; third-party packages may retain their upstream tests/examples.
+日用升级选择完整新包，由安装管理器正常停机、备份、恢复验证并切换当前版本；异常时保留原数据和诊断，使用恢复入口。备份包含任务、输入附件与引用的结果产物，**外部源目录、Agent 安装及提供商凭据需自行管理**。已有工作区可能仍被历史任务引用，清理应走工作区维护流程。详见 [启动、升级和恢复](docs/guides/simple-delivery.md) 及随包 `RUN.txt`。
 
-Stop with Ctrl+C in that terminal and wait for exit. The release uses a fail-closed exclusive data-directory lock; after a crash, verify the recorded process has exited before manually removing only a stale lock as explained in `RUN.txt`. Stopped consistent backup/restore are now available through `start.cmd backup --config CONFIG --output NEW_BACKUP` and `start.cmd restore --backup BACKUP --output NEW_OR_EMPTY_DIRECTORY`; see `RUN.txt` for exact steps. Backups preserve private user database content, validated configuration, versions, checksums and only referenced artifacts. They exclude logs, workspace source and external ACP installs/logins; database metadata may retain external paths. Keep backups local and private. Restore validates everything before activating a new directory, never overwrites original data, and does not replay tasks or call Agents. Marked partial directories cannot start. No external stop command is implemented; do not treat a running WAL database copy as a backup. No service, autostart, firewall changes, public binding, Docker or desktop shell are required.
+## 执行与权限边界
 
-## V0 success criteria
+- 本机单用户服务，默认 loopback，并检查 Host / Origin；不作为公开互联网或多租户服务部署。
+- Agent 认证由 Agent 自管，任务负载不携带提供商凭据。Agent 之间通过控制平面通信并保留审计，大结果通过产物引用传递。
+- 策略控制已由控制平面介入的调用及适配器实际上报的权限请求，按真实执行边界记录 `enforced`、`cooperative` 或 `unavailable`。LocalRunner 与 Git 工作树不提供 OS 安全沙箱，也不保证拦截 Agent 自有工具。
+- 新执行与异步写入边界重新核对当前授权；审批、审阅、合并及推送分别处理。任务失败或超时不会自动取得重试许可。
 
-V0 is successful when a user can register arbitrary stdio ACP agents, authorize them independently, choose any eligible agent as Boss, and have the Boss discover and delegate tasks to another ACP worker through the control plane with durable tasks/messages and visible execution history.
-
-See [docs/architecture/overview.md](docs/architecture/overview.md), [docs/architecture/v0-scope.md](docs/architecture/v0-scope.md), and [docs/roadmap/v0.md](docs/roadmap/v0.md).
-
-See [real-agent preflight](docs/guides/real-agent-preflight.md) for the disabled
-Codex ACP example and offline-only `pnpm diagnose:agent` command.
-
-
-## ACP access center A0
-
-Open Agent & project settings for the official catalog and existing local entries. Catalog reads are offline by default. Only the explicit refresh button fetches the fixed generic ACP registry URL; it rejects redirects, times out after 8 seconds and limits metadata to 1 MiB. The cached contract follows the official agent schema (binary/npx/uvx), with local resource limits. Text and distribution commands are untrusted display data; no icons, packages, environment values or commands are downloaded/executed from catalog entries.
-
-Binding an existing entry requires explicit local executable/Node entry paths and arguments. It saves an ordinary AgentDefinition, defaults to disabled, and never installs or starts an Agent. Catalog versions do not prove installed versions or publisher identity. This first increment does not persist software provenance or manage updates; custom entries remain supported. Enable and probe are separate explicit actions. Probe starts the selected third-party process and sends initialize only; it does not create sessions, authenticate or send model prompts. Negotiation displays protocol/agent information, capabilities, auth methods and observation time; opaque extensions are withheld and sensitive/oversized metadata is redacted or bounded. Unknown login stays unknown. Existing explicit nonterminal ACP authentication remains separate; terminal auth requires a real interactive terminal and is never sent as authenticate.
-
-Role intention, ACP connectivity, authentication, model execution and Fleet permission scopes are separate. Boss is a product role, not a provider or ACP capability. The page displays configured scopes, not live credentials, and does not grant external MCP/filesystem/terminal access. Agent-owned tools are not an OS sandbox boundary. Install/update and catalog login are visibly unavailable in A0. Google self-built-client licensing remains unconfirmed; do not use consumer headless/OAuth workarounds.
-
-A0 requires no SQL schema migration or existing AgentDefinition rewrite. B0 adds the sixth migration described below. Negotiation remains process-local and becomes unknown on server restart or definition changes. Catalog cache lives under data/cache and is deliberately excluded from private backups; restored registrations still work independently of the catalog. Keep M2-R1 and its pre-A0 data backup as the rollback baseline. Set CONTROL_PLANE_E2E_DATA_DIR for isolated browser test DB/artifact/workspace paths; browser screenshots from deterministic cache fixtures are labeled separately from live official-catalog captures.
-
-
-## A0-R1 delivery boundaries
-
-The Windows directory package includes the ACP access center and the reviewed A0-R1 fixes: stale probe/auth responses cannot overwrite changed configurations; authentication metadata and public observations are bounded without shortening executable authentication IDs; explicit local cwd must exist as a directory. Existing-entry binding remains disabled by default.
-
-Installation, upgrades, uninstall and persistent login management are not implemented. Existing nonterminal ACP authentication is an explicit action; terminal login remains outside this API. Probe means initialize/connectivity only, and becomes unknown again after a definition change or server restart. Catalog cache is optional and excluded from private backups. External Agent installations and their credentials are not bundled.
-
-Separate acceptance evidence now covers the deterministic Boss -> Worker -> Boss API/CLI chain and a real Codex + Antigravity mainline. Codex discovered/delegated to Antigravity, read its durable `17 × 19 = 323` result, and resumed to save the final summary. Both tasks, their message and artifacts survived restart. This used the user's original 3 ACP prompts plus an explicitly authorized 1-prompt recovery; no Worker was rerun during recovery. See [the dated real-agent record](docs/guides/real-agent-preflight.md) and `.run/collaboration-integration-20261022/real-pair/finalization.json`. The user also confirmed the historical 8031 console displayed after manual Edge address-bar navigation; this does not validate every browser action. Physical Windows Ctrl+C remains unverified; automated shutdown evidence uses application close or a test-owned IPC signal wrapper.
-
-
-## B0: bind an existing Windows directory
-
-In the new-project form, choose **Workspace source → existing directory**, enter an absolute path, validate it, and confirm the displayed actual path before creating the project. The API is POST /api/directories/validate, followed by POST /api/projects with workspace.kind=existing-local, validationId and confirmedPath. Managed empty workspaces remain the default. Validation expires after five minutes; a changed path or directory identity requires validation again. Binding only reads metadata for the explicitly selected path and its parents. It never lists source contents, runs Git, clones, copies, creates a missing directory, performs a write probe, cleans up source, or starts an Agent. A read-only directory can be bound; an eventual task may still fail if its requested work needs writing.
-
-B0 accepts existing readable directories on Windows fixed local disks. Relative/drive-relative paths, UNC/device paths, drive/home roots, credential directories, reparse points (including junctions), and overlap with runtime/install data or another bound project are rejected. Built-in Windows PowerShell reads volume/reparse metadata using a constant script and data-only input; no software installation or execution-policy change is required. The displayed canonical path resolves short-name and case aliases; redirection through links is rejected rather than silently followed. This checks metadata at validation and before execution, not an OS isolation guarantee against a concurrent privileged filesystem change.
-
-Submitting a goal in a bound project opens an execution-impact confirmation with the exact workspace path. The request binds workspace ID, path and a runtime-specific version; cancellation sends no goal. Recovery also requires rechecking that path. Restart/restore invalidates the old confirmation. A conflicting explicit Agent cwd is rejected before spawn; accepted existing-directory runs use the same canonical process cwd and ACP session cwd. Binding never grants MCP/filesystem/terminal scopes, creates persistent security authorization, or prevents opaque Agent-owned tools from accessing other paths. Only run tasks you intend to authorize.
-
-The sixth SQLite migration adds workspace_directory_bindings without rewriting existing workspace JSON. Existing unbound workspaces keep their prior behavior. Migration is forward-only: preserve the A0-R1 package and a stopped pre-B0 data backup; never open a migrated B0 database with A0-R1. Private restore accepts only its exact application/migration format, so use the corresponding package for older backups.
-
-Private backups include database binding metadata and referenced result artifacts, **not external workspace source**, logs, external Agent installs or credentials. Backup/restore do not visit the external path and can preserve an offline binding. After restore, verify the path and identity before explicit execution; an unavailable or replaced directory cannot run automatically. Keep database backups private: they still contain user task content and directory metadata. B0 does not provide rebinding, cloning, directory cleanup or a native folder picker. Current B0 source checks are separate from the frozen A0-R1 directory package; no new release package is implied by this section.
+开发约束见 [AGENTS.md](AGENTS.md) 与 [CONTRIBUTING.md](CONTRIBUTING.md)。本仓库代码采用 [Apache-2.0](LICENSE)；Hermes 上游及打包依赖保留各自许可证，Hermes 的授权范围见 [集成许可说明](integrations/hermes-workbench/README.md#限制与下一步)。

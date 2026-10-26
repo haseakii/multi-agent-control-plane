@@ -14,7 +14,7 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  padding: 20px;
+  padding: 16px;
   border-bottom: 1px solid var(--h-line);
 }
 .header h2 {
@@ -38,10 +38,10 @@
 .body {
   min-height: 0;
   overflow: auto;
-  padding: 0 20px 24px;
+  padding: 0 16px 20px;
 }
 .navigation {
-  padding: 12px 20px;
+  padding: 12px 16px;
   border-bottom: 1px solid var(--h-line);
   flex-shrink: 0;
 }
@@ -63,7 +63,13 @@
   border: 1px solid var(--h-line);
   background: var(--h-bg-pane);
   padding: 5px 8px;
-  border-radius: 4px;
+  border-radius: 7px;
+}
+.navigation button[aria-pressed='true'] {
+  background: var(--h-bg-soft);
+  border-color: #e17a4c;
+  color: var(--h-text);
+  font-weight: 600;
 }
 .navigation button:focus-visible,
 .navigation select:focus-visible {
@@ -71,7 +77,7 @@
   outline-offset: 2px;
 }
 .body section {
-  margin-top: 24px;
+  margin-top: 16px;
 }
 .body h3 {
   margin: 0 0 12px;
@@ -91,6 +97,7 @@
   margin-top: 8px;
   border: 1px solid var(--h-line);
   overflow-wrap: anywhere;
+  border-radius: 10px;
 }
 .card strong {
   font-size: 12px;

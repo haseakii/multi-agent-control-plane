@@ -15,15 +15,29 @@ import {
   AgentRemovalPreviewSchema,
   RemoveAgentInputSchema,
   SelectProjectBossInputSchema,
+  AgentCatalogSourceInputSchema,
+  AgentCatalogSourceViewSchema,
 } from '@control-plane/core';
-import type { AgentDefinition, AgentId, Project } from '@control-plane/core';
+import type {
+  AgentDefinition,
+  AgentId,
+  Project,
+  AgentCatalogSourceInput,
+  AgentCatalogSourceView,
+} from '@control-plane/core';
 import type { SqliteStorage } from '@control-plane/storage';
+import {
+  SqliteAgentCatalogSourcesRepository,
+  AgentCatalogSourceConflictError,
+  type AgentCatalogSourcesRepository,
+} from '@control-plane/storage';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 
 export type AgentRuntimeState = AgentRuntimeObservation & {
   definitionHash?: string;
   error?: string | undefined;
   localEntry?: { offlineChecksPassed: boolean; issues: Array<{ code: string; message: string }> };
+  registrationSource?: AgentCatalogSourceView;
 };
 
 export type RegisteredAgentView = {
@@ -32,6 +46,8 @@ export type RegisteredAgentView = {
   readiness: AgentReadiness;
   authMethods: AgentAuthMethodSummary[];
   error?: string | undefined;
+  localEntry?: AgentRuntimeState['localEntry'];
+  registrationSource?: AgentCatalogSourceView;
 };
 
 export class AgentControlError extends Error {
@@ -47,6 +63,7 @@ export class AgentControlError extends Error {
 
 export type AgentControlServiceOptions = {
   now?: (() => string) | undefined;
+  catalogSources?: AgentCatalogSourcesRepository;
 };
 
 function definitionHash(definition: AgentDefinition) {
@@ -69,6 +86,7 @@ function connectionFingerprint(definition: AgentDefinition | undefined) {
 export class AgentControlService {
   private readonly runtimeStates = new Map<AgentId, AgentRuntimeState>();
   private readonly now: () => string;
+  private readonly catalogSources: AgentCatalogSourcesRepository;
   private readonly configurationGenerations = new Map<string, number>();
   private readonly requestGenerations = new Map<string, number>();
   private readonly observationsInFlight = new Map<string, number>();
@@ -144,6 +162,75 @@ export class AgentControlService {
     options: AgentControlServiceOptions = {},
   ) {
     this.now = options.now ?? (() => new Date().toISOString());
+    this.catalogSources =
+      options.catalogSources ?? new SqliteAgentCatalogSourcesRepository(storage.sqlite);
+  }
+
+  private registrationSource(definition: AgentDefinition): AgentCatalogSourceView | undefined {
+    try {
+      const record = this.catalogSources.get(definition.id);
+      if (!record) return undefined;
+      const runtimeFingerprint = createHash('sha256')
+        .update(JSON.stringify(definition.runtime))
+        .digest('hex');
+      return AgentCatalogSourceViewSchema.parse({
+        status: record.runtimeFingerprint === runtimeFingerprint ? 'linked' : 'entry-changed',
+        record,
+      });
+    } catch {
+      // Optional provenance failures must not erase connection or login evidence.
+      return { status: 'unavailable', record: null };
+    }
+  }
+
+  associateCatalogSource(id: string, input: unknown, rawSource: AgentCatalogSourceInput) {
+    const request = z
+      .object({
+        expectedDefinitionHash: z.string().regex(/^[a-f0-9]{64}$/),
+        expectedRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+      })
+      .strict()
+      .parse(input);
+    const source = AgentCatalogSourceInputSchema.parse(rawSource);
+    return this.storage.repositories.transaction(() => {
+      const definition = this.requireAgent(id);
+      if (definitionHash(definition) !== request.expectedDefinitionHash)
+        throw new AgentControlError(
+          409,
+          '启动配置已变化，请重新核对后关联目录来源。',
+          'AGENT_CONFIGURATION_CHANGED',
+        );
+      const runtimeFingerprint = createHash('sha256')
+        .update(JSON.stringify(definition.runtime))
+        .digest('hex');
+      const previous = this.catalogSources.get(id);
+      const unchanged =
+        previous &&
+        previous.runtimeFingerprint === runtimeFingerprint &&
+        Object.entries(source).every(
+          ([key, value]) => previous[key as keyof typeof previous] === value,
+        );
+      if (!unchanged) {
+        try {
+          this.catalogSources.save(
+            id,
+            request.expectedRevision,
+            source,
+            runtimeFingerprint,
+            this.now(),
+          );
+        } catch (error) {
+          if (error instanceof AgentCatalogSourceConflictError)
+            throw new AgentControlError(
+              409,
+              '目录关联已在其他位置更新，请重新读取后再确认。',
+              error.code,
+            );
+          throw error;
+        }
+      }
+      return this.currentView(id);
+    });
   }
 
   list(): RegisteredAgentView[] {
@@ -163,8 +250,15 @@ export class AgentControlService {
       : undefined;
     const current = this.runtimeStates.get(id);
     const revision = definition ? { definitionHash: definitionHash(definition) } : {};
+    const source = definition ? this.registrationSource(definition) : undefined;
+    const sourceMetadata = source ? { registrationSource: source } : {};
     if (current) {
-      return { ...structuredClone(current), ...revision, ...(localEntry ? { localEntry } : {}) };
+      return {
+        ...structuredClone(current),
+        ...revision,
+        ...(localEntry ? { localEntry } : {}),
+        ...sourceMetadata,
+      };
     }
     return {
       ...revision,
@@ -176,15 +270,28 @@ export class AgentControlService {
       },
       authMethods: [],
       ...(localEntry ? { localEntry } : {}),
+      ...sourceMetadata,
     };
   }
 
-  create(input: unknown): RegisteredAgentView {
+  create(input: unknown, rawSource?: AgentCatalogSourceInput): RegisteredAgentView {
     const definition = AgentDefinitionSchema.parse(input);
+    const source =
+      rawSource === undefined ? undefined : AgentCatalogSourceInputSchema.parse(rawSource);
     if (this.storage.repositories.agentDefinitions.get(definition.id)) {
       throw new AgentControlError(409, `Agent already exists: ${definition.id}`);
     }
-    this.storage.repositories.agentDefinitions.upsert(definition);
+    this.storage.repositories.transaction(() => {
+      this.storage.repositories.agentDefinitions.upsert(definition);
+      if (source)
+        this.catalogSources.save(
+          definition.id,
+          0,
+          source,
+          createHash('sha256').update(JSON.stringify(definition.runtime)).digest('hex'),
+          this.now(),
+        );
+    });
     this.configurationGenerations.set(
       definition.id,
       (this.configurationGenerations.get(definition.id) ?? 0) + 1,
@@ -304,6 +411,15 @@ export class AgentControlService {
 
   async authenticate(id: string, methodId: string): Promise<RegisteredAgentView> {
     const definition = this.requireAgent(id);
+    const executing = this.storage.repositories.executionAttempts
+      .list()
+      .some(
+        (attempt) =>
+          ['queued', 'running', 'waiting'].includes(attempt.state) &&
+          this.storage.repositories.assignments.get(attempt.assignmentId)?.agentId === id,
+      );
+    if (executing || this.observationsInFlight.has(id))
+      throw new AgentControlError(409, '此成员正在执行任务或处理登录检查，请等待当前操作结束。');
     const method = this.state(definition.id).authMethods.find(
       (candidate) => candidate.id === methodId,
     );
@@ -313,19 +429,12 @@ export class AgentControlService {
         'Probe the agent first and choose an advertised authentication method.',
       );
     }
-    if (method.type === 'terminal') {
-      throw new AgentControlError(
-        400,
-        'Terminal authentication must be completed outside the control-plane API.',
-      );
-    }
-
     return this.confirmAuthentication(definition, methodId);
   }
 
   /** Release configuration selects the method; the runtime verifies it on the same connection. */
   async warmAuthentication(id: string, methodId: string): Promise<RegisteredAgentView> {
-    return this.confirmAuthentication(this.requireAgent(id), methodId);
+    return this.confirmAuthentication(this.requireAgent(id), methodId, false);
   }
 
   close(): void {
@@ -335,12 +444,13 @@ export class AgentControlService {
   private async confirmAuthentication(
     definition: AgentDefinition,
     methodId: string,
+    interactive = true,
   ): Promise<RegisteredAgentView> {
     const id = definition.id;
     const previous = this.state(id);
     const isCurrent = this.beginObservation(definition);
     try {
-      const observed = await this.runtime.authenticate(definition, methodId);
+      const observed = await this.runtime.authenticate(definition, methodId, { interactive });
       if (!isCurrent()) return this.currentView(id);
       this.runtimeStates.set(definition.id, structuredClone(observed));
       return this.currentView(id);

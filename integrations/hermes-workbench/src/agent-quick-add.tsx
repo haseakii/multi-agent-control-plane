@@ -28,6 +28,7 @@ import {
   readOnboardingDraft,
   reconcileOnboardingRows,
   writeOnboardingDraft,
+  type CatalogSelectionData,
 } from './agent-onboarding-draft';
 import s from './agent-connections.module.css';
 
@@ -43,6 +44,7 @@ type Candidate = {
   done?: boolean;
   message?: string;
   attempted?: boolean;
+  catalogSelection?: CatalogSelectionData;
 };
 
 export function AgentQuickAdd({
@@ -288,7 +290,9 @@ export function AgentQuickAdd({
                   fetchJSON(
                     current
                       ? `/api/agents/${encodeURIComponent(current.definition.id)}`
-                      : '/api/agents',
+                      : row.catalogSelection
+                        ? '/api/agent-catalog/register'
+                        : '/api/agents',
                     {
                       method: current ? 'PATCH' : 'POST',
                       body: JSON.stringify(
@@ -299,7 +303,13 @@ export function AgentQuickAdd({
                                 ? { expectedDefinitionHash: current.definitionHash }
                                 : {}),
                             }
-                          : definition,
+                          : row.catalogSelection
+                            ? {
+                                entryId: row.catalogSelection.entryId,
+                                expectedCatalogVersion: row.catalogSelection.version,
+                                definition,
+                              }
+                            : definition,
                       ),
                       signal,
                     },
@@ -376,15 +386,47 @@ export function AgentQuickAdd({
         onCancel={() => (rows.length ? setMode('review') : onCancel())}
         cancelLabel={rows.length ? `返回待接入列表（${rows.length}）` : undefined}
         onExisting={(id) => finish(id)}
-        onPrepare={(name, runtime) => {
-          const merged = appendAgentCandidates(rows, [
-            { id: `agent-${crypto.randomUUID()}`, name, runtime, selected: true, leader: false },
-          ]);
+        onUse={onUse}
+        onBusy={onBusy}
+        onPrepare={(name, runtime, catalogSelection) => {
+          const matching = rows.find(
+            (row) => row.runtime && sameAgentRuntime(row.runtime, runtime),
+          );
+          const refreshVersion =
+            matching &&
+            !matching.saved &&
+            !matching.done &&
+            catalogSelection &&
+            matching.catalogSelection?.entryId === catalogSelection.entryId &&
+            matching.catalogSelection.version !== catalogSelection.version;
+          const merged = refreshVersion
+            ? rows.map((row) =>
+                row.id === matching.id
+                  ? {
+                      ...row,
+                      catalogSelection,
+                      error: undefined,
+                      message: '已按本次目录选择更新版本，原有入口与待接入身份保留。',
+                    }
+                  : row,
+              )
+            : appendAgentCandidates(rows, [
+                {
+                  id: `agent-${crypto.randomUUID()}`,
+                  name,
+                  runtime,
+                  selected: true,
+                  leader: false,
+                  ...(catalogSelection ? { catalogSelection } : {}),
+                },
+              ]);
           setRows(merged);
           setImportNotice(
-            merged.length === rows.length
-              ? '此入口已在待接入列表中，保留原项及其进度。'
-              : `已将 ${name} 加入待接入列表。`,
+            refreshVersion
+              ? '已核对并更新待接入项的目录版本；确认后可重试接入。'
+              : merged.length === rows.length
+                ? '此入口已在待接入列表中，保留原项及其进度。'
+                : `已将 ${name} 加入待接入列表。`,
           );
           setBatchNotice('');
           setMode('review');
@@ -546,6 +588,11 @@ export function AgentQuickAdd({
               </label>
               {row.runtime && (
                 <>
+                  <p className={s.hint}>
+                    {row.catalogSelection
+                      ? `选定目录来源：${row.catalogSelection.entryId} · ${row.catalogSelection.version}；注册时会再次核对目录版本。`
+                      : '自定义启动入口；未自动关联目录来源。'}
+                  </p>
                   <label className={s.field}>
                     显示名称
                     <input

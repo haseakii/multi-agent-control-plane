@@ -4,6 +4,8 @@ import { openSqliteStorage } from '@control-plane/storage';
 import { readControlCenterSnapshot, seedDemoState } from './control-center.js';
 import { buildServer } from './server.js';
 import { createControlPlaneRuntime } from './runtime-composition.js';
+import { createLocalIntegrations } from './local-integrations.js';
+import { fileURLToPath } from 'node:url';
 
 const port = Number.parseInt(process.env.PORT ?? '3000', 10);
 const host = process.env.HOST ?? '127.0.0.1';
@@ -23,12 +25,26 @@ if (process.env.CONTROL_PLANE_DEMO === '1') {
   seedDemoState(storage);
 }
 
+const catalog = new AgentCatalogService(
+  new FileCatalogCache(join(dirname(filename), 'cache/agent-catalog.json')),
+  runtime.network.fetch,
+);
+const local = createLocalIntegrations({
+  storage,
+  runtime,
+  catalog,
+  dataDir: dirname(filename),
+  releaseRoot: resolve(dirname(fileURLToPath(import.meta.url)), '../../..'),
+  baseUrl: `http://${host}:${port}`,
+});
 const app = buildServer({
+  externalClients: local.externalClients,
+  agentInstallations: local.agentInstallations,
+  agentMembers: local.agentMembers,
+  clientGateway: { storage, runtime, readAccess: local.externalClients.readAccess },
   fastify: { logger: true },
   agentControl: runtime.agentControl,
-  agentCatalog: new AgentCatalogService(
-    new FileCatalogCache(join(dirname(filename), 'cache/agent-catalog.json')),
-  ),
+  agentCatalog: catalog,
   taskControl: runtime,
   fleetGateway: runtime.fleetGateway,
   controlCenter: (options) =>
@@ -54,6 +70,7 @@ try {
   if (bridgeAddress.hostname === '0.0.0.0') bridgeAddress.hostname = '127.0.0.1';
   if (bridgeAddress.hostname === '[::]') bridgeAddress.hostname = '[::1]';
   runtime.setBridgeBaseUrl(bridgeAddress.href);
+  local.setBaseUrl(bridgeAddress.href);
   for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     process.once(signal, () => {
       void app.close();

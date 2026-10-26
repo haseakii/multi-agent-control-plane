@@ -35,6 +35,23 @@ it('does not reuse a pending project after the user selects a different workspac
   expect(reload().read('new', { kind: 'saved-project', projectId: 'b' })).toBeUndefined();
   expect(reload().read('other', { kind: 'saved-project', projectId: 'a' })).toBeUndefined();
 });
+it('preserves the selected member and runtime settings with a draft after a lost response', () => {
+  const reload = fixture();
+  reload().write(
+    'new',
+    { kind: 'managed' },
+    {
+      projectId: 'a',
+      taskId: 'draft-a',
+      settingsAgentId: 'member-a',
+      sessionSettings: { model: 'model-a', effort: 'high' },
+    },
+  );
+  expect(reload().read('new', { kind: 'managed' })).toMatchObject({
+    settingsAgentId: 'member-a',
+    sessionSettings: { model: 'model-a', effort: 'high' },
+  });
+});
 it('restores a validated local directory as intent without retaining its permission token', () => {
   const reload = fixture();
   reload().write(

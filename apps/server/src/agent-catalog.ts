@@ -11,10 +11,15 @@ import {
 import { dirname, join, parse, relative, resolve, sep } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { AgentDefinitionSchema } from '@control-plane/core';
+import {
+  AgentDefinitionSchema,
+  AgentIdSchema,
+  AgentCatalogSourceInputSchema,
+} from '@control-plane/core';
 import { inspectAgentConfiguration } from '@control-plane/runner';
-import type { AgentControlService } from './agent-control.js';
+import { AgentControlError, type AgentControlService } from './agent-control.js';
 import { discoverAgentEntries, DiscoverEntryInputSchema } from './agent-entry-discovery.js';
+import { AgentCatalogStatus } from './agent-catalog-status.js';
 
 export const OFFICIAL_CATALOG_URL =
   'https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json';
@@ -294,27 +299,75 @@ export class AgentCatalogService {
 const BindSchema = z
   .object({ entryId: z.string().max(128), definition: AgentDefinitionSchema })
   .strict();
+const CatalogVersionSchema = z.string().min(1).max(128);
+const RegisterSchema = BindSchema.extend({ expectedCatalogVersion: CatalogVersionSchema });
 export function registerAgentCatalogRoutes(
   app: FastifyInstance,
   catalog: AgentCatalogService,
   agents: AgentControlService,
+  installationSupported = false,
 ) {
-  app.get('/api/agent-catalog', async () => catalog.snapshot());
+  const localStatus = new AgentCatalogStatus();
+  const catalogView = () => {
+    const snapshot = catalog.snapshot();
+    return {
+      ...snapshot,
+      installationSupported,
+      memberStatuses: localStatus.summaries(snapshot.entries, snapshot.platform, agents.list()),
+    };
+  };
+  const sourceFor = (entry: CatalogEntry) =>
+    AgentCatalogSourceInputSchema.parse({
+      entryId: entry.id,
+      entryName: entry.name,
+      catalogVersion: entry.version,
+      catalogUrl: OFFICIAL_CATALOG_URL,
+    });
+  app.get('/api/agent-catalog', async () => catalogView());
   app.post('/api/agent-catalog/discover-local', async (request, reply) => {
     const input = DiscoverEntryInputSchema.safeParse(request.body);
     if (!input.success)
       return reply.code(400).send({ error: '请选择目录产品；安装目录须为本机完整路径。' });
     const entry = catalog.entry(input.data.entryId);
     if (!entry) return reply.code(404).send({ error: '产品不在当前目录中，请刷新目录后重试。' });
-    return discoverAgentEntries(entry, catalog.snapshot().platform, agents.list(), {
+    const members = agents.list();
+    const platform = catalog.snapshot().platform;
+    const discovery = discoverAgentEntries(entry, platform, members, {
       ...(input.data.directory ? { directory: input.data.directory } : {}),
     });
+    return {
+      ...discovery,
+      localCheck: localStatus.record(entry, platform, discovery, members, !!input.data.directory),
+    };
+  });
+  app.post('/api/agent-catalog/check-visible', async (request, reply) => {
+    const input = z
+      .object({ entryIds: z.array(z.string().min(1).max(128)).min(1).max(8) })
+      .strict()
+      .safeParse(request.body);
+    if (!input.success)
+      return reply
+        .code(400)
+        .send({ error: '每次最多检查 8 项已显示产品；本次检查不会启动或安装程序。' });
+    const entries = [...new Set(input.data.entryIds)].map((id) => catalog.entry(id));
+    if (entries.some((entry) => !entry))
+      return reply.code(404).send({ error: '部分产品已不在当前目录中，请刷新后重试。' });
+    const snapshot = catalog.snapshot();
+    const members = agents.list();
+    for (const entry of entries) {
+      const result = discoverAgentEntries(entry!, snapshot.platform, members);
+      localStatus.record(entry!, snapshot.platform, result, members);
+    }
+    return {
+      memberStatuses: localStatus.summaries(entries as CatalogEntry[], snapshot.platform, members),
+    };
   });
   app.post('/api/agent-catalog/refresh', async (request, reply) => {
     if (request.body !== undefined && !z.object({}).strict().safeParse(request.body).success)
       return reply.code(400).send({ error: '刷新不接受自定义来源或命令。' });
     try {
-      return await catalog.refresh();
+      await catalog.refresh();
+      return catalogView();
     } catch {
       return reply.code(409).send({ error: '目录正在刷新，请等待当前请求结束。' });
     }
@@ -322,7 +375,8 @@ export function registerAgentCatalogRoutes(
   app.post('/api/agent-catalog/bind-local', async (request, reply) => {
     const parsed = BindSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: '本地绑定配置无效。' });
-    if (!catalog.entry(parsed.data.entryId))
+    const entry = catalog.entry(parsed.data.entryId);
+    if (!entry)
       return reply.code(404).send({ error: '目录项不存在；可刷新目录或使用自定义入口。' });
     const definition = { ...parsed.data.definition, enabled: false };
     const inspection = inspectAgentConfiguration(definition, { localOnly: true });
@@ -332,9 +386,76 @@ export function registerAgentCatalogRoutes(
         issues: inspection.issues,
       });
     try {
-      return reply.code(201).send(agents.create(definition));
+      return reply.code(201).send(agents.create(definition, sourceFor(entry)));
     } catch {
       return reply.code(409).send({ error: '注册失败；请检查 Agent ID 是否重复。' });
+    }
+  });
+  app.post('/api/agent-catalog/register', async (request, reply) => {
+    const input = RegisterSchema.safeParse(request.body);
+    if (!input.success) return reply.code(400).send({ error: '目录成员注册信息无效。' });
+    const entry = catalog.entry(input.data.entryId);
+    if (!entry)
+      return reply.code(404).send({ error: '产品不在当前目录中，请刷新目录或使用自定义入口。' });
+    if (entry.version !== input.data.expectedCatalogVersion)
+      return reply
+        .code(409)
+        .send({ error: '目录产品版本已更新；请重新查看入口后再注册，未启动或安装成员。' });
+    const inspection = inspectAgentConfiguration(input.data.definition, { localOnly: true });
+    if (!inspection.offlineChecksPassed)
+      return reply
+        .code(400)
+        .send({ error: '请核对本机已有程序和参数；未启动或安装成员。', issues: inspection.issues });
+    try {
+      return reply.code(201).send(agents.create(input.data.definition, sourceFor(entry)));
+    } catch (error) {
+      if (error instanceof z.ZodError)
+        return reply
+          .code(400)
+          .send({ error: '目录来源信息无法核对，请刷新目录或使用自定义入口。' });
+      if (error instanceof AgentControlError)
+        return reply.code(error.statusCode).send({ error: error.message });
+      return reply
+        .code(409)
+        .send({ error: '注册尚未确认；请刷新成员列表后重试，原有成员保持原样。' });
+    }
+  });
+  app.post('/api/agent-catalog/associate', async (request, reply) => {
+    const input = z
+      .object({
+        entryId: z.string().min(1).max(128),
+        expectedCatalogVersion: CatalogVersionSchema,
+        agentId: AgentIdSchema,
+        expectedDefinitionHash: z.string().regex(/^[a-f0-9]{64}$/),
+        expectedRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+      })
+      .strict()
+      .safeParse(request.body);
+    if (!input.success)
+      return reply.code(400).send({ error: '请选择已有成员并核对当前来源版本。' });
+    const entry = catalog.entry(input.data.entryId);
+    if (!entry) return reply.code(404).send({ error: '产品不在当前目录中，请刷新后再关联。' });
+    if (entry.version !== input.data.expectedCatalogVersion)
+      return reply
+        .code(409)
+        .send({ error: '目录产品版本已更新；请重新查看后再关联来源，现有成员没有改变。' });
+    try {
+      return agents.associateCatalogSource(
+        input.data.agentId,
+        {
+          expectedDefinitionHash: input.data.expectedDefinitionHash,
+          expectedRevision: input.data.expectedRevision,
+        },
+        sourceFor(entry),
+      );
+    } catch (error) {
+      if (error instanceof AgentControlError)
+        return reply.code(error.statusCode).send({ error: error.message, code: error.code });
+      if (error instanceof z.ZodError)
+        return reply.code(400).send({ error: '目录来源信息无效，请刷新后重新核对。' });
+      return reply
+        .code(409)
+        .send({ error: '来源关联尚未确认；已注册成员和权限没有改变，请刷新成员后重试。' });
     }
   });
 }

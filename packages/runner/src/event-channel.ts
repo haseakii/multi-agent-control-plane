@@ -5,8 +5,21 @@ export class EventChannel<T> {
     wake: (() => void) | undefined;
   }>();
   private closed = false;
+  private historyBytes = 0;
 
-  constructor(private readonly historyLimit: number) {}
+  constructor(
+    private readonly historyLimit: number,
+    private readonly byteSize: (value: T) => number = () => 0,
+  ) {}
+
+  get retainedBytes(): number {
+    return this.historyBytes;
+  }
+
+  clearHistory(): void {
+    this.history.length = 0;
+    this.historyBytes = 0;
+  }
 
   publish(value: T): void {
     if (this.closed) {
@@ -14,8 +27,10 @@ export class EventChannel<T> {
     }
 
     this.history.push(value);
+    this.historyBytes += this.byteSize(value);
     if (this.history.length > this.historyLimit) {
-      this.history.splice(0, this.history.length - this.historyLimit);
+      for (const removed of this.history.splice(0, this.history.length - this.historyLimit))
+        this.historyBytes -= this.byteSize(removed);
     }
 
     for (const subscriber of this.subscribers) {

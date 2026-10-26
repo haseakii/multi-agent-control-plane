@@ -4,11 +4,24 @@ import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { openSqliteStorage } from '@control-plane/storage';
 import { LocalRunner } from '@control-plane/runner';
-import { AcpClientRuntime, type AcpRuntimeConnection } from '@control-plane/acp-runtime';
+import {
+  AcpClientRuntime,
+  AcpSessionSettingsError,
+  type AcpRuntimeConnection,
+} from '@control-plane/acp-runtime';
 import { createControlPlaneRuntime } from './runtime-composition.js';
 import { buildServer } from './server.js';
 
 const disposers: Array<() => Promise<void>> = [];
+// These history fixtures advertise no model controls. They accept native defaults
+// and reject requested controls just as an unconfigurable ACP peer would.
+const nativeSettings = {
+  getSessionSettings: () => ({ source: 'unavailable' as const, options: [] }),
+  applySessionSettings: async (_sessionId: string, values: Record<string, string>) => {
+    if (Object.keys(values).length) throw new AcpSessionSettingsError('unsupported-option');
+    return { source: 'unavailable' as const, options: [] };
+  },
+};
 afterEach(async () => {
   for (const close of disposers.splice(0).reverse()) await close();
 });
@@ -61,6 +74,7 @@ it('continues a completed conversation with durable context, deduplicates sends 
     releaseFirst = resolve;
   });
   vi.spyOn(AcpClientRuntime.prototype, 'connect').mockResolvedValue({
+    ...nativeSettings,
     capabilities: {},
     newSession: async () => ({ sessionId: 'synthetic-followup' }),
     close: () => {},
@@ -324,6 +338,7 @@ it('starts a non-Boss directly and retains worker mode through restart, retry an
   f.runtime.setBridgeBaseUrl('http://127.0.0.1:4000');
   const prompts: string[] = [];
   vi.spyOn(AcpClientRuntime.prototype, 'connect').mockResolvedValue({
+    ...nativeSettings,
     capabilities: {},
     newSession: async () => ({ sessionId: 'direct-session' }),
     close: () => {},
@@ -397,6 +412,7 @@ it('starts the saved draft once with its reviewed objective, then only permits t
   });
   const prompts: string[] = [];
   vi.spyOn(AcpClientRuntime.prototype, 'connect').mockResolvedValue({
+    ...nativeSettings,
     capabilities: {},
     newSession: async () => ({ sessionId: 'synthetic-session' }),
     close: () => release(),

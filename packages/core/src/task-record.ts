@@ -1,8 +1,10 @@
 import { z } from 'zod';
 import { TaskSchema } from './domain.js';
+import { InputAttachmentIdsSchema } from './input-attachments.js';
 
 export const TaskDraftInputSchema = z
   .object({
+    attachmentIds: InputAttachmentIdsSchema.optional(),
     title: z.string().trim().min(1).max(256).optional(),
     objective: z.string().trim().min(1).max(100_000),
   })

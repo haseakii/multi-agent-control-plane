@@ -54,7 +54,7 @@ describe('ACP approval binding forward migration', () => {
       ).toEqual(originals);
       expect(
         storage.sqlite.prepare('SELECT COUNT(*) AS n FROM __drizzle_migrations').get(),
-      ).toEqual({ n: 15 });
+      ).toEqual({ n: 22 });
       storage.close();
       storage = openSqliteStorage({ filename });
       expect(storage.repositories.approvals.get('legacy')?.state).toBe('expired');
