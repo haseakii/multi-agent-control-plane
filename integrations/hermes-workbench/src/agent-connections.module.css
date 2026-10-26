@@ -23,6 +23,18 @@
   flex-direction: column;
   height: 100%;
 }
+.installMember {
+  flex-basis: 100%;
+  width: 100%;
+  padding: 16px;
+  border: 1px solid var(--h-line);
+  border-radius: 10px;
+  background: var(--h-bg-pane);
+}
+.installMember p {
+  font-size: 14px;
+  line-height: 1.6;
+}
 .header {
   display: flex;
   gap: 20px;

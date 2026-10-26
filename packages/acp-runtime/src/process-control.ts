@@ -9,6 +9,7 @@ import type { ProcessHandle, Runner } from '@control-plane/runner';
 import { AcpClientRuntime, type AcpRuntimeConnection } from './runtime.js';
 import type { AgentReadiness, AgentNegotiation } from './types.js';
 import { transientAuthenticationError } from './auth-failure.js';
+import { terminalInvocationPrefix, type TerminalAuthenticationHandler } from './terminal-auth.js';
 import {
   SessionSettingsInspectionSchema,
   type SessionSettingsInspection,
@@ -28,7 +29,11 @@ export type AgentRuntimeObservation = {
 
 export interface AgentRuntimeControl {
   probe(definition: AgentDefinition): Promise<AgentRuntimeObservation>;
-  authenticate(definition: AgentDefinition, methodId: string): Promise<AgentRuntimeObservation>;
+  authenticate(
+    definition: AgentDefinition,
+    methodId: string,
+    options?: { interactive?: boolean },
+  ): Promise<AgentRuntimeObservation>;
   sessionSettings?(
     definition: AgentDefinition,
     cwd: string,
@@ -48,6 +53,7 @@ export type ProcessAgentRuntimeControlOptions = {
   sessionSettingsTimeoutMs?: number | undefined;
   authenticationTimeoutMs?: number | undefined;
   runtimeFactory?: (() => AcpClientRuntime) | undefined;
+  terminalAuthentication?: TerminalAuthenticationHandler | undefined;
 };
 
 type StartedConnection = {
@@ -111,7 +117,8 @@ export class ProcessAgentRuntimeControl implements AgentRuntimeControl {
   private readonly probeTimeoutMs: number;
   private readonly sessionSettingsTimeoutMs: number;
   private readonly authenticationTimeoutMs: number;
-  private readonly runtimeFactory: () => AcpClientRuntime;
+  private readonly runtimeFactory: (() => AcpClientRuntime) | undefined;
+  private readonly terminalAuthentication: TerminalAuthenticationHandler | undefined;
   private readonly prepareEnvironment: (definition: AgentDefinition) => Record<string, string>;
 
   constructor(
@@ -121,7 +128,8 @@ export class ProcessAgentRuntimeControl implements AgentRuntimeControl {
     this.probeTimeoutMs = options.probeTimeoutMs ?? 15_000;
     this.sessionSettingsTimeoutMs = options.sessionSettingsTimeoutMs ?? 60_000;
     this.authenticationTimeoutMs = options.authenticationTimeoutMs ?? 5 * 60_000;
-    this.runtimeFactory = options.runtimeFactory ?? (() => new AcpClientRuntime());
+    this.runtimeFactory = options.runtimeFactory;
+    this.terminalAuthentication = options.terminalAuthentication;
     this.prepareEnvironment = options.prepareEnvironment ?? environmentFor;
   }
 
@@ -134,6 +142,7 @@ export class ProcessAgentRuntimeControl implements AgentRuntimeControl {
   async authenticate(
     definition: AgentDefinition,
     methodId: string,
+    options: { interactive?: boolean } = {},
   ): Promise<AgentRuntimeObservation> {
     return this.withConnection(definition, this.authenticationTimeoutMs, async (connection) => {
       const method = connection.authMethods.find((candidate) => candidate.id === methodId);
@@ -141,7 +150,27 @@ export class ProcessAgentRuntimeControl implements AgentRuntimeControl {
         throw new RangeError(`Authentication method not advertised: ${methodId}`);
       }
       if ('type' in method && method.type === 'terminal') {
-        throw new TypeError('Terminal authentication is not supported by the control-plane API.');
+        if (options.interactive === false)
+          throw new TypeError('请在工作台点击登录，后台预热不会自动打开登录终端。');
+        const prefix = terminalInvocationPrefix(definition.runtime);
+        if (!this.terminalAuthentication || !prefix)
+          throw new TypeError('此启动方式尚不能在本机打开终端登录。');
+        const setup = connection.terminalAuthentication(methodId);
+        await this.terminalAuthentication({
+          agentId: definition.id,
+          command: definition.runtime.command,
+          args: [...prefix, ...setup.args],
+          cwd: definition.runtime.cwd ?? process.cwd(),
+          environment: {
+            ...setup.env,
+            ...this.prepareEnvironment(definition),
+            CP_TERMINAL_AUTH: '1',
+          },
+          timeoutMs: this.authenticationTimeoutMs,
+          signal: this.shutdown.signal,
+        });
+        const observed = observation(connection);
+        return { ...observed, readiness: { ...observed.readiness, auth: 'ready' } };
       }
 
       try {
@@ -241,7 +270,14 @@ export class ProcessAgentRuntimeControl implements AgentRuntimeControl {
     try {
       const transport = this.runner.transport(handle);
       const stream = acp.ndJsonStream(transport.writable, transport.readable);
-      const connection = await this.runtimeFactory().connect(stream);
+      const runtime =
+        this.runtimeFactory?.() ??
+        new AcpClientRuntime({
+          terminalAuthentication:
+            !!this.terminalAuthentication &&
+            terminalInvocationPrefix(definition.runtime) !== undefined,
+        });
+      const connection = await runtime.connect(stream);
       return { handle, connection };
     } catch {
       let beforeStop;

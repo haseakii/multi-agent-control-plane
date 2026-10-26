@@ -5,6 +5,7 @@ import { agentPermissionDecision } from './agent-permission-policy.js';
 import { LivePreviewService, LivePreviewInput } from './live-preview.js';
 import { taskResultSummary } from './task-result-summary.js';
 import { SessionSettingsService } from './session-settings.js';
+import { windowsTerminalAuthentication } from './terminal-authentication.js';
 import { mkdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -278,6 +279,7 @@ export class ControlPlaneRuntime {
     );
     const runtimeControl = new ProcessAgentRuntimeControl(this.runner, {
       prepareEnvironment: (agent) => this.network.environment(agent),
+      terminalAuthentication: windowsTerminalAuthentication(this.runner),
     });
     this.agentControl = new AgentControlService(this.storage, runtimeControl);
     this.sessionSettings = new SessionSettingsService(

@@ -386,6 +386,7 @@ export function AgentQuickAdd({
         onCancel={() => (rows.length ? setMode('review') : onCancel())}
         cancelLabel={rows.length ? `返回待接入列表（${rows.length}）` : undefined}
         onExisting={(id) => finish(id)}
+        onUse={onUse}
         onBusy={onBusy}
         onPrepare={(name, runtime, catalogSelection) => {
           const matching = rows.find(

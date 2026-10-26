@@ -1,90 +1,125 @@
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { Readable, Transform } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
-import {
-  createWriteStream,
-  existsSync,
-  lstatSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-} from 'node:fs';
-import { join, resolve, relative, isAbsolute, sep } from 'node:path';
+import { existsSync, lstatSync, mkdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { installedPackageEntries } from './agent-installed-package.js';
 import type { CatalogEntry } from './agent-catalog.js';
 import { applyNetworkEnvironment, type NetworkSettingsService } from './network-settings.js';
 import { TaskControlError } from './task-control.js';
+import { catalogEnvironment, managedAgentRuntime } from './agent-launcher.js';
+import {
+  installPythonAgent,
+  MANAGED_PYTHON_REQUEST,
+  MANAGED_UV_VERSION,
+} from './agent-python-runtime.js';
+import {
+  AgentPackageInstallError,
+  ownedPackagePath,
+  downloadPackageFile,
+  extractAgentZip,
+  extractAgentTar,
+  rejectPackageLinks,
+} from './agent-package-io.js';
+export { AgentPackageInstallError } from './agent-package-io.js';
 
 const ExactPackage =
   /^(@[a-z0-9._-]+\/[a-z0-9._-]+|[a-z0-9._-]+)@(\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?)$/;
+const ExactPythonPackage =
+  /^([a-zA-Z0-9][a-zA-Z0-9._-]*)(?:==|@)(\d+\.\d+\.\d+(?:(?:a|b|rc|\.post|\.dev)\d+)?)$/;
+function environmentFor(value?: Record<string, string>) {
+  try {
+    const environment = catalogEnvironment(value);
+    return Object.keys(environment).length ? { environment } : {};
+  } catch {
+    throw new TaskControlError(409, '此产品的目录环境设置不能自动应用，请使用已有本机入口。');
+  }
+}
 export function packagePlan(entry: CatalogEntry, platform: string, npmAvailable: boolean) {
   const binary =
     entry.distribution.binary?.[
       platform as keyof NonNullable<CatalogEntry['distribution']['binary']>
     ];
+  const pathname = binary ? new URL(binary.archive).pathname.toLowerCase() : '';
+  const format = pathname.endsWith('.zip')
+    ? ('zip' as const)
+    : /\.(?:tar\.gz|tgz)$/.test(pathname) && npmAvailable
+      ? ('tar' as const)
+      : pathname.endsWith('.exe')
+        ? ('raw' as const)
+        : undefined;
   let distribution;
   if (
     binary &&
     platform.startsWith('windows-') &&
-    new URL(binary.archive).pathname.endsWith('.zip') &&
-    !Object.keys(binary.env ?? {}).length
+    format &&
+    /\.(?:exe|cmd|bat)$/i.test(binary.cmd)
   ) {
     if (new URL(binary.archive).protocol !== 'https:')
       throw new TaskControlError(409, '此产品下载地址不支持安全安装。');
+    // Validate before downloading, including archives with nested program paths.
+    ownedPackagePath('C:/package-plan', binary.cmd.replaceAll('\\', '/'));
     distribution = {
-      kind: 'zip' as const,
+      kind: format,
       source: binary.archive,
       cmd: binary.cmd,
       args: binary.args ?? [],
       sha256: binary.sha256?.toLowerCase(),
+      ...environmentFor(binary.env),
     };
   } else if (
     entry.distribution.npx &&
     npmAvailable &&
-    !Object.keys(entry.distribution.npx.env ?? {}).length &&
     ExactPackage.test(entry.distribution.npx.package)
   ) {
     distribution = {
       kind: 'npm' as const,
       source: entry.distribution.npx.package,
       args: entry.distribution.npx.args ?? [],
+      ...environmentFor(entry.distribution.npx.env),
+    };
+  } else if (
+    entry.distribution.uvx &&
+    platform.startsWith('windows-') &&
+    ExactPythonPackage.test(entry.distribution.uvx.package)
+  ) {
+    const spec = ExactPythonPackage.exec(entry.distribution.uvx.package)!;
+    distribution = {
+      kind: 'uv' as const,
+      source: `${spec[1]}==${spec[2]}`,
+      packageName: spec[1]!,
+      args: entry.distribution.uvx.args ?? [],
+      python: MANAGED_PYTHON_REQUEST,
+      uv: MANAGED_UV_VERSION,
+      ...environmentFor(entry.distribution.uvx.env),
     };
   } else
     throw new TaskControlError(
       409,
-      '此产品暂不支持隔离安装：需要本平台 ZIP 或固定版本 npm 包。仍可选择本机已有入口。',
+      '此产品当前没有可自动安装的本平台程序或固定版本包。可使用本机已有 ACP 入口。',
     );
   const plan = { entryId: entry.id, name: entry.name, version: entry.version, distribution };
   return {
     ...plan,
     planHash: createHash('sha256').update(JSON.stringify(plan)).digest('hex'),
     integrity:
-      distribution.kind === 'zip'
-        ? distribution.sha256
-          ? 'sha256'
-          : 'https-source'
-        : 'npm-integrity',
+      distribution.kind === 'npm'
+        ? 'npm-integrity'
+        : distribution.kind === 'uv'
+          ? 'pypi-integrity'
+          : distribution.sha256
+            ? 'sha256'
+            : 'https-source',
     source: distribution.source,
+    runtime:
+      distribution.kind === 'uv'
+        ? 'Python（自动准备）'
+        : distribution.kind === 'npm'
+          ? 'Node.js（工作台自带）'
+          : '本机程序（自动配置入口）',
   };
 }
-export type PackagePlan = ReturnType<typeof packagePlan>;
-export class AgentPackageInstallError extends Error {}
-const ownedPath = (root: string, name: string) => {
-  const result = resolve(root, name),
-    rel = relative(root, result);
-  if (
-    !rel ||
-    rel === '..' ||
-    rel.startsWith('..' + sep) ||
-    isAbsolute(rel) ||
-    /^[A-Za-z]:/.test(name) ||
-    name.includes('\0')
-  )
-    throw new Error('Package path escapes installation.');
-  return result;
-};
+
 export function npmRuntime(root: string) {
   const candidates = [
     join(root, 'runtime/npm/bin/npm-cli.js'),
@@ -93,47 +128,12 @@ export function npmRuntime(root: string) {
   return candidates.find(existsSync);
 }
 
-/** Only archive extraction is Windows-specific; it never evaluates catalog text as code. */
-async function extractZip(archive: string, destination: string) {
-  const script = [
-    "$ErrorActionPreference='Stop'",
-    'Add-Type -AssemblyName System.IO.Compression.FileSystem',
-    '$zip=[IO.Compression.ZipFile]::OpenRead($env:CP_INSTALL_ARCHIVE)',
-    'try {',
-    '$total=0L; $seen=@{}',
-    'if($zip.Entries.Count -gt 20000){throw "Too many entries"}',
-    'foreach($entry in $zip.Entries){',
-    '$name=$entry.FullName.Replace("\\","/")',
-    'if([IO.Path]::IsPathRooted($name) -or $name.Contains(":") -or $name.Split("/").Contains("..") -or $name.Contains([char]0)){throw "Unsafe archive path"}',
-    'if(($entry.ExternalAttributes -band 0x400) -ne 0 -or (($entry.ExternalAttributes -shr 16) -band 0xF000) -eq 0xA000){throw "Archive link rejected"}',
-    '$key=$name.ToLowerInvariant(); if($seen.ContainsKey($key)){throw "Duplicate archive entry"};$seen[$key]=$true',
-    '$total+=$entry.Length;if($total -gt 2147483648){throw "Archive too large"}',
-    '}',
-    '[IO.Compression.ZipFileExtensions]::ExtractToDirectory($zip,$env:CP_INSTALL_DESTINATION)',
-    '} finally {$zip.Dispose()}',
-  ].join('\n');
-  await promisify(execFile)(
-    join(process.env.SystemRoot ?? 'C:/Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe'),
-    ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script],
-    {
-      windowsHide: true,
-      timeout: 120_000,
-      env: { ...process.env, CP_INSTALL_ARCHIVE: archive, CP_INSTALL_DESTINATION: destination },
-    },
-  );
-}
-function rejectTreeLinks(root: string, count = { value: 0 }) {
-  for (const item of readdirSync(root, { withFileTypes: true })) {
-    if (++count.value > 100000 || item.isSymbolicLink())
-      throw new Error('Package tree contains unsupported entries.');
-    if (item.isDirectory()) rejectTreeLinks(join(root, item.name), count);
-  }
-}
 export async function installAgentPackage(options: {
-  plan: PackagePlan;
+  plan: ReturnType<typeof packagePlan>;
   directory: string;
   releaseRoot: string;
   network: NetworkSettingsService;
+  runtimeRoot?: string;
   nodeExecutable?: string;
   run?: (
     command: string,
@@ -143,70 +143,60 @@ export async function installAgentPackage(options: {
   phase: (state: 'downloading' | 'installing', message: string) => void;
 }) {
   const { plan, directory, network } = options;
-  // A retry uses a fresh attempt directory; partial archives remain as failure evidence.
   mkdirSync(directory, { recursive: true });
   const distribution = plan.distribution;
-  if (distribution.kind === 'zip') {
-    options.phase('downloading', '正在通过工作台网络设置下载程序包…');
-    let url = new URL(distribution.source),
-      response: Response | undefined;
-    const origin = url.origin;
-    const controller = AbortSignal.timeout(180_000);
-    for (let hop = 0; hop < 6; hop++) {
-      if (
-        url.protocol !== 'https:' ||
-        url.username ||
-        url.password ||
-        (url.origin !== origin &&
-          ![
-            'release-assets.githubusercontent.com',
-            'objects.githubusercontent.com',
-            'github.com',
-          ].includes(url.hostname))
-      )
-        throw new Error('Download redirect refused.');
-      response = await network.fetch(url, { redirect: 'manual', signal: controller });
-      if (![301, 302, 303, 307, 308].includes(response.status)) break;
-      const location = response.headers.get('location');
-      await response.body?.cancel();
-      if (!location) throw new Error('Missing redirect.');
-      url = new URL(location, url);
-    }
-    if (!response?.ok || !response.body) throw new Error('Download failed.');
-    const archive = join(directory, 'package.zip');
-    const hash = createHash('sha256');
-    let bytes = 0;
-    await pipeline(
-      Readable.fromWeb(response.body as import('node:stream/web').ReadableStream),
-      new Transform({
-        transform(block: Buffer, _encoding, callback) {
-          bytes += block.byteLength;
-          if (bytes > 512 * 1024 * 1024) {
-            callback(new AgentPackageInstallError('程序包超过 512 MB 限制，未执行安装。'));
-            return;
-          }
-          hash.update(block);
-          callback(null, block);
-        },
-      }),
-      createWriteStream(archive, { flags: 'wx' }),
-    );
-    if (!bytes || (distribution.sha256 && distribution.sha256 !== hash.digest('hex')))
-      throw new AgentPackageInstallError(
-        '程序包内容为空或 SHA-256 校验失败，未解压或启动。请刷新目录后重试。',
-      );
-    options.phase('installing', '正在解压并检查本机启动入口…');
-    const extracted = join(directory, 'program');
-    await extractZip(archive, extracted);
-    rejectTreeLinks(extracted);
-    const command = ownedPath(extracted, distribution.cmd.replaceAll('\\', '/'));
-    if (!lstatSync(command).isFile() || !command.toLowerCase().endsWith('.exe'))
-      throw new Error('Missing executable.');
-    return { type: 'acp-stdio' as const, command, args: distribution.args };
+  const adapt = (command: string, prefixArgs: string[] = []) =>
+    managedAgentRuntime({
+      directory,
+      command,
+      prefixArgs,
+      args: distribution.args,
+      environment: distribution.environment,
+      nodeExecutable: options.nodeExecutable,
+    });
+  if (distribution.kind === 'uv') {
+    const python = await installPythonAgent({
+      source: distribution.source,
+      packageName: distribution.packageName,
+      directory,
+      runtimeRoot: options.runtimeRoot ?? join(directory, 'runtimes'),
+      network,
+      run: options.run,
+      phase: options.phase,
+    });
+    return adapt(python.command, python.prefixArgs);
   }
-  options.phase('installing', '正在安装固定版本适配器及依赖，安装脚本已禁用…');
+  if (distribution.kind !== 'npm') {
+    options.phase('downloading', '正在下载 ACP 程序…');
+    const archive = join(directory, 'package.' + distribution.kind);
+    await downloadPackageFile({
+      source: distribution.source,
+      destination: archive,
+      network,
+      sha256: distribution.sha256,
+    });
+    options.phase('installing', '正在安装并自动配置启动入口…');
+    const extracted = join(directory, 'program');
+    if (distribution.kind === 'zip') await extractAgentZip(archive, extracted);
+    else if (distribution.kind === 'tar') {
+      const npm = npmRuntime(options.releaseRoot);
+      if (!npm) throw new Error('Archive reader unavailable.');
+      await extractAgentTar(archive, extracted, npm);
+    } else {
+      const command = ownedPackagePath(extracted, distribution.cmd.replaceAll('\\', '/'));
+      mkdirSync(dirname(command), { recursive: true });
+      const { copyFileSync } = await import('node:fs');
+      copyFileSync(archive, command);
+    }
+    rejectPackageLinks(extracted);
+    const command = ownedPackagePath(extracted, distribution.cmd.replaceAll('\\', '/'));
+    if (!lstatSync(command).isFile())
+      throw new AgentPackageInstallError('程序包缺少目录声明的启动入口，未启动。');
+    return adapt(command);
+  }
+  options.phase('installing', '正在准备 Node.js 适配器，安装到私有目录…');
   const cli = npmRuntime(options.releaseRoot);
-  if (!cli) throw new Error('Bundled npm unavailable.');
+  if (!cli) throw new AgentPackageInstallError('工作台缺少配套 npm，请使用完整发行包。');
   const effective = network.effective();
   const env = applyNetworkEnvironment(
     Object.fromEntries(
@@ -216,7 +206,6 @@ export async function installAgentPackage(options: {
     ),
     effective,
   );
-  // npm also reads its own proxy configuration. Managed choices override inherited npmrc.
   if (effective.mode !== 'unmanaged') {
     env.npm_config_proxy = env.npm_config_https_proxy =
       effective.mode === 'proxy' ? effective.proxyUrl! : '';
@@ -241,19 +230,17 @@ export async function installAgentPackage(options: {
       '--',
       distribution.source,
     ],
-    { windowsHide: true, timeout: 300_000, maxBuffer: 512_000, env },
+    { cwd: directory, windowsHide: true, timeout: 300_000, maxBuffer: 512_000, env },
   );
   const match = ExactPackage.exec(distribution.source)!;
-  const packageRoot = ownedPath(join(directory, 'node_modules'), match[1]!);
-  const entries = installedPackageEntries(packageRoot, match[1]!);
+  const packageRoot = ownedPackagePath(join(directory, 'node_modules'), match[1]!);
+  const entries = installedPackageEntries(packageRoot, match[1]!, true);
   if (entries.length !== 1 || entries[0]!.packageVersion !== match[2])
     throw new AgentPackageInstallError(
-      '安装包没有唯一可用的 JavaScript ACP 入口，或版本不符。请使用已有本机入口。',
+      '安装包没有可自动确定的 ACP 入口，或版本不符。请使用已有本机入口。',
     );
   const bin = entries[0]!.script;
-  return {
-    type: 'acp-stdio' as const,
-    command: options.nodeExecutable ?? process.execPath,
-    args: [bin, ...distribution.args],
-  };
+  return /\.exe$/i.test(bin)
+    ? adapt(bin)
+    : adapt(options.nodeExecutable ?? process.execPath, [bin]);
 }

@@ -89,18 +89,20 @@ function safeLink(value?: string) {
 }
 
 export function AgentProducts({
-  disabled,
+  disabled: disabledExternally,
   onPaste,
   onCancel,
   onExisting,
   onPrepare,
   cancelLabel,
   onBusy,
+  onUse,
 }: {
   disabled: boolean;
   onPaste: () => void;
   onCancel: () => void;
   onExisting: (agentId?: string) => void;
+  onUse: (agentId: string) => void;
   onPrepare: (
     name: string,
     runtime: z.infer<typeof AgentDefinition>['runtime'],
@@ -110,11 +112,18 @@ export function AgentProducts({
   onBusy: (busy: boolean) => void;
 }) {
   const [catalog, setCatalog] = useState<z.infer<typeof Catalog>>();
+  const [memberBusy, setMemberBusy] = useState(false);
+  const disabled = disabledExternally || memberBusy;
+  const memberOperation = (value: boolean) => {
+    setMemberBusy(value);
+    onBusy(value);
+  };
   const [search, setSearch] = useState('');
   const [limit, setLimit] = useState(8);
   const [selected, setSelected] = useState<z.infer<typeof Product>>();
   const [entryMode, setEntryMode] = useState<'download' | 'local'>('download');
   const [showInstallations, setShowInstallations] = useState(false);
+  const [installRequested, setInstallRequested] = useState(false);
   const [discovery, setDiscovery] = useState<z.infer<typeof Discovery>>();
   const [knownMembers, setKnownMembers] = useState<AgentConnectionData[]>([]);
   const [checkingVisible, setCheckingVisible] = useState(false);
@@ -407,14 +416,16 @@ export function AgentProducts({
     if (state === 'found') return `上次发现 ${check?.candidateCount ?? 0} 个入口`;
     return check?.scope === 'selected-directory' ? '指定目录未发现入口' : '常用位置未发现入口';
   }
-  function select(product: z.infer<typeof Product>) {
+  function select(product: z.infer<typeof Product>, install = false) {
     setDiscovery(undefined);
     setKnownMembers([]);
     setSelected(product);
-    setEntryMode('download');
+    setEntryMode(install ? 'download' : 'local');
+    setInstallRequested(install);
     const draft = entryDraft(product.id);
     fill(draft ?? defaultFields(product));
     setRestored(!!draft);
+    if (!install) void discover(product);
   }
   const unfinished = new Set(
     (catalog?.entries ?? [])
@@ -435,13 +446,14 @@ export function AgentProducts({
   return (
     <section className={s.editor} aria-label="选择 ACP 产品">
       <h3>{selected ? `接入 ${selected.name}` : '选择要接入的产品'}</h3>
-      <p className={s.hint}>选择产品 → 安装或使用已有入口 → 成员自己登录</p>
+      <p className={s.hint}>点击安装，工作台自动准备程序和运行环境；完成登录后直接使用。</p>
       <div className={s.actions}>
         {selected ? (
           <>
             <button
               type="button"
               aria-pressed={entryMode === 'download'}
+              disabled={disabled}
               onClick={() => setEntryMode('download')}
             >
               下载安装 ACP
@@ -449,7 +461,7 @@ export function AgentProducts({
             <button
               type="button"
               aria-pressed={entryMode === 'local'}
-              disabled={busy}
+              disabled={disabled || busy}
               onClick={() => {
                 setEntryMode('local');
                 void discover(selected);
@@ -459,7 +471,7 @@ export function AgentProducts({
             </button>
             <button
               type="button"
-              disabled={associating}
+              disabled={disabled || associating}
               onClick={() => {
                 stopWaiting();
                 setSelected(undefined);
@@ -473,6 +485,7 @@ export function AgentProducts({
             <button
               type="button"
               aria-pressed={!showInstallations}
+              disabled={disabled}
               onClick={() => setShowInstallations(false)}
             >
               产品目录
@@ -480,6 +493,7 @@ export function AgentProducts({
             <button
               type="button"
               aria-pressed={showInstallations}
+              disabled={disabled}
               onClick={() => setShowInstallations(true)}
             >
               已下载程序与安装记录
@@ -493,6 +507,11 @@ export function AgentProducts({
             key={selected?.id ?? 'all'}
             entryId={selected?.id}
             onExisting={onExisting}
+            onUse={onUse}
+            onBusy={memberOperation}
+            disabled={disabled}
+            installRequested={!!selected && installRequested}
+            expectedVersion={selected?.version}
           />
         ) : (
           <p role="status" className={s.notice}>
@@ -568,12 +587,11 @@ export function AgentProducts({
               {products.slice(0, limit).map((product) => {
                 const status = catalog?.memberStatuses.find((item) => item.entryId === product.id);
                 return (
-                  <button
-                    type="button"
+                  <article
                     key={product.id}
-                    disabled={disabled || busy}
+                    role="group"
+                    aria-label={product.name}
                     className={s.productChoice}
-                    onClick={() => void select(product)}
                   >
                     <strong>{product.name}</strong>
                     <span>目录版本 {product.version}</span>
@@ -606,7 +624,24 @@ export function AgentProducts({
                           ? '目录提供适配器包'
                           : '请确认本机兼容性'}
                     </small>
-                  </button>
+                    <div className={s.actions}>
+                      <button
+                        type="button"
+                        className={s.primary}
+                        disabled={disabled || busy || !catalog?.installationSupported}
+                        onClick={() => select(product, true)}
+                      >
+                        安装
+                      </button>
+                      <button
+                        type="button"
+                        disabled={disabled || busy}
+                        onClick={() => select(product)}
+                      >
+                        已有程序 / 详情
+                      </button>
+                    </div>
+                  </article>
                 );
               })}
             </div>

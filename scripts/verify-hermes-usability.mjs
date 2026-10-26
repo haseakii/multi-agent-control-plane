@@ -211,10 +211,30 @@ try {
   );
   await page.getByRole('button', { name: '协作成员', exact: true }).click();
   await page.getByRole('button', { name: /添加 \/ 下载 ACP/ }).click();
-  await page.getByRole('button', { name: /回归 ACP.*目录版本/ }).click();
-  await expect(page.getByRole('button', { name: '确认安装并接入', exact: true })).toBeVisible();
   assert.equal(installs, 0);
-  await page.getByRole('button', { name: '确认安装并接入', exact: true }).click();
+  const changedPlan = async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    await route.fulfill({ response, json: { ...body, version: '1.0.1' } });
+  };
+  await page.route('**/api/agent-catalog/fixture/install-plan', changedPlan);
+  await page
+    .getByRole('group', { name: '回归 ACP', exact: true })
+    .getByRole('button', { name: '安装', exact: true })
+    .click();
+  await expect(
+    page.getByText('目录版本已变化，请核对新版本后再点击安装。', { exact: true }),
+  ).toBeVisible();
+  assert.equal(installs, 0);
+  await page.getByRole('button', { name: '返回产品目录', exact: true }).click();
+  await page.unroute('**/api/agent-catalog/fixture/install-plan', changedPlan);
+  checks.push(
+    'A changed plan version never starts an installation under the old one-click request',
+  );
+  await page
+    .getByRole('group', { name: '回归 ACP', exact: true })
+    .getByRole('button', { name: '安装', exact: true })
+    .click();
   await expect(page.getByText('已安装', { exact: true })).toBeVisible({ timeout: 15000 });
   await expect(page.getByText('本机安装入口', { exact: true })).toBeVisible();
   assert.equal(installs, 1);
@@ -222,8 +242,15 @@ try {
   await page.getByRole('button', { name: '返回产品目录', exact: true }).click();
   await page.getByRole('button', { name: '已下载程序与安装记录', exact: true }).click();
   await expect(page.getByText('本机安装入口', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '登录并使用', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '登录并使用', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: '协作者连接' })).toBeHidden({ timeout: 15000 });
+  const installedMember = agentInstallations.list()[0].members[0];
+  assert.equal(installedMember.readiness.auth, 'ready');
+  await expect(page.getByRole('region', { name: '下次发送的运行设置' })).toContainText('回归 ACP');
+  assert.equal(storage.repositories.tasks.list().length, 1);
   checks.push(
-    'Download plans require a click, retain installed paths and remain discoverable in the program list (local installer fixture)',
+    'One click installs, then in-place Agent login selects the member for an unsent draft; installation records remain available',
   );
   await page.setViewportSize({ width: 1024, height: 768 });
   await page.screenshot({ path: path.join(root, 'compact.png') });

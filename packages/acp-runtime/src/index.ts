@@ -1,4 +1,5 @@
 export * from './process-control.js';
+export * from './terminal-auth.js';
 export * from './capability-selector.js';
 export * from './permission.js';
 export * from './permission-review.js';

@@ -184,6 +184,9 @@ it('warms a configured login in one connection and retains negotiated methods on
     code: 'authentication_unavailable',
   });
   expect(adapter.probe).not.toHaveBeenCalled();
+  expect(adapter.authenticate).toHaveBeenLastCalledWith(definition('warm', false), 'agent-login', {
+    interactive: false,
+  });
   expect(service.state('warm').readiness).toMatchObject({ runtime: 'ready', auth: 'unknown' });
   expect(service.state('warm').authMethods).toEqual(observed.authMethods);
   expect((await service.authenticate('warm', 'agent-login')).readiness.auth).toBe('ready');
@@ -249,9 +252,12 @@ describe('agent registration, auth, and Boss controls', () => {
     async (state) => {
       const { app, storage, service } = setup();
       const original = service.create(definition('busy', true)).definition;
-      savedAttempt(storage, 'busy', state);
       await service.probe('busy');
       await service.authenticate('busy', 'agent-login');
+      savedAttempt(storage, 'busy', state);
+      await expect(service.authenticate('busy', 'agent-login')).rejects.toThrow(
+        '此成员正在执行任务',
+      );
       for (const patch of [
         { runtime: { ...original.runtime, args: ['new-entry.js'] } },
         { auth: { mode: 'secret-ref', secretRef: 'new-profile' } },
@@ -300,7 +306,7 @@ describe('agent registration, auth, and Boss controls', () => {
         service.update('busy', { controlBridge: { transport: 'none', scopes: [] } }).definition
           .controlBridge.transport,
       ).toBe('none');
-      // These inspect a separate connection and do not rewrite the running attempt.
+      // A read-only connection probe is allowed; login may change an account and must wait.
       expect((await app.inject({ method: 'POST', url: '/api/agents/busy/probe' })).statusCode).toBe(
         200,
       );
@@ -312,7 +318,7 @@ describe('agent registration, auth, and Boss controls', () => {
             payload: { methodId: 'agent-login' },
           })
         ).statusCode,
-      ).toBe(200);
+      ).toBe(409);
       expect(storage.repositories.executionAttempts.get('attempt-busy')?.state).toBe(state);
     },
   );

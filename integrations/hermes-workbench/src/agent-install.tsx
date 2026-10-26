@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { z } from 'zod';
-import { Download, LoaderCircle, RefreshCw, ArrowRight } from 'lucide-react';
+import { Download, LoaderCircle, RefreshCw } from 'lucide-react';
 import s from './agent-connections.module.css';
 import { AgentMemberCreate } from './agent-member-create';
 import { SnapshotRefresh } from './snapshot-refresh';
+import { AgentInstallMember, InstalledMember } from './agent-install-member';
 const Plan = z.object({
   entryId: z.string(),
   name: z.string(),
@@ -11,6 +12,7 @@ const Plan = z.object({
   planHash: z.string(),
   source: z.string(),
   integrity: z.string(),
+  runtime: z.string().optional(),
 });
 const Installation = z.object({
   id: z.string(),
@@ -29,7 +31,7 @@ const Installation = z.object({
   agentId: z.string().optional(),
   updatedAt: z.string(),
   installed: z.boolean().default(false),
-  members: z.array(z.object({ id: z.string(), name: z.string() })).default([]),
+  members: z.array(InstalledMember).default([]),
   package: z
     .object({ runtime: z.object({ command: z.string(), args: z.array(z.string()) }) })
     .optional(),
@@ -69,9 +71,19 @@ const labels = {
 export function AgentInstall({
   entryId,
   onExisting,
+  onUse,
+  onBusy,
+  installRequested = false,
+  expectedVersion,
+  disabled = false,
 }: {
   entryId?: string;
   onExisting: (id?: string) => void;
+  onUse: (id: string) => void;
+  onBusy: (busy: boolean) => void;
+  installRequested?: boolean;
+  expectedVersion?: string;
+  disabled?: boolean;
 }) {
   const [plan, setPlan] = useState<z.infer<typeof Plan>>();
   const [records, setRecords] = useState<z.infer<typeof Records>>();
@@ -80,6 +92,8 @@ export function AgentInstall({
   const [checking, setChecking] = useState(false);
   const [recordsError, setRecordsError] = useState('');
   const idempotency = useRef({ hash: '', id: crypto.randomUUID() });
+  const autoAttempted = useRef(false),
+    flight = useRef(false);
   useEffect(() => {
     const reader = new SnapshotRefresh(
       (signal) => api('/api/agent-installations', Records, undefined, signal),
@@ -126,7 +140,8 @@ export function AgentInstall({
     };
   }, [entryId]);
   async function start() {
-    if (!plan) return;
+    if (!plan || flight.current) return;
+    flight.current = true;
     setBusy(true);
     setError('');
     try {
@@ -143,6 +158,7 @@ export function AgentInstall({
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : '安装尚未确认，请重试。');
     } finally {
+      flight.current = false;
       setBusy(false);
     }
   }
@@ -160,10 +176,19 @@ export function AgentInstall({
   }
   const visible = records?.installations.filter((row) => !entryId || row.entryId === entryId) ?? [];
   const installed = visible.find((row) => row.installed && row.version === plan?.version);
+  useEffect(() => {
+    if (!installRequested || autoAttempted.current || !plan || !records) return;
+    autoAttempted.current = true;
+    if (expectedVersion && plan.version !== expectedVersion) {
+      setError('目录版本已变化，请核对新版本后再点击安装。');
+      return;
+    }
+    if (!installed && !records.busy) void start();
+  }, [installRequested, plan, records, installed]);
   return (
     <section className={s.installPanel} aria-label="安装 ACP 成员">
       <h4>
-        <Download size={16} /> {entryId ? '安装并接入' : '成员安装进度'}
+        <Download size={16} /> {entryId ? '安装 → 登录 → 使用' : '成员安装进度'}
       </h4>
       {!entryId && !visible.length && (
         <p role="status">
@@ -179,7 +204,8 @@ export function AgentInstall({
       {plan && !installed && (
         <>
           <p className={s.hint}>
-            固定版本 {plan.version} · 安装到工作台私有目录，自动填写入口。不会安装到全局。
+            {plan.runtime ?? '自动准备运行环境'} · 版本 {plan.version} ·
+            安装到工作台私有目录，无需填写路径。
           </p>
           <details>
             <summary>安装来源与验证方式</summary>
@@ -187,9 +213,11 @@ export function AgentInstall({
             <p className={s.hint}>
               {plan.integrity === 'sha256'
                 ? '按目录提供的 SHA-256 校验。'
-                : plan.integrity === 'npm-integrity'
-                  ? 'npm 校验包完整性；安装脚本禁用。'
-                  : '目录未提供校验和：使用 HTTPS 官方目录下载地址。'}
+                : plan.integrity === 'pypi-integrity'
+                  ? '通过 uv 安装固定版本 Python 包，使用私有 Python 环境。'
+                  : plan.integrity === 'npm-integrity'
+                    ? 'npm 校验包完整性；安装脚本禁用。'
+                    : '目录未提供校验和：使用 HTTPS 官方目录下载地址。'}
             </p>
           </details>
           <p className={s.hint}>
@@ -198,11 +226,11 @@ export function AgentInstall({
           </p>
           <button
             className={s.installPrimary}
-            disabled={busy || !!records?.busy}
+            disabled={disabled || busy || !!records?.busy}
             onClick={() => void start()}
           >
             <Download size={15} />
-            {busy ? '正在提交…' : records?.busy ? '有成员正在安装' : '确认安装并接入'}
+            {busy ? '正在提交…' : records?.busy ? '有成员正在安装' : '安装并接入'}
           </button>
         </>
       )}
@@ -230,24 +258,34 @@ export function AgentInstall({
           )}
           <div className={s.actions}>
             {['failed', 'needs-attention'].includes(row.state) && (
-              <button disabled={busy || !!records?.busy} onClick={() => void retry(row.id)}>
+              <button
+                disabled={disabled || busy || !!records?.busy}
+                onClick={() => void retry(row.id)}
+              >
                 <RefreshCw size={14} />
                 {row.state === 'needs-attention' ? '重试连接' : '重试安装'}
               </button>
             )}
             {row.members.map((member) => (
-              <button key={member.id} onClick={() => onExisting(member.id)}>
-                <ArrowRight size={14} />
-                {member.name} · 打开成员
-              </button>
+              <AgentInstallMember
+                key={member.id}
+                member={member}
+                onUse={onUse}
+                onExisting={onExisting}
+                onBusy={onBusy}
+                disabled={disabled}
+              />
             ))}
             {row.installed && (
-              <AgentMemberCreate
-                endpoint={'/api/agent-installations/' + row.id + '/members'}
-                defaultName={(plan?.name ?? row.entryId) + ' · 新成员'}
-                disabled={busy || !!records?.busy}
-                onCreated={(id) => onExisting(id)}
-              />
+              <details>
+                <summary>更多成员选项</summary>
+                <AgentMemberCreate
+                  endpoint={'/api/agent-installations/' + row.id + '/members'}
+                  defaultName={(plan?.name ?? row.entryId) + ' · 新成员'}
+                  disabled={disabled || busy || !!records?.busy}
+                  onCreated={(id) => onExisting(id)}
+                />
+              </details>
             )}
           </div>
         </article>

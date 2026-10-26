@@ -8,6 +8,7 @@ import {
   unavailableSessionSettings,
 } from './session-settings.js';
 import { promptUsage } from './usage.js';
+import { TerminalAuthMethodSchema } from './terminal-auth.js';
 import { AcpTurnFailure, nativeTurnFailure } from './turn-failure.js';
 import { DenyByDefaultPermissionBroker } from './permission.js';
 import {
@@ -229,6 +230,7 @@ function publicProtocolValue(
 }
 
 export type AcpRuntimeOptions = {
+  terminalAuthentication?: boolean;
   permissionContentSummarizer?: (request: {
     sessionId: string;
     agentInfo: { name: string; version: string } | null;
@@ -375,9 +377,22 @@ export class AcpRuntimeConnection {
         'Terminal authentication must be executed by a runner, not ACP authenticate.',
       );
     }
+    if ('type' in method && method.type !== undefined && String(method.type) !== 'agent')
+      throw new TypeError('This authentication method does not use ACP authenticate.');
 
     await this.connection.agent.request(acp.methods.agent.authenticate, { methodId });
     this.authState = 'ready';
+  }
+
+  /** Executable setup metadata remains private to the host adapter, never in public observations. */
+  terminalAuthentication(methodId: string) {
+    const method = (this.initialized.authMethods ?? []).find(
+      (candidate) => candidate.id === methodId,
+    );
+    const parsed = TerminalAuthMethodSchema.safeParse(method);
+    if (!parsed.success)
+      throw new TypeError('Agent returned invalid terminal authentication metadata.');
+    return parsed.data;
   }
 
   async newSession(input: NewSessionInput): Promise<SessionRef> {
@@ -747,9 +762,11 @@ export class AcpClientRuntime {
   private readonly permissionMetadataValidator: AcpRuntimeOptions['permissionMetadataValidator'];
   private readonly permissionContentMetadataValidator: AcpRuntimeOptions['permissionContentMetadataValidator'];
   private readonly permissionContentSummarizer: AcpRuntimeOptions['permissionContentSummarizer'];
+  private readonly terminalAuthentication: boolean;
 
   constructor(options: AcpRuntimeOptions = {}) {
     this.clientName = options.clientName ?? 'multi-agent-control-plane';
+    this.terminalAuthentication = options.terminalAuthentication === true;
     this.permissionBroker = options.permissionBroker ?? new DenyByDefaultPermissionBroker();
     this.eventSink = options.eventSink;
     this.optionsPermissionTtlMs = options.permissionTtlMs ?? 300_000;
@@ -857,7 +874,7 @@ export class AcpClientRuntime {
       .catch(() => undefined);
     const initialized = await connection.agent.request(acp.methods.agent.initialize, {
       protocolVersion: acp.PROTOCOL_VERSION,
-      clientCapabilities: {},
+      clientCapabilities: this.terminalAuthentication ? { auth: { terminal: true } } : {},
     });
 
     runtimeConnection = new AcpRuntimeConnection(

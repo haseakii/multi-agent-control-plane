@@ -411,6 +411,15 @@ export class AgentControlService {
 
   async authenticate(id: string, methodId: string): Promise<RegisteredAgentView> {
     const definition = this.requireAgent(id);
+    const executing = this.storage.repositories.executionAttempts
+      .list()
+      .some(
+        (attempt) =>
+          ['queued', 'running', 'waiting'].includes(attempt.state) &&
+          this.storage.repositories.assignments.get(attempt.assignmentId)?.agentId === id,
+      );
+    if (executing || this.observationsInFlight.has(id))
+      throw new AgentControlError(409, '此成员正在执行任务或处理登录检查，请等待当前操作结束。');
     const method = this.state(definition.id).authMethods.find(
       (candidate) => candidate.id === methodId,
     );
@@ -420,19 +429,12 @@ export class AgentControlService {
         'Probe the agent first and choose an advertised authentication method.',
       );
     }
-    if (method.type === 'terminal') {
-      throw new AgentControlError(
-        400,
-        'Terminal authentication must be completed outside the control-plane API.',
-      );
-    }
-
     return this.confirmAuthentication(definition, methodId);
   }
 
   /** Release configuration selects the method; the runtime verifies it on the same connection. */
   async warmAuthentication(id: string, methodId: string): Promise<RegisteredAgentView> {
-    return this.confirmAuthentication(this.requireAgent(id), methodId);
+    return this.confirmAuthentication(this.requireAgent(id), methodId, false);
   }
 
   close(): void {
@@ -442,12 +444,13 @@ export class AgentControlService {
   private async confirmAuthentication(
     definition: AgentDefinition,
     methodId: string,
+    interactive = true,
   ): Promise<RegisteredAgentView> {
     const id = definition.id;
     const previous = this.state(id);
     const isCurrent = this.beginObservation(definition);
     try {
-      const observed = await this.runtime.authenticate(definition, methodId);
+      const observed = await this.runtime.authenticate(definition, methodId, { interactive });
       if (!isCurrent()) return this.currentView(id);
       this.runtimeStates.set(definition.id, structuredClone(observed));
       return this.currentView(id);

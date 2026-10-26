@@ -19,7 +19,7 @@ export function installedPackageName(spec?: string): string | undefined {
 }
 
 /** Read one known package manifest and its bin metadata. No scripts or package managers run. */
-export function installedPackageEntries(root: string, expectedName: string) {
+export function installedPackageEntries(root: string, expectedName: string, managed = false) {
   let fd: number | undefined;
   try {
     const canonical = realpathSync(root);
@@ -33,7 +33,14 @@ export function installedPackageEntries(root: string, expectedName: string) {
     if (count > 131_072) return [];
     const manifest = Manifest.parse(JSON.parse(bytes.subarray(0, count).toString('utf8')));
     if (manifest.name !== expectedName) return [];
-    const bins = typeof manifest.bin === 'string' ? [manifest.bin] : Object.values(manifest.bin);
+    const preferred =
+      typeof manifest.bin === 'object' ? manifest.bin[expectedName.split('/').at(-1)!] : undefined;
+    const bins =
+      typeof manifest.bin === 'string'
+        ? [manifest.bin]
+        : managed && preferred
+          ? [preferred]
+          : Object.values(manifest.bin);
     return [...new Set(bins)].flatMap((bin) => {
       try {
         if (!bin || isAbsolute(bin) || /^[a-z]:/i.test(bin) || /[\x00-\x1f]/.test(bin)) return [];
@@ -45,7 +52,7 @@ export function installedPackageEntries(root: string, expectedName: string) {
           rel === '..' ||
           rel.startsWith('..' + sep) ||
           isAbsolute(rel) ||
-          !/\.(?:c|m)?js$/i.test(script) ||
+          !(/\.(?:c|m)?js$/i.test(script) || (managed && /\.exe$/i.test(script))) ||
           !statSync(script).isFile()
         )
           return [];

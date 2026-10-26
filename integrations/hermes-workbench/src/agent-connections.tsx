@@ -451,7 +451,7 @@ export function AgentConnections({
             const busy = active.has(id);
             const working = pending?.id === id;
             const availableMethods = agent.authMethods.filter(
-              (method) => method.type !== 'terminal',
+              (method) => !method.type || ['agent', 'terminal'].includes(method.type),
             );
             const selectedMethod = availableMethods.some((method) => method.id === methods[id])
               ? methods[id]
@@ -714,7 +714,7 @@ export function AgentConnections({
                 )}
                 {loginNeeded && agent.authMethods.some((method) => method.type === 'terminal') && (
                   <p className={s.hint}>
-                    此协作者也提供终端登录；请在它的命令行中完成，然后重新检查连接。
+                    选择终端登录后，工作台会自动打开此成员的登录窗口。完成后返回这里继续使用。
                   </p>
                 )}
                 {loginNeeded &&

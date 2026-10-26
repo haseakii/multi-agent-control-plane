@@ -67,7 +67,13 @@ export class AgentInstallationsService {
               a.definition.id === row.agentId ||
               origins.some((o) => o.installationId === row.id && o.id === a.definition.id),
           )
-          .map((a) => ({ id: a.definition.id, name: a.definition.name })),
+          .map((a) => ({
+            id: a.definition.id,
+            name: a.definition.name,
+            enabled: a.definition.enabled,
+            readiness: a.readiness,
+            authMethods: a.authMethods,
+          })),
       }));
   }
   get busy() {
@@ -193,6 +199,7 @@ export class AgentInstallationsService {
             plan,
             directory: join(this.options.root, row.entryId, row.version, row.id, randomUUID()),
             releaseRoot: this.options.releaseRoot,
+            runtimeRoot: join(dirname(this.options.root), 'runtimes'),
             nodeExecutable: join(dirname(this.options.root), 'runtime/node.exe'),
             network: this.options.network,
             phase: (state, message) => {
@@ -254,7 +261,7 @@ export class AgentInstallationsService {
       }
       this.save(row, {
         state: 'ready',
-        message: '安装与 ACP 连接检查完成。请打开成员，通过它自己的登录入口授权后使用。',
+        message: '安装与 ACP 连接检查完成。请在下方登录后使用；账号授权由成员自己管理。',
       });
     } catch (error) {
       const stage = {
