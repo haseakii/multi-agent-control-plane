@@ -8,6 +8,7 @@ import { WorkspaceDirectoryBindingSchema } from '@control-plane/core';
 import type { SqliteStorage } from '@control-plane/storage';
 import { z } from 'zod';
 import { TaskControlError } from './task-control-error.js';
+import { windowsSystemEnvironment } from './windows-system-environment.js';
 
 const PathInput = z.string().min(1).max(4096);
 export const DirectoryPreviewSchema = z.object({ path: PathInput }).strict();
@@ -49,6 +50,7 @@ function windowsMetadataCommand(paths: string[]) {
       maxBuffer: 16384,
       encoding: 'utf8' as const,
       env: {
+        ...windowsSystemEnvironment(),
         SystemRoot: process.env.SystemRoot ?? 'C:/Windows',
         CONTROL_PLANE_DIRECTORY_PATHS: JSON.stringify(paths),
       },
