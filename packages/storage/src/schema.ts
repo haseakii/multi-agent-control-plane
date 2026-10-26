@@ -428,6 +428,7 @@ export const events = sqliteTable(
     payload: payload(),
   },
   (table) => [
+    index('events_project_sequence_idx').on(table.projectId),
     index('events_project_time_idx').on(table.projectId, table.occurredAt),
     index('events_project_type_idx').on(table.projectId, table.type),
     index('events_project_task_time_idx').on(

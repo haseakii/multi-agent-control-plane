@@ -43,6 +43,16 @@ Important state transitions append an event:
 
 V0 is not pure event sourcing: current-state tables remain primary for efficient reads. The event log is an audit/reconstruction aid.
 
+### Project event notifications
+
+The SSE feed uses the `ProjectEventReader` contract in core, with a SQLite adapter in storage. The runtime checks project existence before reading; another read adapter can be supplied without changing the transport. Existing full-audit reads retain their separate API.
+
+A subscription starts at the current append tail. Reconnection uses the last received event ID and reads at most 100 notices per page, ordered by durable insertion sequence rather than event timestamps. Only event, project, task, type and time metadata is selected. Missing, foreign or pruned cursors emit a reset at the current project tail so the client reconciles its durable snapshot.
+
+Migration 0022 adds a project index whose implicit SQLite rowid supports bounded cursor scans. It changes no audit payloads or event IDs. The sequence stays internal; clients retain their existing event IDs across upgrades and restarts.
+
+The transport supports synchronous or asynchronous readers, allows one pending page per subscriber, shares matching reads within a polling round, and counts pending opens against the 16-connection limit. Backpressure or socket errors dispose of the affected stream. Late reads after disconnect/shutdown are ignored; they never write to a closed response or prevent other projects from being polled.
+
 ## Artifact store
 Artifacts are immutable and content-addressed.
 

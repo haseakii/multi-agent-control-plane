@@ -90,7 +90,7 @@ it('upgrades twenty-one migrations, backfills grant revisions and preserves inst
       'existing-agent',
     );
     expect(storage.sqlite.prepare('SELECT count(*) AS n FROM __drizzle_migrations').get()).toEqual({
-      n: 22,
+      n: 23,
     });
   } finally {
     storage.close();

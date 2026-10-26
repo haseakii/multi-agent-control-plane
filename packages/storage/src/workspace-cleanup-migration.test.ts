@@ -32,7 +32,7 @@ it('upgrades thirteen migrations without deleting existing project data', () => 
     expect(storage.repositories.projects.get('p')).toEqual(project);
     expect(storage.repositories.workspaceCleanups.list()).toEqual([]);
     expect(storage.sqlite.prepare('SELECT COUNT(*) AS n FROM __drizzle_migrations').get()).toEqual({
-      n: 22,
+      n: 23,
     });
     expect(storage.sqlite.pragma('foreign_key_check')).toEqual([]);
   } finally {

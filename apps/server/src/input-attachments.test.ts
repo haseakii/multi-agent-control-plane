@@ -50,7 +50,7 @@ it('upgrades nineteen migrations, preserves binary inputs through backup/reopen,
     storage.close();
     storage = openSqliteStorage({ filename });
     expect(storage.sqlite.prepare('SELECT count(*) AS n FROM __drizzle_migrations').get()).toEqual({
-      n: 22,
+      n: 23,
     });
     const runtime = createControlPlaneRuntime({
       storage,

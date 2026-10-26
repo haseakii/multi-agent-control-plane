@@ -38,6 +38,7 @@ import {
   SqliteArtifactMetadataStore,
 } from '@control-plane/artifact-store';
 import {
+  type ProjectEventReader,
   AuditEventSchema,
   ApprovalStateSchema,
   ApprovalDecisionEligibilitySchema,
@@ -96,6 +97,7 @@ import {
 import { LocalRunner, type ProcessHandle, type Runner } from '@control-plane/runner';
 import type { SqliteStorage } from '@control-plane/storage';
 import {
+  SqliteProjectEventReader,
   SqliteContextSearch,
   SqliteSessionSettingsRepository,
   SqliteSessionPresetsRepository,
@@ -205,10 +207,12 @@ export type ControlPlaneRuntimeOptions = {
   executionTimeoutMs?: number;
   permissionTtlMs?: number;
   directoryInspection?: DirectoryInspectionOptions;
+  projectEventReader?: ProjectEventReader;
 };
 
 /** Local V0 application composition. SQLite is durable; ACP sessions and grants are not task state. */
 export class ControlPlaneRuntime {
+  readonly projectEventReader: ProjectEventReader;
   readonly inputAttachments: InputAttachmentService;
   readonly network: NetworkSettingsService;
   readonly agentControl: AgentControlService;
@@ -249,6 +253,18 @@ export class ControlPlaneRuntime {
 
   constructor(options: ControlPlaneRuntimeOptions) {
     this.storage = options.storage;
+    const eventReader =
+      options.projectEventReader ?? new SqliteProjectEventReader(this.storage.sqlite);
+    this.projectEventReader = {
+      latest: (projectId) => {
+        this.getProject(projectId);
+        return eventReader.latest(projectId);
+      },
+      readAfter: (projectId, query) => {
+        this.getProject(projectId);
+        return eventReader.readAfter(projectId, query);
+      },
+    };
     this.projectPolicy = new ProjectPolicyEngine({
       get: (projectId) => this.getProjectPolicy(projectId),
     });

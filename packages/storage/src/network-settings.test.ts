@@ -44,7 +44,7 @@ it('upgrades eighteen migrations, preserves old records, and persists atomic set
     storage = openSqliteStorage({ filename });
     expect(
       storage.sqlite.prepare('SELECT count(*) AS count FROM __drizzle_migrations').get(),
-    ).toEqual({ count: 22 });
+    ).toEqual({ count: 23 });
     expect(storage.sqlite.prepare('SELECT * FROM agent_definitions').all()).toEqual(before);
     let repo = new SqliteNetworkSettingsRepository(storage.sqlite, () => at);
     expect(repo.read()).toMatchObject({ revision: 0, global: { mode: 'unmanaged' }, members: {} });
