@@ -421,6 +421,32 @@
   font-size: 11px;
   color: var(--h-text-muted, #77736c);
 }
+.taskRuntime {
+  flex-shrink: 0;
+  flex-wrap: nowrap;
+  margin: 4px 16px;
+  padding: 4px 8px;
+  max-height: 72px;
+  overflow-y: auto;
+}
+.taskRuntime .runtimeCopy {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+}
+.taskRuntime .runtimeSummary {
+  min-width: 0;
+}
+.taskRuntime .trigger {
+  padding: 5px 8px;
+}
+@media (max-height: 700px) {
+  .taskRuntime {
+    margin: 2px 16px;
+    padding: 2px 8px;
+  }
+}
 @media (max-width: 540px) {
   .header {
     padding: 18px;

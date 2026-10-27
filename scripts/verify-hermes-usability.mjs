@@ -223,6 +223,49 @@ try {
   await page.goto(base + '/?task=task');
   await expect(page.getByRole('heading', { name: task.title, exact: true })).toBeVisible();
   const composer = page.locator('textarea').first();
+  const layoutMeasurements = [];
+  for (const viewport of [
+    { width: 1366, height: 768 },
+    { width: 1024, height: 768 },
+    { width: 1280, height: 600 },
+  ]) {
+    await page.setViewportSize(viewport);
+    const messages = await page
+      .getByRole('region', { name: '会话消息', exact: true })
+      .boundingBox();
+    layoutMeasurements.push({ viewport, messages });
+    assert(
+      messages.height >= viewport.height * 0.45,
+      'Default chat must retain at least 45% of window height.',
+    );
+    assert(messages.width >= viewport.width - 250, 'Side panels must be closed by default.');
+    const input = await composer.boundingBox();
+    assert(input.y >= messages.y + messages.height - 1, 'Composer must not overlap messages.');
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+    await page.screenshot({
+      path: path.join(root, `conversation-${viewport.width}x${viewport.height}.png`),
+    });
+  }
+  fs.writeFileSync(
+    path.join(root, 'conversation-layout.json'),
+    JSON.stringify(layoutMeasurements, null, 2),
+  );
+  await composer.fill('长草稿，仍能阅读消息。\n'.repeat(40));
+  assert(
+    (await page.getByRole('region', { name: '会话消息', exact: true }).boundingBox()).height >= 200,
+    'A long draft must leave readable chat space in a short window.',
+  );
+  await page.getByRole('button', { name: '过程', exact: true }).click();
+  await expect(page.getByRole('button', { name: '过程', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await page.getByRole('button', { name: '过程', exact: true }).click();
+  await expect(composer).toHaveValue('长草稿，仍能阅读消息。\n'.repeat(40));
+  checks.push(
+    'Default chat remains readable at laptop and short-window sizes; opening and closing details retains long drafts',
+  );
+  await page.setViewportSize({ width: 1912, height: 914 });
   await composer.fill('放大后仍保留的草稿');
   const normalHeight = (
     await page.getByRole('region', { name: '会话消息', exact: true }).boundingBox()

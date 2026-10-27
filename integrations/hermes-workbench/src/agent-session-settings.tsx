@@ -906,7 +906,7 @@ export function TaskRuntimeSettings({ taskId, ...props }: Props & { taskId: stri
   const summary = data?.confirmed ? sessionSettingsSummary(data.confirmed) : '';
   const locked = props.settingsLocked || executionActive !== false;
   return (
-    <section className={s.runtimeBar} aria-label="本轮运行设置">
+    <section className={`${s.runtimeBar} ${s.taskRuntime}`} aria-label="本轮运行设置">
       <div className={s.runtimeCopy}>
         <span className={s.runtimeLabel}>
           {data?.state === 'applied'

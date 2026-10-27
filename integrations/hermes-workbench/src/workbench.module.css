@@ -346,9 +346,10 @@
 .taskHeader {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 4px;
+  flex-shrink: 0;
   border-bottom: 1px solid var(--h-line);
-  padding: 10px 20px;
+  padding: 6px 16px;
 }
 .taskHeading {
   display: flex;
@@ -369,14 +370,16 @@
 }
 .taskToolbar {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  overflow-x: auto;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
 }
 .viewSwitch {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
   gap: 3px;
   border: 1px solid var(--h-line);
   border-radius: 10px;
@@ -387,7 +390,7 @@
   border: 1px solid transparent;
   border-radius: 7px;
   background: transparent;
-  padding: 7px 10px;
+  padding: 4px 8px;
 }
 .taskHeader .viewSwitch button[aria-pressed='true'] {
   background: var(--h-bg-pane);
@@ -399,6 +402,7 @@
   display: flex;
   gap: 5px;
   align-items: center;
+  flex-shrink: 0;
 }
 .taskHeader .taskUtilities button {
   border-color: transparent;
@@ -525,24 +529,6 @@
   --conversation-max-width: 1040px;
   --conversation-font-size: 16px;
 }
-.readingToolbar {
-  display: flex;
-  justify-content: flex-end;
-  padding: 4px 20px;
-  flex-shrink: 0;
-}
-.readingToolbar button {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 10px;
-  font: inherit;
-  font-size: 13px;
-  background: var(--h-bg-pane);
-  color: var(--h-text);
-  border: 1px solid var(--h-line);
-  cursor: pointer;
-}
 .reading .topbar,
 .reading .sidebar,
 .reading .projectContext,
@@ -563,13 +549,13 @@
 }
 .followUp textarea {
   min-height: 44px;
-  max-height: 150px;
+  max-height: 100px;
   font-size: 15px;
 }
 .steps {
   display: flex;
   gap: 16px;
-  padding: 8px 24px;
+  padding: 4px 16px;
   border-bottom: 1px solid var(--h-line);
   font-size: 11px;
   flex-wrap: wrap;
@@ -586,7 +572,7 @@
 }
 .taskFeedback {
   flex-shrink: 0;
-  max-height: 28vh;
+  max-height: 18vh;
   overflow: auto;
   padding: 12px 24px;
   border-bottom: 1px solid var(--h-line);
@@ -712,19 +698,30 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 8px 24px;
+  padding: 4px 16px;
+  flex-shrink: 0;
   border-top: 1px solid var(--h-line);
   font-size: 12px;
 }
 .followUp {
   flex-shrink: 0;
-  padding: 0 20px 12px;
+  max-height: 32vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 16px 6px;
 }
-.followUp small {
+.followUp > small {
   display: block;
   margin-top: 6px;
   font-size: 11px;
   color: var(--h-text-3);
+}
+.followUp [data-variant='default'] {
+  padding: 8px 10px 6px;
+}
+.followUp ul[aria-label='待发送附件'] {
+  max-height: 72px;
+  overflow-y: auto;
 }
 .taskFooter > span {
   flex: 1;
@@ -823,6 +820,40 @@
   color: var(--h-text-3);
   background: var(--h-bg-pane);
 }
+@media (max-height: 700px) and (min-width: 1001px) {
+  .taskHeader {
+    flex-direction: row;
+    align-items: center;
+    gap: 12px;
+    padding: 4px 16px;
+  }
+  .taskHeading {
+    width: 260px;
+    flex-shrink: 0;
+  }
+  .taskHeader h1 {
+    font-size: 14px;
+    margin: 0 0 2px;
+    line-height: 1.2;
+  }
+  .taskHeader small {
+    font-size: 11px;
+    line-height: 1.2;
+  }
+  .taskToolbar {
+    flex: 1;
+    min-width: 0;
+  }
+  .followUp {
+    padding: 0 16px 4px;
+  }
+  .bottom {
+    display: none;
+  }
+  .topbar {
+    height: 44px;
+  }
+}
 @media (max-width: 1000px) {
   .sidebar {
     width: 200px;
@@ -837,12 +868,12 @@
     width: 280px;
   }
   .taskHeader {
-    gap: 8px;
-    padding: 12px;
+    gap: 4px;
+    padding: 6px 12px;
   }
   .steps {
     gap: 8px;
-    padding: 12px;
+    padding: 4px 12px;
   }
 }
 @media (max-width: 760px) {
