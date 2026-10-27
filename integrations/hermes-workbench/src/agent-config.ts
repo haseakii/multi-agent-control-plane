@@ -84,6 +84,7 @@ export const AgentRegistrationSource = z
     value.status === 'unavailable' ? value.record === null : value.record !== null,
   );
 export const AgentConnection = z.object({
+  connectionOperation: z.enum(['probe', 'auth']).optional(),
   definitionHash: z
     .string()
     .regex(/^[a-f0-9]{64}$/)

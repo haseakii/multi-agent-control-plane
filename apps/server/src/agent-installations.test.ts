@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,6 +9,8 @@ import { createControlPlaneRuntime } from './runtime-composition.js';
 import { AgentCatalogService } from './agent-catalog.js';
 import { AgentInstallationsService } from './agent-installations.js';
 import { packagePlan, type installAgentPackage } from './agent-package-install.js';
+import { buildServer } from './server.js';
+import { OFFICIAL_CATALOG_URL } from './agent-catalog.js';
 const entry = {
   id: 'test-worker',
   name: 'Test Worker',
@@ -25,6 +27,135 @@ const entry = {
     },
   },
 };
+
+it('discovers reusable managed packages with no member, avoids duplicate downloads, and ignores missing entries', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'acp-reuse-'));
+  const storage = openSqliteStorage({ filename: join(root, 'state.sqlite') });
+  const runtime = createControlPlaneRuntime({
+    storage,
+    workspaceRoot: join(root, 'work'),
+    artifactRoot: join(root, 'artifacts'),
+  });
+  const catalog = new AgentCatalogService(
+    undefined,
+    async () =>
+      new Response(JSON.stringify({ version: '1.0.0', agents: [entry] }), {
+        headers: { 'content-type': 'application/json' },
+      }),
+  );
+  await catalog.refresh();
+  // This fixture uses a Windows distribution even when discovery runs on Linux CI.
+  vi.spyOn(catalog, 'snapshot').mockReturnValue({
+    ...catalog.snapshot(),
+    platform: 'windows-x86_64',
+  });
+  const install = vi.fn(async () => {
+    throw new Error('fixture download');
+  });
+  const service = new AgentInstallationsService({
+    storage,
+    catalog,
+    agents: runtime.agentControl,
+    network: runtime.network,
+    root: join(root, 'agents'),
+    releaseRoot: root,
+    installPackage: install,
+  });
+  const app = buildServer({
+    agentControl: runtime.agentControl,
+    agentCatalog: catalog,
+    agentInstallations: service,
+  });
+  try {
+    const plan = service.plan(entry.id),
+      id = randomUUID();
+    const directory = join(root, 'agents', entry.id, entry.version, id, randomUUID());
+    mkdirSync(directory, { recursive: true });
+    const script = join(directory, 'worker.mjs');
+    writeFileSync(script, 'process.exit(1);');
+    storage.repositories.agentInstallations.upsert({
+      id,
+      entryId: entry.id,
+      version: entry.version,
+      planHash: plan.planHash,
+      state: 'ready',
+      message: 'fixture',
+      directory,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      package: {
+        origin: 'installation',
+        runtime: {
+          type: 'acp-stdio',
+          command: process.execPath,
+          args: [script, '--profile', 'existing'],
+        },
+        source: {
+          entryId: entry.id,
+          entryName: entry.name,
+          catalogVersion: entry.version,
+          catalogUrl: OFFICIAL_CATALOG_URL,
+        },
+      },
+    });
+    const found = await app.inject({
+      method: 'POST',
+      url: '/api/agent-catalog/discover-local',
+      payload: { entryId: entry.id },
+    });
+    expect(found.statusCode).toBe(200);
+    expect(found.json().candidates).toEqual([
+      expect.objectContaining({
+        source: 'managed',
+        installationId: id,
+        available: true,
+        runtime: expect.objectContaining({ args: [script, '--profile', 'existing'] }),
+      }),
+    ]);
+    expect(
+      service.start({
+        requestId: randomUUID(),
+        entryId: entry.id,
+        version: plan.version,
+        planHash: plan.planHash,
+        confirmed: true,
+      }).id,
+    ).toBe(id);
+    expect(install).not.toHaveBeenCalled();
+    expect(runtime.agentControl.list()).toEqual([]);
+    // Another version still offers reuse instead of silently fetching a duplicate.
+    storage.repositories.agentInstallations.upsert({
+      ...storage.repositories.agentInstallations.get(id)!,
+      version: '0.9.0',
+    });
+    expect(() =>
+      service.start({
+        requestId: randomUUID(),
+        entryId: entry.id,
+        version: plan.version,
+        planHash: plan.planHash,
+        confirmed: true,
+      }),
+    ).toThrow('已有可用程序');
+    rmSync(script);
+    expect(service.discoverablePackages()).toEqual([]);
+    expect(service.list()[0]?.installed).toBe(false);
+    service.start({
+      requestId: randomUUID(),
+      entryId: entry.id,
+      version: plan.version,
+      planHash: plan.planHash,
+      confirmed: true,
+    });
+    await service.settle();
+    expect(install).toHaveBeenCalledOnce();
+  } finally {
+    await app.close();
+    await runtime.close();
+    storage.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 it('isolates install, retries a failed install and interrupted check, reuses registration, and leaves login to agent', async () => {
   const root = mkdtempSync(join(tmpdir(), 'agent-install-')),

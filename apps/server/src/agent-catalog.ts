@@ -306,6 +306,7 @@ export function registerAgentCatalogRoutes(
   catalog: AgentCatalogService,
   agents: AgentControlService,
   installationSupported = false,
+  installedPackages: () => import('@control-plane/core').AgentInstallation[] = () => [],
 ) {
   const localStatus = new AgentCatalogStatus();
   const catalogView = () => {
@@ -333,6 +334,7 @@ export function registerAgentCatalogRoutes(
     const members = agents.list();
     const platform = catalog.snapshot().platform;
     const discovery = discoverAgentEntries(entry, platform, members, {
+      installedPackages: installedPackages(),
       ...(input.data.directory ? { directory: input.data.directory } : {}),
     });
     return {
@@ -355,7 +357,9 @@ export function registerAgentCatalogRoutes(
     const snapshot = catalog.snapshot();
     const members = agents.list();
     for (const entry of entries) {
-      const result = discoverAgentEntries(entry!, snapshot.platform, members);
+      const result = discoverAgentEntries(entry!, snapshot.platform, members, {
+        installedPackages: installedPackages(),
+      });
       localStatus.record(entry!, snapshot.platform, result, members);
     }
     return {

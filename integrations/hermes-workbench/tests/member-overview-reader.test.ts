@@ -12,6 +12,30 @@ function channel() {
   };
 }
 
+it('polls pending member operations without globally loading or starving an in-flight read', async () => {
+  const members = channel(),
+    history = channel();
+  let release!: (value: string) => void;
+  members.read.mockReturnValue(
+    new Promise((resolve) => {
+      release = resolve;
+    }),
+  );
+  history.read.mockResolvedValue('history');
+  const reader = new MemberOverviewReader(members, history);
+  const first = reader.refresh(true);
+  await vi.advanceTimersByTimeAsync(0);
+  const second = reader.refresh(true);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(members.read).toHaveBeenCalledTimes(1);
+  expect(members.loading).not.toHaveBeenCalled();
+  expect(history.loading).not.toHaveBeenCalled();
+  release('completed login');
+  await Promise.all([first, second]);
+  expect(members.apply).toHaveBeenCalledWith('completed login');
+  reader.dispose();
+});
+
 it('shows members while history hangs, then allows history recovery without replacing member configuration', async () => {
   const members = channel(),
     history = channel();

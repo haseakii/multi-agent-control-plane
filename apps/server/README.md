@@ -64,6 +64,46 @@ ACP `allow_once` requests wait for a durable approval decision; they are never
 silently approved. The task moves to `waiting_approval`, and the decision releases
 the same pending ACP call. Other permission choices are denied by default.
 
+## Local ACP discovery and package maintenance
+
+Installation first checks saved, locally valid packages and registered entries, then
+known Node/npm/pnpm and user executable directories alongside PATH. Discovery reads
+local entry metadata; it does not execute programs or imply successful authentication.
+Existing usable entries can be reused without downloading another copy. Missing entries
+do not prevent a fresh installation.
+
+Workbench-managed installation records support two explicit maintenance actions:
+
+- `POST /api/agent-installations/:id/maintenance-preview` with `{ "action": "history" }`
+  or `{ "action": "uninstall" }` returns the exact paths, size, affected members and blockers.
+- `POST /api/agent-installations/:id/maintenance` requires the same action, the returned
+  `planHash`, and `confirmed: true`. Changed files or member state require a new preview.
+
+History cleanup removes unused attempts and known download/cache outputs, preserving the
+current program and referenced files. Uninstall requires affected members to be disabled
+and idle. Only journalled request directories are eligible; externally installed programs,
+shared runtimes and external login homes are outside its scope. Member definitions and
+task history remain. Links outside the deletion set are rejected. File inspection is
+bounded, and revalidation/deletion runs synchronously to exclude concurrent server requests.
+
+The existing installation JSON payload gains `removing`, `removal-failed`, and `uninstalled`
+states without a table/schema migration. Removal is journalled before deleting files;
+restart converts interrupted removal to a retryable failure. Compatibility tests reopen
+legacy records and verify partial-removal recovery. Partially removed programs are never
+offered for reuse.
+
+Connection checks and login expose a transient `connectionOperation` per member.
+The workbench can close/reopen or operate another member while waiting, and polls
+pending operations without locking the drawer. A probe cannot supersede an ongoing
+login for the same member. Closing the drawer does not cancel the agent's login.
+
+The CodeBuddy adapter can read `_codebuddy.ai/getUserInfo` to confirm account state
+without repeating `authenticate` (which can sign out an existing account). For a
+missing login reply, recovery requires an observed signed-out to signed-in transition
+on the same connection. Only a boolean leaves the adapter; account and token fields
+are discarded. Unsupported versions and unconfirmed status retain normal ACP response
+handling/timeouts. Browser authorization alone is not proof of completed local login.
+
 ## Recovery and current limits
 
 History, attempts, conversations, messages, approvals, and artifact metadata survive

@@ -34,6 +34,7 @@ import {
 import type { FastifyInstance, FastifyReply } from 'fastify';
 
 export type AgentRuntimeState = AgentRuntimeObservation & {
+  connectionOperation?: 'probe' | 'auth' | undefined;
   definitionHash?: string;
   error?: string | undefined;
   localEntry?: { offlineChecksPassed: boolean; issues: Array<{ code: string; message: string }> };
@@ -41,6 +42,7 @@ export type AgentRuntimeState = AgentRuntimeObservation & {
 };
 
 export type RegisteredAgentView = {
+  connectionOperation?: 'probe' | 'auth' | undefined;
   definitionHash?: string;
   definition: AgentDefinition;
   readiness: AgentReadiness;
@@ -90,6 +92,7 @@ export class AgentControlService {
   private readonly configurationGenerations = new Map<string, number>();
   private readonly requestGenerations = new Map<string, number>();
   private readonly observationsInFlight = new Map<string, number>();
+  private readonly authenticationsInFlight = new Set<string>();
 
   private beginObservation(definition: AgentDefinition): () => boolean {
     const id = definition.id;
@@ -133,6 +136,29 @@ export class AgentControlService {
       blockers,
       references,
     });
+  }
+
+  /** Program removal preserves historical members; only live use blocks filesystem cleanup. */
+  programRemovalBlockers(rawId: string): string[] {
+    const agent = this.requireAgent(rawId);
+    const owned = this.storage.repositories.assignments
+      .list()
+      .filter((item) => item.agentId === agent.id);
+    const assignments = new Set(owned.map((item) => item.id));
+    return [
+      ...(agent.enabled ? ['请先停用成员'] : []),
+      ...(this.observationsInFlight.has(agent.id) ? ['正在检查连接或登录'] : []),
+      ...(owned.some((item) => ['queued', 'running', 'waiting'].includes(item.state)) ||
+      this.storage.repositories.executionAttempts
+        .list()
+        .some(
+          (attempt) =>
+            assignments.has(attempt.assignmentId) &&
+            ['queued', 'running', 'waiting'].includes(attempt.state),
+        )
+        ? ['仍有排队或运行中的任务']
+        : []),
+    ];
   }
 
   remove(id: string, raw: unknown) {
@@ -252,15 +278,22 @@ export class AgentControlService {
     const revision = definition ? { definitionHash: definitionHash(definition) } : {};
     const source = definition ? this.registrationSource(definition) : undefined;
     const sourceMetadata = source ? { registrationSource: source } : {};
+    const connectionOperation = this.authenticationsInFlight.has(id)
+      ? ('auth' as const)
+      : this.observationsInFlight.has(id)
+        ? ('probe' as const)
+        : undefined;
     if (current) {
       return {
         ...structuredClone(current),
+        connectionOperation,
         ...revision,
         ...(localEntry ? { localEntry } : {}),
         ...sourceMetadata,
       };
     }
     return {
+      connectionOperation,
       ...revision,
       readiness: {
         runtime: 'unknown',
@@ -373,6 +406,8 @@ export class AgentControlService {
 
   async probe(id: string): Promise<RegisteredAgentView> {
     const definition = this.requireAgent(id);
+    if (this.authenticationsInFlight.has(id))
+      throw new AgentControlError(409, '此成员正在登录，请等待登录结果；其他成员仍可操作。');
     const isCurrent = this.beginObservation(definition);
     try {
       const observed = await this.runtime.probe(definition);
@@ -429,12 +464,14 @@ export class AgentControlService {
         'Probe the agent first and choose an advertised authentication method.',
       );
     }
-    return this.confirmAuthentication(definition, methodId);
+    await this.confirmAuthentication(definition, methodId);
+    return this.currentView(id);
   }
 
   /** Release configuration selects the method; the runtime verifies it on the same connection. */
   async warmAuthentication(id: string, methodId: string): Promise<RegisteredAgentView> {
-    return this.confirmAuthentication(this.requireAgent(id), methodId, false);
+    await this.confirmAuthentication(this.requireAgent(id), methodId, false);
+    return this.currentView(id);
   }
 
   close(): void {
@@ -448,6 +485,9 @@ export class AgentControlService {
   ): Promise<RegisteredAgentView> {
     const id = definition.id;
     const previous = this.state(id);
+    if (this.authenticationsInFlight.has(id))
+      throw new AgentControlError(409, '此成员正在登录，请等待当前操作结束。');
+    this.authenticationsInFlight.add(id);
     const isCurrent = this.beginObservation(definition);
     try {
       const observed = await this.runtime.authenticate(definition, methodId, { interactive });
@@ -482,6 +522,7 @@ export class AgentControlService {
         error instanceof AgentConnectionFailure ? error.reason : undefined,
       );
     } finally {
+      this.authenticationsInFlight.delete(id);
       this.endObservation(id);
     }
   }

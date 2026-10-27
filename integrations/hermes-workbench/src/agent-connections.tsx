@@ -103,7 +103,8 @@ export function AgentConnections({
   projectId,
 }: AgentConnectionsProps) {
   const dialog = useRef<HTMLDialogElement>(null);
-  const actionInFlight = useRef(false);
+  const actionInFlight = useRef(new Set<string>());
+  const mounted = useRef(false);
   const [agents, setAgents] = useState<Connection[]>([]);
   const [network, setNetwork] = useState<NetworkViewData>();
   const networkMembersKey = agents
@@ -120,7 +121,7 @@ export function AgentConnections({
     return () => controller.abort();
   }, [networkVersion, networkMembersKey]);
   const [loading, setLoading] = useState(true);
-  const [pending, setPending] = useState<{ id: string; kind: 'probe' | 'auth' } | null>(null);
+  const [pending, setPending] = useState<Record<string, 'probe' | 'auth'>>({});
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [methods, setMethods] = useState<Record<string, string>>({});
@@ -156,6 +157,7 @@ export function AgentConnections({
   }, []);
 
   useEffect(() => {
+    mounted.current = true;
     dialog.current?.showModal();
     const reader = new MemberOverviewReader<Connection[], MemberActivityData>(
       {
@@ -188,10 +190,18 @@ export function AgentConnections({
     overview.current = reader;
     void refresh();
     return () => {
+      mounted.current = false;
       reader.dispose();
       overview.current = undefined;
     };
   }, [refresh]);
+  const observing =
+    agents.some((agent) => agent.connectionOperation) || Object.keys(pending).length > 0;
+  useEffect(() => {
+    if (!observing) return;
+    const timer = setInterval(() => void overview.current?.refresh(true), 2000);
+    return () => clearInterval(timer);
+  }, [observing, refresh]);
   useEffect(() => {
     if (!editing) return;
     const form = dialog.current?.querySelector('form');
@@ -214,9 +224,11 @@ export function AgentConnections({
   }
 
   async function act(agent: Connection, kind: 'probe' | 'auth', methodId?: string) {
-    if (actionInFlight.current || configBusy || active.has(agent.definition.id)) return;
-    actionInFlight.current = true;
-    setPending({ id: agent.definition.id, kind });
+    const id = agent.definition.id;
+    if (actionInFlight.current.has(id) || agent.connectionOperation || configBusy || active.has(id))
+      return;
+    actionInFlight.current.add(id);
+    setPending((current) => ({ ...current, [id]: kind }));
     setError('');
     setNotice('');
     try {
@@ -225,9 +237,10 @@ export function AgentConnections({
         fetchJSON('/api/control-center?view=conversation', { signal }, Activity),
       );
       const currentActive = activeAgents(activity);
-      setObservedActive(currentActive);
+      if (mounted.current) setObservedActive(currentActive);
       if (currentActive.includes(agent.definition.id)) {
-        setNotice(`${agent.definition.name} 正在处理任务，请等任务结束后再检查或登录。`);
+        if (mounted.current)
+          setNotice(`${agent.definition.name} 正在处理任务，请等任务结束后再检查或登录。`);
         return;
       }
       const next = await memberActionRequest(kind, (signal) =>
@@ -237,6 +250,7 @@ export function AgentConnections({
           AgentConnection,
         ),
       );
+      if (!mounted.current) return;
       setAgents((current) =>
         current.map((item) => (item.definition.id === next.definition.id ? next : item)),
       );
@@ -249,13 +263,19 @@ export function AgentConnections({
       );
       onChanged();
     } catch (failure) {
+      if (!mounted.current) return;
       setError(errorText(failure, kind));
       // The backend may update readiness even when authentication fails.
       await refresh(false);
       onChanged();
     } finally {
-      actionInFlight.current = false;
-      setPending(null);
+      actionInFlight.current.delete(id);
+      if (mounted.current)
+        setPending((current) => {
+          const next = { ...current };
+          delete next[id];
+          return next;
+        });
     }
   }
 
@@ -266,10 +286,10 @@ export function AgentConnections({
       aria-labelledby="agent-connections-title"
       onCancel={(event) => {
         event.preventDefault();
-        if (!configBusy && !pending) onClose();
+        if (!configBusy) onClose();
       }}
       onClick={(event) => {
-        if (event.target === event.currentTarget && !configBusy && !pending) onClose();
+        if (event.target === event.currentTarget && !configBusy) onClose();
       }}
     >
       <div className={s.surface}>
@@ -286,7 +306,7 @@ export function AgentConnections({
             type="button"
             className={s.close}
             onClick={onClose}
-            disabled={configBusy || pending !== null}
+            disabled={configBusy}
             aria-label="关闭协作者连接"
             autoFocus
           >
@@ -299,7 +319,7 @@ export function AgentConnections({
             <button
               type="button"
               onClick={() => void refresh().then(onChanged)}
-              disabled={loading || pending !== null || configBusy}
+              disabled={loading || configBusy}
             >
               刷新状态
             </button>
@@ -308,7 +328,7 @@ export function AgentConnections({
             <button
               type="button"
               aria-pressed={editing !== 'new'}
-              disabled={pending !== null || configBusy}
+              disabled={configBusy}
               onClick={() => setEditing(null)}
             >
               已接入 <span>{agents.length}</span>
@@ -316,7 +336,7 @@ export function AgentConnections({
             <button
               type="button"
               aria-pressed={editing === 'new'}
-              disabled={loading || pending !== null || configBusy}
+              disabled={loading || configBusy}
               onClick={() => {
                 setManual(false);
                 setEditing('new');
@@ -347,7 +367,7 @@ export function AgentConnections({
           )}
           {editing === 'new' && !manual && (
             <AgentQuickAdd
-              disabled={pending !== null || loading}
+              disabled={loading}
               onBusy={(busy) => {
                 setConfigBusy(busy);
                 if (!busy) {
@@ -385,7 +405,15 @@ export function AgentConnections({
                   : `${editing.definition.id}:${editing.definitionHash ?? ''}`
               }
               agent={editing === 'new' ? undefined : editing}
-              disabled={pending !== null || loading}
+              disabled={
+                loading ||
+                (editing !== 'new' &&
+                  !!(
+                    pending[editing.definition.id] ||
+                    agents.find((agent) => agent.definition.id === editing.definition.id)
+                      ?.connectionOperation
+                  ))
+              }
               active={editing !== 'new' && active.has(editing.definition.id)}
               onBusy={setConfigBusy}
               onCancel={() => setEditing(null)}
@@ -449,7 +477,8 @@ export function AgentConnections({
           ).map((agent) => {
             const id = agent.definition.id;
             const busy = active.has(id);
-            const working = pending?.id === id;
+            const operation = pending[id] ?? agent.connectionOperation;
+            const working = !!operation;
             const availableMethods = agent.authMethods.filter(
               (method) => !method.type || ['agent', 'terminal'].includes(method.type),
             );
@@ -458,7 +487,7 @@ export function AgentConnections({
               : availableMethods[0]?.id;
             const loginNeeded =
               agent.readiness.auth === 'unknown' || agent.readiness.auth === 'needs_login';
-            const disabled = pending !== null || loading || busy || configBusy;
+            const disabled = working || loading || busy || configBusy;
             const directReady = selectableAgents([agent], 'direct').length > 0;
             const collaborativeReady = selectableAgents([agent], 'collaborative').length > 0;
             const current = busy ? recentMemberTask(memberActivity, id, true) : undefined;
@@ -529,7 +558,7 @@ export function AgentConnections({
                     <strong title={recent.task.title}>{recent.task.title}</strong>
                     <button
                       type="button"
-                      disabled={pending !== null || configBusy || editing !== null}
+                      disabled={configBusy || editing !== null}
                       onClick={() => onOpenTask(recent.conversationTaskId)}
                     >
                       {current
@@ -585,7 +614,7 @@ export function AgentConnections({
                   {onNetwork && (
                     <button
                       type="button"
-                      disabled={configBusy || !!pending || editing !== null}
+                      disabled={configBusy || working || editing !== null}
                       onClick={() => onNetwork(id)}
                     >
                       {(() => {
@@ -607,7 +636,7 @@ export function AgentConnections({
                     defaultName={agent.definition.name + ' · 新成员'}
                     disabled={
                       loading ||
-                      pending !== null ||
+                      working ||
                       configBusy ||
                       editing !== null ||
                       agent.localEntry?.offlineChecksPassed === false
@@ -660,7 +689,7 @@ export function AgentConnections({
                     disabled={disabled}
                     onClick={() => void act(agent, 'probe')}
                   >
-                    {working && pending.kind === 'probe' ? '检查中…' : '检查连接'}
+                    {operation === 'probe' ? '检查中…' : '检查连接'}
                   </button>
                   {loginNeeded && availableMethods.length > 0 && (
                     <>
@@ -688,7 +717,7 @@ export function AgentConnections({
                         }
                         onClick={() => void act(agent, 'auth', selectedMethod)}
                       >
-                        {working && pending.kind === 'auth' ? '等待登录完成…' : '登录 / 确认登录'}
+                        {operation === 'auth' ? '等待登录完成…' : '登录 / 确认登录'}
                       </button>
                     </>
                   )}
@@ -706,8 +735,10 @@ export function AgentConnections({
                     此程序不报告登录状态。连接正常时可尝试任务；若任务提示认证失败，再到程序自己的登录入口处理。
                   </p>
                 )}
-                {working && pending.kind === 'auth' && (
-                  <p className={s.hint}>请留意协作者打开的登录窗口。确认可能需要几分钟。</p>
+                {operation === 'auth' && (
+                  <p className={s.hint}>
+                    请留意协作者打开的登录窗口。等待期间可以关闭面板或操作其他成员；关闭面板不会取消登录。
+                  </p>
                 )}
                 {!busy && loginNeeded && availableMethods.length > 0 && (
                   <p className={s.hint}>点击登录后，由协作者自己的登录流程处理授权。</p>
@@ -742,7 +773,7 @@ export function AgentConnections({
                 </details>
                 <AgentManagement
                   agent={agent}
-                  disabled={pending !== null || loading || configBusy || editing !== null}
+                  disabled={working || loading || configBusy || editing !== null}
                   active={busy}
                   onBusy={setConfigBusy}
                   onEdit={() => {

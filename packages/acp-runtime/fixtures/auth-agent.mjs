@@ -23,6 +23,7 @@ if (process.argv.includes('--terminal-login')) {
 }
 
 const stream = acp.ndJsonStream(Writable.toWeb(process.stdout), Readable.toWeb(process.stdin));
+let authenticated = process.argv.includes('--codebuddy-signed-in');
 const configOptions = (model = 'small') => [
   {
     id: 'model',
@@ -59,11 +60,22 @@ acp
             },
           ]
         : []
-      : [{ id: 'agent-login', name: 'Agent login' }],
+      : process.argv.includes('--codebuddy-auth')
+        ? ['internal', 'external', 'iOA', 'selfhosted'].map((id) => ({ id, name: id }))
+        : [{ id: 'agent-login', name: 'Agent login' }],
   }))
-  .onRequest(acp.methods.agent.authenticate, () =>
-    process.argv.includes('--hang-auth') ? new Promise(() => {}) : {},
-  )
+  .onRequest(acp.methods.agent.authenticate, () => {
+    if (process.argv.includes('--codebuddy-auth'))
+      setTimeout(() => {
+        authenticated = true;
+      }, 30);
+    return process.argv.includes('--hang-auth') ? new Promise(() => {}) : {};
+  })
+  .onRequest('_codebuddy.ai/getUserInfo', { parse: () => ({}) }, () => ({
+    userInfo: authenticated
+      ? { userId: 'fixture-user', accessToken: 'fixture-private-token' }
+      : undefined,
+  }))
   .onRequest(acp.methods.agent.session.new, async (ctx) => {
     if (ctx.params.mcpServers.length) throw new Error('Discovery must not expose MCP servers.');
     const permission = await ctx.client.request(acp.methods.client.session.requestPermission, {

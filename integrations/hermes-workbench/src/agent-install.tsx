@@ -5,6 +5,7 @@ import s from './agent-connections.module.css';
 import { AgentMemberCreate } from './agent-member-create';
 import { SnapshotRefresh } from './snapshot-refresh';
 import { AgentInstallMember, InstalledMember } from './agent-install-member';
+import { AgentPackageMaintenance } from './agent-package-maintenance';
 const Plan = z.object({
   entryId: z.string(),
   name: z.string(),
@@ -29,6 +30,9 @@ const Installation = z.object({
     'failed',
     'cancelled',
     'needs-attention',
+    'removing',
+    'removal-failed',
+    'uninstalled',
   ]),
   message: z.string(),
   agentId: z.string().optional(),
@@ -80,6 +84,9 @@ const labels = {
   failed: '安装未完成',
   cancelled: '已取消',
   'needs-attention': '连接待处理',
+  removing: '卸载中',
+  'removal-failed': '卸载未完成',
+  uninstalled: '已卸载',
 };
 function InstallLocation({ label, directory }: { label: string; directory: string }) {
   const [feedback, setFeedback] = useState('');
@@ -399,6 +406,19 @@ export function AgentInstall({
             </details>
           )}
           <div className={s.actions}>
+            {(row.state === 'uninstalled' ||
+              (['ready', 'failed', 'needs-attention'].includes(row.state) && !row.installed)) &&
+              plan && (
+                <button
+                  disabled={disabled || busy || !!records?.busy}
+                  onClick={() => {
+                    idempotency.current = { hash: plan.planHash, id: crypto.randomUUID() };
+                    void start();
+                  }}
+                >
+                  重新安装
+                </button>
+              )}
             {['failed', 'cancelled', 'needs-attention'].includes(row.state) && (
               <button
                 disabled={disabled || busy || !!records?.busy}
@@ -412,16 +432,29 @@ export function AgentInstall({
                     : '重试安装'}
               </button>
             )}
-            {row.members.map((member) => (
-              <AgentInstallMember
-                key={member.id}
-                member={member}
-                onUse={onUse}
-                onExisting={onExisting}
-                onBusy={onBusy}
-                disabled={disabled}
-              />
-            ))}
+            {row.members.map((member) =>
+              row.installed ? (
+                <AgentInstallMember
+                  key={member.id}
+                  member={member}
+                  onUse={onUse}
+                  onExisting={onExisting}
+                  disabled={disabled}
+                />
+              ) : (
+                <section className={s.installMember} key={member.id}>
+                  <strong>{member.name}</strong>
+                  <p>成员配置已保留。程序不可用，请重新安装或在成员详情中配置已有入口。</p>
+                  <button
+                    type="button"
+                    disabled={disabled || busy}
+                    onClick={() => onExisting(member.id)}
+                  >
+                    成员详情
+                  </button>
+                </section>
+              ),
+            )}
             {row.installed && (
               <details>
                 <summary>更多成员选项</summary>
@@ -434,6 +467,15 @@ export function AgentInstall({
               </details>
             )}
           </div>
+          {row.directory && !activeOnly && (
+            <AgentPackageMaintenance
+              id={row.id}
+              disabled={disabled || busy || !!records?.busy}
+              uninstalled={row.state === 'uninstalled'}
+              onBusy={onBusy}
+              onChanged={async () => setRecords(await api('/api/agent-installations', Records))}
+            />
+          )}
         </article>
       ))}
       {error && (

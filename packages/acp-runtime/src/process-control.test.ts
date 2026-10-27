@@ -26,6 +26,23 @@ function definition() {
 }
 
 describe('ProcessAgentRuntimeControl', () => {
+  it('recovers a CodeBuddy-style missing login reply from read-only account state without exposing credentials', async () => {
+    const runner = new LocalRunner({ defaultStopGracePeriodMs: 100 });
+    const control = new ProcessAgentRuntimeControl(runner, { authenticationTimeoutMs: 5000 });
+    const agent = definition();
+    agent.runtime.args.push('--codebuddy-auth', '--hang-auth');
+    try {
+      expect((await control.probe(agent)).readiness.auth).toBe('needs_login');
+      const result = await control.authenticate(agent, 'internal');
+      expect(result.readiness.auth).toBe('ready');
+      expect(JSON.stringify(result)).not.toContain('fixture-user');
+      expect(JSON.stringify(result)).not.toContain('fixture-private-token');
+      agent.runtime.args.push('--codebuddy-signed-in');
+      expect((await control.probe(agent)).readiness.auth).toBe('ready');
+    } finally {
+      control.close();
+    }
+  }, 10000);
   it('discovers and validates model settings without prompts or MCP access, and releases the process', async () => {
     const runner = new LocalRunner({ defaultStopGracePeriodMs: 100 });
     const stop = vi.spyOn(runner, 'stop');

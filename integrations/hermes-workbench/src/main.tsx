@@ -20,7 +20,6 @@ import {
   ArrowLeft,
   Users,
   FileText,
-  CheckCircle2,
   RefreshCw,
   Sun,
   Moon,
@@ -302,15 +301,17 @@ function FollowUpComposer({
           {claimedCount > 0 && `正在向执行成员发送 ${claimedCount} 条补充。`}
         </p>
       )}
-      <small>
-        {paused
-          ? '任务尚未恢复。补充会保存下来，请查看执行过程并恢复任务。'
-          : busy
-            ? '补充会保存在当前会话中，不会打断正在执行的步骤。'
-            : resumeAvailable
-              ? '继续原目标可点“保留改动并重试”；在这里发送新要求，会带上此前目标和结果开始下一轮。'
-              : '自动带上此前目标和结果，无需重新说明背景。'}
-      </small>
+      {(paused || resumeAvailable) && (
+        <small>
+          {paused
+            ? '任务尚未恢复。补充会保存下来，请查看执行过程并恢复任务。'
+            : busy
+              ? '补充会保存在当前会话中，不会打断正在执行的步骤。'
+              : resumeAvailable
+                ? '继续原目标可点“保留改动并重试”；在这里发送新要求，会带上此前目标和结果开始下一轮。'
+                : '自动带上此前目标和结果，无需重新说明背景。'}
+        </small>
+      )}
     </div>
   );
 }
@@ -418,7 +419,7 @@ function Workbench() {
   const instructionScope = useRef<string | null>(null);
   const instructionRead = useRef<InstructionRead | null>(null);
   const [rail, setRail] = useState<'agents' | 'results' | 'process' | 'files' | 'preview' | null>(
-    'process',
+    null,
   );
   const [approvalTarget, setApprovalTarget] = useState<string>();
   const [previewOpened, setPreviewOpened] = useState(false);
@@ -831,7 +832,7 @@ function Workbench() {
       setDraft('');
       composerDrafts.clear(goalDraftKey);
       select(task.id);
-      setRail(executionMode === 'direct' ? 'process' : 'agents');
+      setRail(null);
       await refresh();
     } catch (e) {
       // A lost start response is reconciled against the durable task before offering a retry.
@@ -1474,6 +1475,9 @@ function Workbench() {
                   <div className={s.taskTitle}>
                     <h1 title={conversation?.title}>{conversation?.title}</h1>
                     <small>
+                      {currentProject && (
+                        <span title={currentProject.name}>{currentProject.name} · </span>
+                      )}
                       {leader ?? '执行成员'} · 第 {rounds.length} 轮
                       <span className={s.statePill} data-state={root.state}>
                         {stateLabel(root.state)}
@@ -1532,6 +1536,15 @@ function Workbench() {
                   </nav>
                   <div className={s.taskUtilities}>
                     <button
+                      type="button"
+                      aria-pressed={reading}
+                      onClick={() => setReading(!reading)}
+                    >
+                      {reading ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+                      {reading ? '退出阅读（Esc）' : '放大对话'}
+                    </button>
+
+                    <button
                       aria-pressed={rail === 'agents'}
                       onClick={() => setRail(rail === 'agents' ? null : 'agents')}
                     >
@@ -1543,38 +1556,23 @@ function Workbench() {
                     >
                       <FileText size={15} /> 产物 {artifacts.length}
                     </button>
+                    {currentProject && (
+                      <button
+                        type="button"
+                        disabled={sending}
+                        onClick={() =>
+                          openNewTask({ kind: 'saved-project', projectId: currentProject.id })
+                        }
+                      >
+                        <Plus size={14} /> 在此项目新建任务
+                      </button>
+                    )}
                     <AgentPermissions key={root.projectId} projectId={root.projectId} />
                   </div>
                 </div>
               </div>
-              {currentProject && (
-                <div className={s.projectContext}>
-                  <span>
-                    当前项目：<strong>{currentProject.name}</strong>
-                  </span>
-                  <button
-                    type="button"
-                    disabled={sending}
-                    onClick={() =>
-                      openNewTask({ kind: 'saved-project', projectId: currentProject.id })
-                    }
-                  >
-                    <Plus size={14} /> 在此项目新建任务
-                  </button>
-                </div>
-              )}
               <div className={s.execution}>
                 <section className={s.conversation}>
-                  <div className={s.readingToolbar}>
-                    <button
-                      type="button"
-                      aria-pressed={reading}
-                      onClick={() => setReading(!reading)}
-                    >
-                      {reading ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-                      {reading ? '退出阅读（Esc）' : '放大对话'}
-                    </button>
-                  </div>
                   {allSubagents.length > 0 && (
                     <div className={s.steps} aria-label="协作进度">
                       <span data-done>1 已接收目标</span>
@@ -1737,34 +1735,27 @@ function Workbench() {
                       />
                     </WorkspaceFileContext.Provider>
                   </div>
-                  <div className={s.taskFooter}>
-                    {busy ? (
-                      <span>
-                        {approvals.length
-                          ? '等待你确认操作，处理后继续。'
-                          : root.state === 'waiting' || root.state === 'waiting_children'
-                            ? '正在等待协作结果，可查看各协作任务的状态。'
-                            : '任务正在执行，进度会自动更新。'}
-                      </span>
-                    ) : (
-                      <>
+                  {!terminal(root) && (
+                    <div className={s.taskFooter}>
+                      {busy ? (
                         <span>
-                          {root.state === 'completed' && <CheckCircle2 size={16} />}
-                          {root.state === 'completed'
-                            ? '结果已保存，刷新页面后仍可查看。'
-                            : stateLabel(root.state)}
+                          {approvals.length
+                            ? '等待你确认操作，处理后继续。'
+                            : root.state === 'waiting' || root.state === 'waiting_children'
+                              ? '正在等待协作结果，可查看各协作任务的状态。'
+                              : '任务正在执行，进度会自动更新。'}
                         </span>
-                      </>
-                    )}
-                    {!terminal(root) && (
+                      ) : (
+                        <span>{stateLabel(root.state)}</span>
+                      )}
                       <button
                         disabled={sending}
                         onClick={() => void action(() => cancelTask(root.id))}
                       >
                         停止任务
                       </button>
-                    )}
-                  </div>
+                    </div>
+                  )}
                   {conversation && currentAgentId && currentAgentName && (
                     <TaskRuntimeSettings
                       key={controlKeys!.runtimeSettings}

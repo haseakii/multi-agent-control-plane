@@ -65,7 +65,7 @@ const Catalog = z.object({
 const Discovery = z.object({
   candidates: z.array(
     z.object({
-      source: z.enum(['registered', 'path', 'directory', 'package']),
+      source: z.enum(['registered', 'path', 'directory', 'package', 'managed']),
       agentId: z.string().optional(),
       association: z.enum(['linked', 'possible']).optional(),
       available: z.boolean().optional(),
@@ -247,7 +247,11 @@ export function AgentProducts({
       '刷新产品目录尚未返回结果。已显示的目录仍保留，可稍后重试或直接粘贴配置。',
     );
   }
-  async function discover(product: z.infer<typeof Product>, directory?: string) {
+  async function discover(
+    product: z.infer<typeof Product>,
+    directory?: string,
+    installIfMissing = false,
+  ) {
     setAssociationNotice('');
     await read(
       async (signal) => {
@@ -272,6 +276,20 @@ export function AgentProducts({
       (next) => {
         setDiscovery(next.discovery);
         setKnownMembers(next.members);
+        if (installIfMissing) {
+          const reusable = next.discovery.candidates.some(
+            (candidate) =>
+              candidate.available === true &&
+              (candidate.source !== 'registered' || candidate.association === 'linked'),
+          );
+          if (reusable) {
+            setEntryMode('local');
+            setAssociationNotice('已找到本机可用程序，请复用下方入口；本次没有下载或安装。');
+          } else {
+            setEntryMode('download');
+            setInstallRequested(true);
+          }
+        }
         if (next.discovery.localCheck)
           setCatalog((previous) =>
             previous
@@ -420,12 +438,12 @@ export function AgentProducts({
     setDiscovery(undefined);
     setKnownMembers([]);
     setSelected(product);
-    setEntryMode(install ? 'download' : 'local');
-    setInstallRequested(install);
+    setEntryMode('local');
+    setInstallRequested(false);
     const draft = entryDraft(product.id);
     fill(draft ?? defaultFields(product));
     setRestored(!!draft);
-    if (!install) void discover(product);
+    void discover(product, undefined, install);
   }
   const unfinished = new Set(
     (catalog?.entries ?? [])
@@ -446,7 +464,9 @@ export function AgentProducts({
   return (
     <section className={s.editor} aria-label="选择 ACP 产品">
       <h3>{selected ? `接入 ${selected.name}` : '选择要接入的产品'}</h3>
-      <p className={s.hint}>点击安装，工作台自动准备程序和运行环境；完成登录后直接使用。</p>
+      <p className={s.hint}>
+        点击安装后先查找本机程序；已有入口可直接复用，未找到时再下载。完成登录后使用。
+      </p>
       <div className={s.actions}>
         {selected ? (
           <>
@@ -737,9 +757,11 @@ export function AgentProducts({
                     <strong>
                       {candidate.source === 'registered'
                         ? `${candidate.association === 'linked' ? '已关联成员' : '可能相同的已有成员'}：${candidate.name}`
-                        : candidate.source === 'package'
-                          ? '找到已安装的适配器包'
-                          : '找到候选本机入口'}
+                        : candidate.source === 'managed'
+                          ? '找到工作台已安装的程序'
+                          : candidate.source === 'package'
+                            ? '找到已安装的适配器包'
+                            : '找到候选本机入口'}
                     </strong>
                     <p className={s.configExample}>{candidate.runtime.command}</p>
                     {candidate.source === 'registered' && candidate.available === false && (
@@ -805,10 +827,12 @@ export function AgentProducts({
                           setError('');
                           try {
                             const suggested =
-                              candidate.source === 'package'
-                                ? (selected.distribution.npx?.args ?? [])
-                                : (selected.distribution.binary?.[catalog?.platform ?? '']?.args ??
-                                  []);
+                              candidate.source === 'managed'
+                                ? []
+                                : candidate.source === 'package'
+                                  ? (selected.distribution.npx?.args ?? [])
+                                  : (selected.distribution.binary?.[catalog?.platform ?? '']
+                                      ?.args ?? []);
                             prepare(
                               selected.name,
                               prepareProductEntry(candidate.runtime, suggested),

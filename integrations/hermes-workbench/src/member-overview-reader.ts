@@ -34,11 +34,13 @@ export class MemberOverviewReader<Members, History> {
     );
   }
 
-  async refresh() {
+  async refresh(background = false) {
     if (this.disposed) return;
-    this.memberChannel.loading();
-    this.historyChannel.loading();
-    await Promise.all([this.members.refresh(true), this.history.refresh(true)]);
+    if (!background) {
+      this.memberChannel.loading();
+      this.historyChannel.loading();
+    }
+    await Promise.all([this.members.refresh(!background), this.history.refresh(!background)]);
   }
 
   dispose() {

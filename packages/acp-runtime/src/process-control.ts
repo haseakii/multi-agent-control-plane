@@ -135,9 +135,10 @@ export class ProcessAgentRuntimeControl implements AgentRuntimeControl {
   }
 
   async probe(definition: AgentDefinition): Promise<AgentRuntimeObservation> {
-    return this.withConnection(definition, this.probeTimeoutMs, async (connection) =>
-      observation(connection),
-    );
+    return this.withConnection(definition, this.probeTimeoutMs, async (connection) => {
+      await connection.checkAuthentication();
+      return observation(connection);
+    });
   }
 
   async authenticate(
