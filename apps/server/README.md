@@ -92,6 +92,18 @@ restart converts interrupted removal to a retryable failure. Compatibility tests
 legacy records and verify partial-removal recovery. Partially removed programs are never
 offered for reuse.
 
+Connection checks and login expose a transient `connectionOperation` per member.
+The workbench can close/reopen or operate another member while waiting, and polls
+pending operations without locking the drawer. A probe cannot supersede an ongoing
+login for the same member. Closing the drawer does not cancel the agent's login.
+
+The CodeBuddy adapter can read `_codebuddy.ai/getUserInfo` to confirm account state
+without repeating `authenticate` (which can sign out an existing account). For a
+missing login reply, recovery requires an observed signed-out to signed-in transition
+on the same connection. Only a boolean leaves the adapter; account and token fields
+are discarded. Unsupported versions and unconfirmed status retain normal ACP response
+handling/timeouts. Browser authorization alone is not proof of completed local login.
+
 ## Recovery and current limits
 
 History, attempts, conversations, messages, approvals, and artifact metadata survive

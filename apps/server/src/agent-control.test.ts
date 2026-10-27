@@ -73,6 +73,38 @@ function runtime(): AgentRuntimeControl {
   };
 }
 
+it('keeps login scoped to one member and prevents a probe from invalidating its completion', async () => {
+  const storage = openSqliteStorage({ filename: ':memory:' });
+  storages.push(storage);
+  const adapter = runtime();
+  const service = new AgentControlService(storage, adapter);
+  service.create(definition('login', false));
+  service.create(definition('other', false));
+  await service.probe('login');
+  let finish!: (result: Awaited<ReturnType<AgentRuntimeControl['authenticate']>>) => void;
+  vi.mocked(adapter.authenticate).mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const pending = service.authenticate('login', 'agent-login');
+  expect(service.list().find((agent) => agent.definition.id === 'login')?.connectionOperation).toBe(
+    'auth',
+  );
+  await expect(service.probe('login')).rejects.toThrow('正在登录');
+  await expect(service.authenticate('login', 'agent-login')).rejects.toThrow('等待当前操作');
+  expect((await service.probe('other')).readiness.runtime).toBe('ready');
+  expect((await service.authenticate('other', 'agent-login')).readiness.auth).toBe('ready');
+  finish(await runtime().authenticate(definition('login', false), 'agent-login'));
+  expect(await pending).toMatchObject({
+    readiness: { auth: 'ready' },
+    connectionOperation: undefined,
+  });
+  expect(service.state('login').connectionOperation).toBeUndefined();
+  expect(service.state('login').readiness.auth).toBe('ready');
+});
+
 const apps: ReturnType<typeof buildServer>[] = [];
 const storages: ReturnType<typeof openSqliteStorage>[] = [];
 

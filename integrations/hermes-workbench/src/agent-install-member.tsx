@@ -6,6 +6,7 @@ import { memberActionRequest } from './member-action-request';
 import s from './agent-connections.module.css';
 
 export const InstalledMember = z.object({
+  connectionOperation: z.enum(['probe', 'auth']).optional(),
   id: z.string(),
   name: z.string(),
   enabled: z.boolean().default(false),
@@ -24,17 +25,15 @@ export function AgentInstallMember({
   member,
   onUse,
   onExisting,
-  onBusy,
   disabled = false,
 }: {
   member: z.infer<typeof InstalledMember>;
   onUse: (id: string) => void;
   onExisting: (id?: string) => void;
-  onBusy: (busy: boolean) => void;
   disabled?: boolean;
 }) {
   const [updated, setUpdated] = useState<z.infer<typeof InstalledMember>>();
-  const [busy, setBusy] = useState(false),
+  const [pending, setPending] = useState<'probe' | 'auth'>(),
     flight = useRef(false);
   const [error, setError] = useState('');
   const alive = useRef(true);
@@ -46,6 +45,8 @@ export function AgentInstallMember({
   }, []);
   useEffect(() => setUpdated(undefined), [JSON.stringify(member)]);
   const current = updated ?? member;
+  const operation = pending ?? member.connectionOperation;
+  const busy = !!operation;
   const methods = current.authMethods.filter(
     (method) => !method.type || ['agent', 'terminal'].includes(method.type),
   );
@@ -56,10 +57,9 @@ export function AgentInstallMember({
     current.readiness?.runtime === 'ready' &&
     ['ready', 'not_reported'].includes(current.readiness.auth);
   async function act(auth: boolean) {
-    if (disabled || flight.current || (auth && !method)) return;
+    if (disabled || busy || flight.current || (auth && !method)) return;
     flight.current = true;
-    setBusy(true);
-    onBusy(true);
+    setPending(auth ? 'auth' : 'probe');
     setError('');
     let use = false;
     try {
@@ -71,6 +71,7 @@ export function AgentInstallMember({
           AgentConnection,
         ),
       );
+      if (!alive.current) return;
       const result = {
         id: next.definition.id,
         name: next.definition.name,
@@ -86,11 +87,11 @@ export function AgentInstallMember({
         result.readiness.auth === 'ready';
       if (auth && !use) setError('登录尚未确认，保留当前页面。可重新检查或打开成员查看详情。');
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : '登录或连接尚未完成，请重试。');
+      if (alive.current)
+        setError(cause instanceof Error ? cause.message : '登录或连接尚未完成，请重试。');
     } finally {
       flight.current = false;
-      setBusy(false);
-      onBusy(false);
+      if (alive.current) setPending(undefined);
     }
     if (use && alive.current) onUse(current.id);
   }
@@ -99,7 +100,9 @@ export function AgentInstallMember({
       <strong>{current.name}</strong>
       <p>
         {busy
-          ? '请在成员打开的窗口中完成登录…'
+          ? operation === 'auth'
+            ? '请在成员打开的窗口中完成登录；可以关闭面板，后台继续等待登录结果。'
+            : '正在检查此成员的连接；可以关闭面板或操作其他成员。'
           : ready
             ? current.readiness?.auth === 'not_reported'
               ? '程序已就绪；此成员不报告登录状态，可直接使用。'

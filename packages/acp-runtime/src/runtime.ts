@@ -9,6 +9,11 @@ import {
 } from './session-settings.js';
 import { promptUsage } from './usage.js';
 import { TerminalAuthMethodSchema } from './terminal-auth.js';
+import {
+  supportsCodeBuddyAuthStatus,
+  readCodeBuddyAuthStatus,
+  authenticateWithStatusRecovery,
+} from './codebuddy-auth.js';
 import { AcpTurnFailure, nativeTurnFailure } from './turn-failure.js';
 import { DenyByDefaultPermissionBroker } from './permission.js';
 import {
@@ -380,8 +385,31 @@ export class AcpRuntimeConnection {
     if ('type' in method && method.type !== undefined && String(method.type) !== 'agent')
       throw new TypeError('This authentication method does not use ACP authenticate.');
 
-    await this.connection.agent.request(acp.methods.agent.authenticate, { methodId });
+    const authenticate = () =>
+      this.connection.agent.request(acp.methods.agent.authenticate, { methodId });
+    if (supportsCodeBuddyAuthStatus(this.initialized)) {
+      await authenticateWithStatusRecovery(
+        authenticate,
+        (signal) => this.codeBuddyAuthStatus(signal),
+        this.connection.signal,
+      );
+    } else await authenticate();
     this.authState = 'ready';
+  }
+
+  /** Optional adapter status, never a model prompt or a second login attempt. */
+  async checkAuthentication(): Promise<void> {
+    if (!supportsCodeBuddyAuthStatus(this.initialized)) return;
+    const status = await this.codeBuddyAuthStatus(this.connection.signal);
+    if (status !== undefined) this.authState = status ? 'ready' : 'needs_login';
+  }
+
+  private codeBuddyAuthStatus(signal: AbortSignal) {
+    return readCodeBuddyAuthStatus(
+      (method, params, signal) =>
+        this.connection.agent.request(method, params, { cancellationSignal: signal }),
+      signal,
+    );
   }
 
   /** Executable setup metadata remains private to the host adapter, never in public observations. */

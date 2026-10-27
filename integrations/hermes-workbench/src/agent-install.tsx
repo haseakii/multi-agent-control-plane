@@ -439,7 +439,6 @@ export function AgentInstall({
                   member={member}
                   onUse={onUse}
                   onExisting={onExisting}
-                  onBusy={onBusy}
                   disabled={disabled}
                 />
               ) : (

@@ -99,6 +99,7 @@ export class AgentInstallationsService {
             enabled: a.definition.enabled,
             readiness: a.readiness,
             authMethods: a.authMethods,
+            connectionOperation: a.connectionOperation,
           })),
       }));
   }
