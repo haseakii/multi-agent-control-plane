@@ -271,6 +271,11 @@ try {
   await expect(completedBadge).toHaveAttribute('aria-expanded', 'false');
   await completedBadge.click();
   await expect(completedBadge).toHaveAttribute('aria-expanded', 'true');
+  const artifactBtn = page.getByRole('button', { name: /产物 \(1\)/ });
+  await expect(artifactBtn).toBeVisible();
+  await artifactBtn.click();
+  await expect(page.getByRole('button', { name: /产物 1/ })).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', { name: /产物 1/ }).click();
   const inspectBtn = page.getByRole('button', { name: '查看完整过程 ↗', exact: true });
   await expect(inspectBtn).toBeVisible();
   await inspectBtn.click();

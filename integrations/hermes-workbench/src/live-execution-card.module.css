@@ -55,6 +55,13 @@
   flex-shrink: 0;
 }
 
+.delegationArrow {
+  font-size: 10px;
+  color: var(--h-text-muted, #8c8880);
+  user-select: none;
+  flex-shrink: 0;
+}
+
 .actionText {
   flex: 1;
   min-width: 120px;
@@ -92,6 +99,25 @@
   margin-top: 8px;
   padding-top: 8px;
   border-top: 1px dashed var(--h-line, #e6e4df);
+}
+
+.failureBanner {
+  background: #fdf2f0;
+  border: 1px solid #e28f80;
+  color: #9c3327;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 11px;
+  line-height: 1.4;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.failureIcon {
+  flex-shrink: 0;
+  font-size: 12px;
 }
 
 .stepList {
@@ -145,10 +171,51 @@
   margin-right: 4px;
 }
 
+.targetPill {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 10px;
+  padding: 0 4px;
+  background: var(--h-bg-soft, #f0eee9);
+  border: 1px solid var(--h-line, #dedbd3);
+  border-radius: 3px;
+  color: var(--h-text-2, #47453f);
+  margin-left: 4px;
+  display: inline-block;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.stepStatus {
+  color: var(--h-text-muted, #8c8880);
+}
+
 .expandedFooter {
   margin-top: 6px;
   display: flex;
   justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+}
+
+.artifactLink {
+  background: transparent;
+  border: none;
+  padding: 2px 6px;
+  font-size: 11px;
+  color: var(--h-text-2, #55524b);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.artifactLink:hover {
+  color: var(--h-text, #1f1e1b);
 }
 
 .processLink {
@@ -229,7 +296,7 @@
 
 .badgeExpanded {
   width: 100%;
-  max-width: 540px;
+  max-width: 580px;
   margin-top: 4px;
   border: 1px solid var(--h-line, #e6e4df);
   border-radius: 8px;

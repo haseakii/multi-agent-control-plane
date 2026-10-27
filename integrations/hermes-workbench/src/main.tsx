@@ -1733,6 +1733,7 @@ function Workbench() {
                                   rounds={rounds}
                                   busy={busy}
                                   onInspectProcess={() => setRail('process')}
+                                  onInspectArtifacts={() => setRail('results')}
                                 />
                               ) : null}
                             </>

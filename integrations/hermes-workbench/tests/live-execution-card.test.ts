@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   executionCardSummary,
+  extractStepTarget,
   formatDuration,
   formatTimer,
+  resolveDelegation,
   stateLabel,
 } from '../src/live-execution-model';
 
@@ -56,6 +58,70 @@ describe('formatTimer', () => {
   });
 });
 
+describe('extractStepTarget', () => {
+  it('extracts target after colon separator', () => {
+    expect(extractStepTarget('Running view_file: src/main.tsx')).toBe('src/main.tsx');
+    expect(extractStepTarget('Running run_command: pnpm test')).toBe('pnpm test');
+    expect(extractStepTarget('view_file: path/to/file.ts')).toBe('path/to/file.ts');
+  });
+
+  it('extracts target inside parentheses', () => {
+    expect(extractStepTarget('Running edit_file (packages/core/src/index.ts)')).toBe(
+      'packages/core/src/index.ts',
+    );
+  });
+
+  it('returns undefined for pure tool titles without target parameters', () => {
+    expect(extractStepTarget('Running view_file')).toBeUndefined();
+    expect(extractStepTarget('view_file')).toBeUndefined();
+    expect(extractStepTarget('')).toBeUndefined();
+  });
+});
+
+describe('resolveDelegation', () => {
+  const snapshot = {
+    agents: [
+      { definition: { id: 'boss', name: '调度 Boss' } },
+      { definition: { id: 'coder', name: '编程助手' } },
+    ],
+    assignments: [
+      { id: 'a1', taskId: 'root-task', agentId: 'boss' },
+      { id: 'a2', taskId: 'sub-task', agentId: 'coder' },
+    ],
+  };
+
+  it('detects single agent without active child tasks', () => {
+    const delegation = resolveDelegation({
+      snapshot,
+      root: { id: 'root-task', ownerAgentId: 'boss' },
+      family: [{ id: 'root-task', title: '主任务', state: 'running', ownerAgentId: 'boss' }],
+    });
+    expect(delegation.hasDelegation).toBe(false);
+    expect(delegation.leaderName).toBe('调度 Boss');
+  });
+
+  it('detects multi-agent delegation with active child task', () => {
+    const delegation = resolveDelegation({
+      snapshot,
+      root: { id: 'root-task', ownerAgentId: 'boss' },
+      family: [
+        { id: 'root-task', title: '主任务', state: 'waiting_children', ownerAgentId: 'boss' },
+        {
+          id: 'sub-task',
+          parentTaskId: 'root-task',
+          title: '编写测试',
+          state: 'running',
+          ownerAgentId: 'coder',
+        },
+      ],
+    });
+    expect(delegation.hasDelegation).toBe(true);
+    expect(delegation.leaderName).toBe('调度 Boss');
+    expect(delegation.workerName).toBe('编程助手');
+    expect(delegation.subtaskTitle).toBe('编写测试');
+  });
+});
+
 describe('executionCardSummary', () => {
   it('produces single emoji icon and clean summary text for completed task', () => {
     const summary = executionCardSummary({
@@ -71,16 +137,36 @@ describe('executionCardSummary', () => {
     expect(summary.text.startsWith('⚡')).toBe(false);
   });
 
-  it('handles failed tasks with warning icon', () => {
+  it('includes delegation and artifact counts when provided', () => {
+    const summary = executionCardSummary({
+      state: 'completed',
+      durationMs: 20000,
+      collaboratorsCount: 2,
+      stepCount: 5,
+      artifactsCount: 2,
+      delegation: {
+        leaderName: 'Boss',
+        workerName: '代码助手',
+        hasDelegation: true,
+      },
+    });
+    expect(summary.text).toBe(
+      '本轮执行完毕 · 耗时 20秒 · 2 个协作者（Boss ➜ 代码助手） · 5 项步骤 · 2 个产物',
+    );
+  });
+
+  it('handles failed tasks with warning icon and failure reason', () => {
     const summary = executionCardSummary({
       state: 'failed',
       durationMs: 8000,
       collaboratorsCount: 1,
       stepCount: 2,
+      failureReason: '成员响应超时',
     });
     expect(summary.status).toBe('failed');
     expect(summary.icon).toBe('⚠️');
     expect(summary.text).toBe('本轮执行失败 · 耗时 8秒 · 2 项步骤');
+    expect(summary.failureReason).toBe('成员响应超时');
     expect(summary.text.startsWith('⚠️')).toBe(false);
   });
 

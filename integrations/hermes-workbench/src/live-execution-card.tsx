@@ -2,15 +2,27 @@ import { useState, useEffect, useMemo } from 'react';
 import { toolPresentation } from './activity-presentation';
 import { taskFamily, terminal, type SnapshotData, type TaskData } from './adapter';
 import { agentActivity } from './agent-activity';
+import { failureSummary } from './failure-presentation';
 import {
   executionCardSummary,
+  extractStepTarget,
   formatDuration,
   formatTimer,
+  resolveDelegation,
   stateLabel,
+  type DelegationInfo,
 } from './live-execution-model';
 import s from './live-execution-card.module.css';
 
-export { executionCardSummary, formatDuration, formatTimer, stateLabel };
+export {
+  executionCardSummary,
+  extractStepTarget,
+  formatDuration,
+  formatTimer,
+  resolveDelegation,
+  stateLabel,
+  type DelegationInfo,
+};
 
 export function LiveExecutionCard({
   snapshot,
@@ -18,12 +30,14 @@ export function LiveExecutionCard({
   rounds,
   busy,
   onInspectProcess,
+  onInspectArtifacts,
 }: {
   snapshot: SnapshotData;
   root: TaskData;
   rounds: TaskData[];
   busy: boolean;
   onInspectProcess: () => void;
+  onInspectArtifacts?: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [now, setNow] = useState(() => Date.now());
@@ -45,6 +59,38 @@ export function LiveExecutionCard({
     [snapshot.timeline, taskIds],
   );
 
+  const delegation = useMemo(
+    () => resolveDelegation({ snapshot, root, family }),
+    [snapshot, root, family],
+  );
+
+  const roundArtifacts = useMemo(() => {
+    const familyIds = new Set(family.map((t) => t.id));
+    return (
+      snapshot.artifacts?.filter(
+        (a) =>
+          family.some((t) => t.resultArtifactRefs?.includes(a.id)) ||
+          (a.taskId && familyIds.has(a.taskId)),
+      ) ?? []
+    );
+  }, [snapshot.artifacts, family]);
+
+  const failureReason = useMemo(() => {
+    if (
+      root.state !== 'failed' &&
+      !attempts.some((a) => a.state === 'failed' || a.state === 'interrupted')
+    ) {
+      return undefined;
+    }
+    const failedAttempt = attempts
+      .filter((a) => ['failed', 'interrupted'].includes(a.state))
+      .sort((a, b) => b.number - a.number)[0];
+    if (failedAttempt?.failure) {
+      return failureSummary(failedAttempt.failure.message, failedAttempt.failure.code, false);
+    }
+    return failureSummary(undefined, undefined, false);
+  }, [root.state, attempts]);
+
   const collaborators = useMemo(() => {
     const set = new Set<string>();
     for (const t of family) if (t.ownerAgentId) set.add(t.ownerAgentId);
@@ -57,18 +103,6 @@ export function LiveExecutionCard({
   }, [family, attempts, activity, snapshot.assignments]);
 
   const collaboratorsCount = Math.max(1, collaborators.size);
-
-  const activeAttempt =
-    attempts.filter((a) => ['queued', 'running', 'waiting'].includes(a.state)).at(-1) ??
-    attempts.at(-1);
-  const activeAgentId =
-    (activeAttempt
-      ? snapshot.assignments.find((item) => item.id === activeAttempt.assignmentId)?.agentId
-      : undefined) ?? root.ownerAgentId;
-  const activeAgentName =
-    snapshot.agents.find((a) => a.definition.id === activeAgentId)?.definition.name ??
-    activeAgentId ??
-    '执行成员';
 
   const startedAtMs = useMemo(() => {
     const valid = attempts
@@ -98,6 +132,7 @@ export function LiveExecutionCard({
       const isTool = item.kind === 'tool';
       const presentation = isTool ? toolPresentation(item.text, item.state) : null;
       const label = presentation?.label ?? item.text;
+      const target = isTool ? extractStepTarget(item.text) : undefined;
       const status =
         presentation?.status ??
         (item.state === 'complete' || item.state === 'completed'
@@ -122,6 +157,8 @@ export function LiveExecutionCard({
       return {
         id: item.id,
         label,
+        target,
+        rawText: item.text,
         status,
         agentName,
         iconState,
@@ -135,20 +172,24 @@ export function LiveExecutionCard({
       .at(-1);
     if (runningTool) {
       const pres = toolPresentation(runningTool.text, runningTool.state);
-      return `正在${pres.label}`;
+      const target = extractStepTarget(runningTool.text);
+      return target ? `正在${pres.label}: ${target}` : `正在${pres.label}`;
     }
     const latest = activity.at(-1);
     if (latest && latest.kind === 'message' && latest.state === 'streaming') {
       return '正在组织回复…';
     }
     if (root.state === 'waiting_children') {
+      if (delegation.hasDelegation && delegation.workerName && delegation.subtaskTitle) {
+        return `等待协作 · [${delegation.workerName}] 正在处理“${delegation.subtaskTitle}”…`;
+      }
       return '正在等待协作者回复…';
     }
     if (busy) {
       return '正在处理任务…';
     }
     return root.state === 'completed' ? '执行完成' : stateLabel(root.state);
-  }, [activity, root.state, busy]);
+  }, [activity, root.state, busy, delegation]);
 
   // If not busy and task is not in terminal state and not blocked (e.g. newly created draft or ready), don't render.
   if (!busy && !terminal(root) && root.state !== 'blocked') {
@@ -161,7 +202,15 @@ export function LiveExecutionCard({
       <section className={s.liveCard} role="status" aria-label="实时执行状态">
         <div className={s.liveHeader}>
           <span className={s.pulseDot} aria-hidden="true" />
-          <span className={s.agentPill}>{activeAgentName}</span>
+          <span className={s.agentPill}>{delegation.leaderName}</span>
+          {delegation.hasDelegation && delegation.workerName && (
+            <>
+              <span className={s.delegationArrow} aria-hidden="true">
+                ➜
+              </span>
+              <span className={s.agentPill}>{delegation.workerName}</span>
+            </>
+          )}
           <span className={s.actionText} title={currentAction}>
             {currentAction}
           </span>
@@ -182,13 +231,15 @@ export function LiveExecutionCard({
             {recentSteps.length > 0 ? (
               <ol className={s.stepList} aria-label="最近执行步骤">
                 {recentSteps.map((step) => (
-                  <li key={step.id} className={s.stepItem}>
+                  <li key={step.id} className={s.stepItem} title={step.rawText}>
                     <span className={s.stepIcon} data-state={step.iconState} aria-hidden="true">
                       {step.iconState === 'done' ? '✓' : step.iconState === 'failed' ? '✗' : '•'}
                     </span>
                     <span className={s.stepLabel}>
                       <span className={s.stepAgent}>[{step.agentName}]</span>
-                      {step.label} · {step.status}
+                      {step.label}
+                      {step.target && <span className={s.targetPill}>{step.target}</span>}
+                      <span className={s.stepStatus}> · {step.status}</span>
                     </span>
                   </li>
                 ))}
@@ -197,6 +248,16 @@ export function LiveExecutionCard({
               <p className={s.stepItem}>准备开始第一步操作…</p>
             )}
             <div className={s.expandedFooter}>
+              {roundArtifacts.length > 0 && onInspectArtifacts && (
+                <button
+                  type="button"
+                  className={s.artifactLink}
+                  onClick={onInspectArtifacts}
+                  title="查看本轮生成的所有产物"
+                >
+                  📄 产物 ({roundArtifacts.length}) ↗
+                </button>
+              )}
               <button type="button" className={s.processLink} onClick={onInspectProcess}>
                 查看完整过程 ↗
               </button>
@@ -217,6 +278,9 @@ export function LiveExecutionCard({
     durationMs,
     collaboratorsCount,
     stepCount: activity.length,
+    artifactsCount: roundArtifacts.length,
+    failureReason,
+    delegation,
   });
 
   return (
@@ -235,16 +299,28 @@ export function LiveExecutionCard({
       </button>
       {expanded && (
         <div className={s.badgeExpanded}>
+          {failureReason && (
+            <div className={s.failureBanner} role="alert">
+              <span className={s.failureIcon} aria-hidden="true">
+                ⚠️
+              </span>
+              <span>
+                <strong>执行未完成</strong>：{failureReason}
+              </span>
+            </div>
+          )}
           {recentSteps.length > 0 ? (
             <ol className={s.stepList} aria-label="本轮步骤摘要">
               {recentSteps.map((step) => (
-                <li key={step.id} className={s.stepItem}>
+                <li key={step.id} className={s.stepItem} title={step.rawText}>
                   <span className={s.stepIcon} data-state={step.iconState} aria-hidden="true">
                     {step.iconState === 'done' ? '✓' : step.iconState === 'failed' ? '✗' : '•'}
                   </span>
                   <span className={s.stepLabel}>
                     <span className={s.stepAgent}>[{step.agentName}]</span>
-                    {step.label} · {step.status}
+                    {step.label}
+                    {step.target && <span className={s.targetPill}>{step.target}</span>}
+                    <span className={s.stepStatus}> · {step.status}</span>
                   </span>
                 </li>
               ))}
@@ -253,6 +329,16 @@ export function LiveExecutionCard({
             <p className={s.stepItem}>本轮未产生独立步骤记录。</p>
           )}
           <div className={s.expandedFooter}>
+            {roundArtifacts.length > 0 && onInspectArtifacts && (
+              <button
+                type="button"
+                className={s.artifactLink}
+                onClick={onInspectArtifacts}
+                title="查看本轮生成的所有产物"
+              >
+                📄 产物 ({roundArtifacts.length}) ↗
+              </button>
+            )}
             <button type="button" className={s.processLink} onClick={onInspectProcess}>
               查看完整过程 ↗
             </button>
