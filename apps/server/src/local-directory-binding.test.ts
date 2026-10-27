@@ -624,7 +624,7 @@ it('migrates the five-migration baseline without rewriting existing workspace pa
   try {
     expect(migrated.sqlite.prepare('SELECT payload FROM workspaces').get()).toEqual(before);
     expect(migrated.sqlite.prepare('SELECT count(*) AS n FROM __drizzle_migrations').get()).toEqual(
-      { n: 22 },
+      { n: 23 },
     );
     expect(migrated.repositories.workspaceDirectoryBindings.list()).toEqual([]);
   } finally {

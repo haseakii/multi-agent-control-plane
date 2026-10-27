@@ -17,3 +17,4 @@ export * from './agent-catalog-source.js';
 export * from './network-settings.js';
 export * from './input-attachments.js';
 export * from './external-client.js';
+export * from './project-events.js';

@@ -63,7 +63,7 @@ it('migrates an existing project to curated searchable memory and preserves it t
     expect(index.search('another-project', { query: '离线运行', limit: 20 })).toEqual([]);
     storage.close();
     await createConsistentSqliteSnapshot(filename, join(root, 'snapshot.sqlite'));
-    expect(inspectSqliteSnapshot(join(root, 'snapshot.sqlite')).migrations).toHaveLength(22);
+    expect(inspectSqliteSnapshot(join(root, 'snapshot.sqlite')).migrations).toHaveLength(23);
     storage = openSqliteStorage({ filename: join(root, 'snapshot.sqlite') });
     expect(storage.repositories.projectMemory.get('m')).toEqual(accepted);
     expect(

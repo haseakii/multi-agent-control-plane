@@ -123,7 +123,7 @@ export function registerTaskControlRoutes(
   app: FastifyInstance,
   service: ControlPlaneRuntime,
 ): void {
-  registerProjectEventStream(app, (projectId) => service.projectEvents(projectId));
+  registerProjectEventStream(app, service.projectEventReader);
   const memberSettingsParams = z.object({ id: z.string().min(1).max(128) }).strict();
   const memberSettingsQuery = z
     .object({ projectId: z.string().min(1).max(128).optional() })

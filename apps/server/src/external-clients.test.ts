@@ -184,7 +184,7 @@ it('migrates an existing twenty-migration database without changing history or i
     expect(storage.repositories.projects.get('p')?.name).toBe('Keep');
     expect(storage.sqlite.prepare('SELECT * FROM input_attachments').all()).toEqual(before);
     expect(storage.sqlite.prepare('SELECT count(*) AS n FROM __drizzle_migrations').get()).toEqual({
-      n: 22,
+      n: 23,
     });
     expect(storage.repositories.externalClients.list()).toEqual([]);
     expect(storage.repositories.agentInstallations.list()).toEqual([]);

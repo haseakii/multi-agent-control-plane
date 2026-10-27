@@ -1112,7 +1112,7 @@ it('C5 repairs a committed non-child result after SQLite reopen without replayin
   ).toHaveLength(2);
   expect(
     storage.sqlite.prepare('select count(*) as count from __drizzle_migrations').get(),
-  ).toEqual({ count: 22 });
+  ).toEqual({ count: 23 });
   const notifyAgain = resumed as unknown as typeof notifier;
   await notifyAgain.notifyParent(resumed.getTask('task-b'), 'b');
   expect(
@@ -1469,7 +1469,7 @@ it('C6 preserves per-task idempotency through SQLite reopen and a new sender att
   ).toHaveLength(1);
   expect(
     storage.sqlite.prepare('select count(*) as count from __drizzle_migrations').get(),
-  ).toEqual({ count: 22 });
+  ).toEqual({ count: 23 });
   f.prompts[3]!.release.resolve();
   await sender.completion;
 });
