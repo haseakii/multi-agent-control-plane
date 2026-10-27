@@ -265,6 +265,30 @@ try {
   checks.push(
     'Default chat remains readable at laptop and short-window sizes; opening and closing details retains long drafts',
   );
+  const completedBadge = page.locator('button[data-status="completed"]');
+  await expect(completedBadge).toBeVisible();
+  await expect(completedBadge).toContainText('本轮执行完毕');
+  await expect(completedBadge).toHaveAttribute('aria-expanded', 'false');
+  await completedBadge.click();
+  await expect(completedBadge).toHaveAttribute('aria-expanded', 'true');
+  const artifactBtn = page.getByRole('button', { name: /产物 \(1\)/ });
+  await expect(artifactBtn).toBeVisible();
+  await artifactBtn.click();
+  await expect(page.getByRole('button', { name: /产物 1/ })).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', { name: /产物 1/ }).click();
+  const inspectBtn = page.getByRole('button', { name: '查看完整过程 ↗', exact: true });
+  await expect(inspectBtn).toBeVisible();
+  await inspectBtn.click();
+  await expect(page.getByRole('button', { name: '过程', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await page.getByRole('button', { name: '过程', exact: true }).click();
+  await completedBadge.click();
+  await expect(completedBadge).toHaveAttribute('aria-expanded', 'false');
+  checks.push(
+    'Completed task displays a collapsed stats badge that expands execution summary and opens the process rail',
+  );
   await page.setViewportSize({ width: 1912, height: 914 });
   await composer.fill('放大后仍保留的草稿');
   const normalHeight = (
@@ -315,6 +339,14 @@ try {
   await page.getByRole('button', { name: '关闭运行设置' }).click();
   checks.push(
     'An active task remains inspectable with its confirmed settings and cannot mutate the running selection',
+  );
+  const liveStatus = page.getByRole('status', { name: '实时执行状态' });
+  await expect(liveStatus).toBeVisible();
+  await expect(liveStatus).toContainText('回归成员');
+  await expect(liveStatus).toContainText('⏱');
+  await page.screenshot({ path: path.join(root, 'live-execution-card-running.png') });
+  checks.push(
+    'Running task displays the inline live execution tracker with agent pill, timer, and current action',
   );
   storage.repositories.tasks.upsert({
     ...storage.repositories.tasks.get('task'),

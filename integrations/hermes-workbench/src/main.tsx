@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { DEFAULT_THEME_CONFIG, applyPlatformToDOM, applyThemeToDOM } from '@hermes/shared-ui';
 import { AttachmentComposer } from './attachment-composer';
 import { sameAttachmentIds, type InputAttachmentData } from './input-attachments';
+import { LiveExecutionCard } from './live-execution-card';
 import { MessageTimeline } from '@/components/chat/message-timeline';
 import { SubagentPanel } from '@/components/chat/subagent-panel';
 import { PanelHero } from '@/components/panel/panel-hero';
@@ -1684,52 +1685,63 @@ function Workbench() {
                         )}
                         enableSpeech={false}
                         statusMessage={
-                          !busy
-                            ? undefined
-                            : approvals.length
-                              ? '等待你确认操作'
-                              : root.state === 'waiting' || root.state === 'waiting_children'
-                                ? '正在等待协作结果'
-                                : subagents.some((t) => t.status === 'running')
-                                  ? '协作者正在执行任务'
-                                  : subagents.some((t) => t.status === 'completed')
-                                    ? '正在读取结果并汇总'
-                                    : '成员正在处理你的要求'
+                          !busy ? undefined : approvals.length ? '等待你确认操作' : undefined
                         }
                         progressModel={leader}
                         autoTts={false}
                         pendingApproval={
-                          approvals.length ? (
-                            <div
-                              className={s.approvals}
-                              id="task-permission-requests"
-                              tabIndex={-1}
-                            >
-                              {approvals.map((a) =>
-                                a.action === 'git.merge' ? (
-                                  <div key={a.id}>
-                                    <strong>文件改动等待审阅</strong>
-                                    <p>
-                                      请在“文件改动”中检查固定差异、批准快照，再确认合入源项目。
-                                    </p>
-                                    <button onClick={() => setRail('files')}>查看文件改动</button>
-                                  </div>
-                                ) : (
-                                  <ApprovalCard
-                                    key={a.id}
-                                    approval={a}
-                                    taskTitle={
-                                      snapshot?.tasks.find((t) => t.id === a.taskId)?.title ??
-                                      '当前任务'
-                                    }
-                                    busy={sending}
-                                    onDecide={(id, decision) =>
-                                      void action(() => decideApproval(id, decision))
-                                    }
-                                  />
-                                ),
-                              )}
-                            </div>
+                          approvals.length ||
+                          Boolean(
+                            snapshot &&
+                              conversation &&
+                              root &&
+                              (busy || terminal(root) || root.state === 'blocked'),
+                          ) ? (
+                            <>
+                              {approvals.length ? (
+                                <div
+                                  className={s.approvals}
+                                  id="task-permission-requests"
+                                  tabIndex={-1}
+                                >
+                                  {approvals.map((a) =>
+                                    a.action === 'git.merge' ? (
+                                      <div key={a.id}>
+                                        <strong>文件改动等待审阅</strong>
+                                        <p>
+                                          请在“文件改动”中检查固定差异、批准快照，再确认合入源项目。
+                                        </p>
+                                        <button onClick={() => setRail('files')}>
+                                          查看文件改动
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <ApprovalCard
+                                        key={a.id}
+                                        approval={a}
+                                        taskTitle={
+                                          snapshot?.tasks.find((t) => t.id === a.taskId)?.title ??
+                                          '当前任务'
+                                        }
+                                        busy={sending}
+                                        onDecide={(id, decision) =>
+                                          void action(() => decideApproval(id, decision))
+                                        }
+                                      />
+                                    ),
+                                  )}
+                                </div>
+                              ) : null}
+                              {snapshot && conversation && root ? (
+                                <LiveExecutionCard
+                                  snapshot={snapshot}
+                                  root={root}
+                                  busy={busy}
+                                  onInspectProcess={() => setRail('process')}
+                                  onInspectArtifacts={() => setRail('results')}
+                                />
+                              ) : null}
+                            </>
                           ) : undefined
                         }
                       />

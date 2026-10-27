@@ -1,0 +1,325 @@
+.liveCard {
+  border: 1px solid var(--h-line, #e6e4df);
+  border-radius: 9px;
+  background: var(--h-bg-pane, #fafaf8);
+  padding: 8px 12px;
+  margin: 6px 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--h-text, #1f1e1b);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+  transition: all 0.2s ease;
+}
+
+.liveHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.pulseDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #248968;
+  display: inline-block;
+  box-shadow: 0 0 0 0 rgba(36, 137, 104, 0.6);
+  animation: pulse 1.8s infinite;
+  flex-shrink: 0;
+}
+
+@keyframes pulse {
+  0% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(36, 137, 104, 0.7);
+  }
+  70% {
+    transform: scale(1);
+    box-shadow: 0 0 0 6px rgba(36, 137, 104, 0);
+  }
+  100% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(36, 137, 104, 0);
+  }
+}
+
+.agentPill {
+  font-weight: 600;
+  font-size: 11px;
+  padding: 1px 6px;
+  background: var(--h-bg-soft, #f0eee9);
+  border: 1px solid var(--h-line, #e2ded5);
+  border-radius: 4px;
+  color: var(--h-text-2, #47453f);
+  flex-shrink: 0;
+}
+
+.delegationArrow {
+  font-size: 10px;
+  color: var(--h-text-muted, #8c8880);
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.actionText {
+  flex: 1;
+  min-width: 120px;
+  color: var(--h-text, #1f1e1b);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.timer {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  color: var(--h-text-muted, #77736c);
+  flex-shrink: 0;
+}
+
+.expandBtn {
+  font-size: 11px;
+  background: transparent;
+  border: 1px solid var(--h-line, #dedbd3);
+  border-radius: 5px;
+  padding: 2px 7px;
+  color: var(--h-text-2, #55524b);
+  cursor: pointer;
+  transition: background 0.15s;
+  flex-shrink: 0;
+}
+
+.expandBtn:hover {
+  background: var(--h-bg-soft, #f0eee9);
+  color: var(--h-text, #1f1e1b);
+}
+
+.expandedBody {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--h-line, #e6e4df);
+}
+
+.failureBanner {
+  background: #fdf2f0;
+  border: 1px solid #e28f80;
+  color: #9c3327;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 11px;
+  line-height: 1.4;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.failureIcon {
+  flex-shrink: 0;
+  font-size: 12px;
+}
+
+.stepList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.stepItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--h-text-2, #55524b);
+}
+
+.stepIcon {
+  font-size: 10px;
+  width: 14px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.stepIcon[data-state='done'] {
+  color: #248968;
+}
+
+.stepIcon[data-state='running'] {
+  color: #c95324;
+}
+
+.stepIcon[data-state='failed'] {
+  color: #ad3d30;
+}
+
+.stepLabel {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stepAgent {
+  color: var(--h-text-muted, #8c8880);
+  margin-right: 4px;
+}
+
+.targetPill {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 10px;
+  padding: 0 4px;
+  background: var(--h-bg-soft, #f0eee9);
+  border: 1px solid var(--h-line, #dedbd3);
+  border-radius: 3px;
+  color: var(--h-text-2, #47453f);
+  margin-left: 4px;
+  display: inline-block;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.stepStatus {
+  color: var(--h-text-muted, #8c8880);
+}
+
+.expandedFooter {
+  margin-top: 6px;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+}
+
+.artifactLink {
+  background: transparent;
+  border: none;
+  padding: 2px 6px;
+  font-size: 11px;
+  color: var(--h-text-2, #55524b);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.artifactLink:hover {
+  color: var(--h-text, #1f1e1b);
+}
+
+.processLink {
+  background: transparent;
+  border: none;
+  padding: 2px 6px;
+  font-size: 11px;
+  color: #b84b1a;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.processLink:hover {
+  color: #e05b20;
+}
+
+/* Badge Mode (Historic / Completed) */
+.badgeContainer {
+  margin: 4px 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.badgeButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--h-text-2, #55524b);
+  background: var(--h-bg-soft, #f0eee9);
+  border: 1px solid var(--h-line, #dedbd3);
+  border-radius: 16px;
+  padding: 2px 10px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  max-width: 100%;
+}
+
+.badgeButton:hover {
+  background: var(--h-bg-pane, #fafaf8);
+  border-color: #ff744388;
+  color: var(--h-text, #1f1e1b);
+}
+
+.badgeButton[data-status='failed'] {
+  border-color: #e28f80;
+  background: #fdf2f0;
+  color: #9c3327;
+}
+
+.badgeButton[data-status='blocked'] {
+  border-color: #f1cf8e;
+  background: #fffdf5;
+  color: #8c5b00;
+}
+
+.badgeIcon {
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.badgeText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.badgeCaret {
+  font-size: 9px;
+  color: var(--h-text-muted, #8c8880);
+  margin-left: 2px;
+}
+
+.badgeExpanded {
+  width: 100%;
+  max-width: 580px;
+  margin-top: 4px;
+  border: 1px solid var(--h-line, #e6e4df);
+  border-radius: 8px;
+  background: var(--h-bg-pane, #fafaf8);
+  padding: 8px 10px;
+  font-size: 11px;
+}
+
+@media (max-height: 700px) {
+  .liveCard {
+    padding: 4px 8px;
+    margin: 3px 0;
+    font-size: 11px;
+  }
+  .pulseDot {
+    width: 6px;
+    height: 6px;
+  }
+  .stepList {
+    max-height: 80px;
+  }
+  .badgeButton {
+    padding: 1px 8px;
+    font-size: 10px;
+  }
+}
