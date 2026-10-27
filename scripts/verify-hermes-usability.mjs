@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { chromium, expect } from '@playwright/test';
 import { TaskSchema } from '../packages/core/dist/index.js';
 import { openSqliteStorage } from '../packages/storage/dist/index.js';
@@ -71,8 +72,10 @@ const agentInstallations = new AgentInstallationsService({
   network: runtime.network,
   root: path.join(root, 'agents'),
   releaseRoot: path.resolve('.'),
-  installPackage: async ({ phase, progress, signal }) => {
+  installPackage: async ({ phase, progress, signal, directory }) => {
     installs++;
+    fs.mkdirSync(directory, { recursive: true });
+    fs.writeFileSync(path.join(directory, 'package.zip'), 'isolated download fixture');
     installUpdates = { phase, progress };
     phase('downloading', '正在下载回归程序');
     progress({ receivedBytes: 52428800, totalBytes: 104857600 });
@@ -86,7 +89,12 @@ const agentInstallations = new AgentInstallationsService({
       if (signal.aborted) abort();
     });
     phase('installing', '测试安装完成，未访问外网');
-    return fixtureRuntime;
+    const script = path.join(directory, 'fixture-agent.mjs');
+    fs.writeFileSync(
+      script,
+      `import ${JSON.stringify(pathToFileURL(fixtureRuntime.args[0]).href)};\n`,
+    );
+    return { ...fixtureRuntime, args: [script] };
   },
 });
 runtime.agentControl.create({
@@ -368,6 +376,60 @@ try {
   assert.equal(storage.repositories.tasks.list().length, 1);
   checks.push(
     'One click installs, then in-place Agent login selects the member for an unsent draft; installation records remain available',
+  );
+  await page.getByRole('button', { name: '协作成员', exact: true }).click();
+  await page.getByRole('button', { name: /添加 \/ 下载 ACP/ }).click();
+  await page
+    .getByRole('group', { name: '回归 ACP', exact: true })
+    .getByRole('button', { name: '安装', exact: true })
+    .click();
+  await expect(
+    page.getByText('已找到本机可用程序，请复用下方入口；本次没有下载或安装。', { exact: true }),
+  ).toBeVisible();
+  assert.equal(installs, 2);
+  await page.getByRole('button', { name: '返回产品目录', exact: true }).click();
+  await page.getByRole('button', { name: '已下载程序与安装记录', exact: true }).click();
+  const currentDirectory = agentInstallations.list()[0].directory;
+  const currentScript = agentInstallations.list()[0].package.runtime.args[0];
+  await page.getByRole('button', { name: '清理历史下载', exact: true }).click();
+  await expect(page.getByRole('region', { name: '确认清理历史下载' })).toBeVisible();
+  await page
+    .getByRole('region', { name: '确认清理历史下载' })
+    .getByRole('button', { name: '取消', exact: true })
+    .click();
+  assert(fs.existsSync(installPath));
+  await page.getByRole('button', { name: '清理历史下载', exact: true }).click();
+  await page.getByRole('button', { name: '确认清理', exact: true }).click();
+  await expect(page.getByText('历史下载已清理，当前程序保留。', { exact: true })).toBeVisible();
+  assert(!fs.existsSync(installPath));
+  assert(!fs.existsSync(path.join(currentDirectory, 'package.zip')));
+  assert(fs.existsSync(currentScript));
+  await page.getByRole('button', { name: '卸载程序', exact: true }).click();
+  await expect(page.getByRole('button', { name: '确认卸载', exact: true })).toBeDisabled();
+  await page
+    .getByRole('region', { name: '确认卸载程序' })
+    .getByRole('button', { name: '取消', exact: true })
+    .click();
+  runtime.agentControl.update(installedMember.id, { enabled: false });
+  const preservedMember = storage.repositories.agentDefinitions.get(installedMember.id);
+  await page.getByRole('button', { name: '卸载程序', exact: true }).click();
+  await expect(page.getByRole('button', { name: '确认卸载', exact: true })).toBeEnabled();
+  await page.screenshot({ path: path.join(root, 'uninstall-preview.png') });
+  await page.getByRole('button', { name: '确认卸载', exact: true }).click();
+  await expect(page.getByText('已卸载', { exact: true })).toBeVisible();
+  await expect(
+    page.getByText('成员配置已保留。程序不可用，请重新安装或在成员详情中配置已有入口。'),
+  ).toBeVisible();
+  await expect(page.getByText('安装已完成，检查连接后继续登录。')).toHaveCount(0);
+  assert(!fs.existsSync(currentDirectory));
+  assert.deepEqual(storage.repositories.agentDefinitions.get(installedMember.id), preservedMember);
+  assert.equal(agentInstallations.list()[0].installed, false);
+  assert.equal(installs, 2);
+  checks.push(
+    'History cleanup preserves the current program; uninstall requires an idle disabled member, removes only owned files and retains the member configuration',
+  );
+  checks.push(
+    'The install button discovers and reuses a valid existing local program instead of starting a duplicate download',
   );
   await page.setViewportSize({ width: 1024, height: 768 });
   await page.screenshot({ path: path.join(root, 'compact.png') });

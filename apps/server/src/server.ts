@@ -111,6 +111,7 @@ export function buildServer(options: BuildServerOptions = {}) {
         options.agentCatalog,
         options.agentControl,
         !!options.agentInstallations,
+        () => options.agentInstallations?.discoverablePackages() ?? [],
       );
   }
   if (options.taskControl) {

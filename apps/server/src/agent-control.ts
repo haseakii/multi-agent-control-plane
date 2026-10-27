@@ -135,6 +135,29 @@ export class AgentControlService {
     });
   }
 
+  /** Program removal preserves historical members; only live use blocks filesystem cleanup. */
+  programRemovalBlockers(rawId: string): string[] {
+    const agent = this.requireAgent(rawId);
+    const owned = this.storage.repositories.assignments
+      .list()
+      .filter((item) => item.agentId === agent.id);
+    const assignments = new Set(owned.map((item) => item.id));
+    return [
+      ...(agent.enabled ? ['请先停用成员'] : []),
+      ...(this.observationsInFlight.has(agent.id) ? ['正在检查连接或登录'] : []),
+      ...(owned.some((item) => ['queued', 'running', 'waiting'].includes(item.state)) ||
+      this.storage.repositories.executionAttempts
+        .list()
+        .some(
+          (attempt) =>
+            assignments.has(attempt.assignmentId) &&
+            ['queued', 'running', 'waiting'].includes(attempt.state),
+        )
+        ? ['仍有排队或运行中的任务']
+        : []),
+    ];
+  }
+
   remove(id: string, raw: unknown) {
     const input = RemoveAgentInputSchema.parse(raw);
     return this.storage.repositories.transaction(() => {

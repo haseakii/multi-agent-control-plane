@@ -49,7 +49,8 @@ it('finds existing registrations and PATH files without executing or importing r
     command: 'C:\\Tools\\sample.exe',
     args: [],
   });
-  expect(isFile).toHaveBeenCalledTimes(1);
+  expect(isFile.mock.calls.filter(([path]) => path === 'C:\\Tools\\sample.exe')).toHaveLength(1);
+  expect(isFile.mock.calls.every(([path]) => !path.startsWith('\\\\'))).toBe(true);
   expect(JSON.stringify(result)).not.toContain('not-imported');
 });
 it('does not treat traversal or launcher names as product entrypoints', () => {
@@ -183,4 +184,44 @@ it('reports no local install for package-only products instead of installing a p
   );
   expect(result.candidates).toEqual([]);
   expect(isFile).toHaveBeenCalledWith(process.execPath);
+});
+
+it('finds Node-adjacent global packages and PNPM_HOME packages without PATH entries, then deduplicates them', () => {
+  const root = mkdtempSync(join(tmpdir(), 'acp-global-discovery-'));
+  try {
+    const node = join(root, process.platform === 'win32' ? 'node.exe' : 'node');
+    writeFileSync(node, 'not executed');
+    const pkg = join(root, 'node_modules', '@fixture', 'adapter');
+    mkdirSync(pkg, { recursive: true });
+    writeFileSync(
+      join(pkg, 'package.json'),
+      JSON.stringify({ name: '@fixture/adapter', version: '1.0.0', bin: 'cli.js' }),
+    );
+    writeFileSync(join(pkg, 'cli.js'), '#!/usr/bin/env node\nprocess.exit(1);');
+    const product = { ...entry, distribution: { npx: { package: '@fixture/adapter@1.0.0' } } };
+    const result = discoverAgentEntries(product, 'windows-x86_64', [], {
+      path: '',
+      nodeExecutable: node,
+      environment: { PNPM_HOME: root },
+    });
+    expect(result.candidates).toHaveLength(1);
+    expect(result.candidates[0]?.runtime.args).toEqual([join(pkg, 'cli.js')]);
+    rmSync(join(root, 'node_modules'), { recursive: true });
+    const pnpm = join(root, 'global', '5', 'node_modules', '@fixture', 'adapter');
+    mkdirSync(pnpm, { recursive: true });
+    writeFileSync(
+      join(pnpm, 'package.json'),
+      JSON.stringify({ name: '@fixture/adapter', bin: 'cli.js' }),
+    );
+    writeFileSync(join(pnpm, 'cli.js'), '#!/usr/bin/env node\n');
+    expect(
+      discoverAgentEntries(product, 'windows-x86_64', [], {
+        path: '',
+        nodeExecutable: node,
+        environment: { PNPM_HOME: root },
+      }).candidates[0]?.runtime.args,
+    ).toEqual([join(pnpm, 'cli.js')]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

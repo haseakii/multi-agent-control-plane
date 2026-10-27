@@ -21,6 +21,9 @@ import {
 import { TaskControlError } from './task-control.js';
 import type { AgentMembersService } from './agent-members.js';
 import type { DownloadProgress } from './agent-package-io.js';
+import { AgentPackageMaintenance } from './agent-package-maintenance.js';
+import { inspectAgentConfiguration } from '@control-plane/runner';
+import { discoverAgentEntries } from './agent-entry-discovery.js';
 
 export const StartAgentInstallSchema = z
   .object({
@@ -32,6 +35,7 @@ export const StartAgentInstallSchema = z
   })
   .strict();
 export class AgentInstallationsService {
+  readonly maintenance: AgentPackageMaintenance;
   private readonly repo;
   private readonly active = new Map<string, Promise<void>>();
   private readonly controllers = new Map<string, AbortController>();
@@ -50,8 +54,14 @@ export class AgentInstallationsService {
     },
   ) {
     this.repo = options.storage.repositories.agentInstallations;
+    this.maintenance = new AgentPackageMaintenance({ ...options, busy: () => this.busy });
     for (const row of this.repo.list())
-      if (['queued', 'downloading', 'installing', 'checking'].includes(row.state))
+      if (row.state === 'removing')
+        this.save(row, {
+          state: 'removal-failed',
+          message: '上次卸载被中断，请重新预览后继续卸载。',
+        });
+      else if (['queued', 'downloading', 'installing', 'checking'].includes(row.state))
         this.save(row, {
           state: 'failed',
           message: '上次安装被中断，原文件已保留。可以直接重试。',
@@ -60,6 +70,7 @@ export class AgentInstallationsService {
   list() {
     const origins = this.options.storage.repositories.agentMemberOrigins.list();
     const agents = this.options.agents.list();
+    const available = new Set(this.discoverablePackages().map((row) => row.id));
     return this.repo
       .list()
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
@@ -69,7 +80,13 @@ export class AgentInstallationsService {
         canCancel:
           this.active.has(row.id) && ['queued', 'downloading', 'installing'].includes(row.state),
         cancelling: this.controllers.get(row.id)?.signal.aborted ?? false,
-        installed: !!row.package || !!agents.find((a) => a.definition.id === row.agentId),
+        installed:
+          !['removing', 'removal-failed', 'uninstalled'].includes(row.state) &&
+          (available.has(row.id) ||
+            (!row.package &&
+              !!agents.find(
+                (a) => a.definition.id === row.agentId && a.localEntry?.offlineChecksPassed,
+              ))),
         members: agents
           .filter(
             (a) =>
@@ -108,6 +125,7 @@ export class AgentInstallationsService {
     return this.repo.upsert({ ...row, ...patch, updatedAt: new Date().toISOString() });
   }
   private localPackage(row: AgentInstallation): InstalledAgentPackage | undefined {
+    if (['removing', 'removal-failed', 'uninstalled'].includes(row.state)) return undefined;
     if (row.package) return row.package;
     const agent = row.agentId
       ? this.options.agents.list().find((a) => a.definition.id === row.agentId)
@@ -155,8 +173,27 @@ export class AgentInstallationsService {
       (row) =>
         row.entryId === input.entryId && row.version === input.version && row.state === 'ready',
     );
-    if (existing && this.options.agents.list().some((a) => a.definition.id === existing.agentId))
+    if (existing && this.discoverablePackages().some((row) => row.id === existing.id))
       return existing;
+    const discovery = discoverAgentEntries(
+      this.options.catalog.entry(input.entryId)!,
+      this.options.catalog.snapshot().platform,
+      this.options.agents.list(),
+      {
+        installedPackages: this.discoverablePackages(),
+      },
+    );
+    if (
+      discovery.candidates.some(
+        (candidate) =>
+          candidate.available === true &&
+          (candidate.source !== 'registered' || candidate.association === 'linked'),
+      )
+    )
+      throw new TaskControlError(
+        409,
+        '发现本机已有可用程序，请先使用“查找本机入口”复用，避免重复下载。',
+      );
     if (this.busy) throw new TaskControlError(409, '有成员正在安装，请等待完成后再安装。');
     const at = new Date().toISOString();
     const row = this.repo.upsert({
@@ -190,6 +227,40 @@ export class AgentInstallationsService {
     });
     this.launch(next);
     return next;
+  }
+
+  /** Read only known successful install metadata, including packages without a registered member. */
+  discoverablePackages() {
+    return this.repo
+      .list()
+      .filter(
+        (row) =>
+          row.package &&
+          ![
+            'queued',
+            'downloading',
+            'installing',
+            'removing',
+            'removal-failed',
+            'uninstalled',
+          ].includes(row.state),
+      )
+      .filter(
+        (row) =>
+          inspectAgentConfiguration(
+            {
+              id: 'local-check',
+              name: 'Local package',
+              enabled: false,
+              runtime: row.package!.runtime,
+              capabilities: [],
+              auth: { mode: 'agent-managed' },
+              orchestration: { canBeBoss: false },
+              controlBridge: { transport: 'none', scopes: [] },
+            },
+            { localOnly: true },
+          ).offlineChecksPassed,
+      );
   }
   private launch(row: AgentInstallation) {
     const controller = new AbortController();
@@ -322,6 +393,9 @@ export class AgentInstallationsService {
         failed: '安装',
         cancelled: '安装',
         'needs-attention': '连接检查',
+        removing: '卸载',
+        'removal-failed': '卸载',
+        uninstalled: '安装',
       }[row.state];
       this.save(row, {
         state: 'failed',
@@ -390,6 +464,26 @@ export function registerAgentInstallationRoutes(
       z.object({}).strict().parse(request.body);
       return service.cancel(z.object({ id: z.string().uuid() }).strict().parse(request.params).id);
     }, reply),
+  );
+  app.post('/api/agent-installations/:id/maintenance-preview', (request, reply) =>
+    handler(
+      () =>
+        service.maintenance.preview(
+          z.object({ id: z.string().uuid() }).strict().parse(request.params).id,
+          request.body,
+        ),
+      reply,
+    ),
+  );
+  app.post('/api/agent-installations/:id/maintenance', (request, reply) =>
+    handler(
+      () =>
+        service.maintenance.apply(
+          z.object({ id: z.string().uuid() }).strict().parse(request.params).id,
+          request.body,
+        ),
+      reply,
+    ),
   );
   app.addHook('preClose', async () => {
     await service.settle();
