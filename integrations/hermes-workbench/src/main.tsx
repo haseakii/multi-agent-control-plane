@@ -1690,7 +1690,13 @@ function Workbench() {
                         progressModel={leader}
                         autoTts={false}
                         pendingApproval={
-                          approvals.length || (snapshot && conversation && root) ? (
+                          approvals.length ||
+                          Boolean(
+                            snapshot &&
+                              conversation &&
+                              root &&
+                              (busy || terminal(root) || root.state === 'blocked'),
+                          ) ? (
                             <>
                               {approvals.length ? (
                                 <div
@@ -1730,7 +1736,6 @@ function Workbench() {
                                 <LiveExecutionCard
                                   snapshot={snapshot}
                                   root={root}
-                                  rounds={rounds}
                                   busy={busy}
                                   onInspectProcess={() => setRail('process')}
                                   onInspectArtifacts={() => setRail('results')}

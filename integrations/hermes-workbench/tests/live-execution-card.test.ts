@@ -6,6 +6,7 @@ import {
   formatTimer,
   resolveDelegation,
   stateLabel,
+  stripStepTarget,
 } from '../src/live-execution-model';
 
 describe('formatDuration', () => {
@@ -75,6 +76,26 @@ describe('extractStepTarget', () => {
     expect(extractStepTarget('Running view_file')).toBeUndefined();
     expect(extractStepTarget('view_file')).toBeUndefined();
     expect(extractStepTarget('')).toBeUndefined();
+  });
+});
+
+describe('stripStepTarget', () => {
+  it('strips colon parameters leaving base tool name', () => {
+    expect(stripStepTarget('Running view_file: src/main.tsx')).toBe('Running view_file');
+    expect(stripStepTarget('Running run_command: pnpm test')).toBe('Running run_command');
+    expect(stripStepTarget('view_file: path/to/file.ts')).toBe('view_file');
+  });
+
+  it('strips parentheses parameters leaving base tool name', () => {
+    expect(stripStepTarget('Running edit_file (packages/core/src/index.ts)')).toBe(
+      'Running edit_file',
+    );
+  });
+
+  it('preserves clean tool titles without target parameters', () => {
+    expect(stripStepTarget('Running view_file')).toBe('Running view_file');
+    expect(stripStepTarget('view_file')).toBe('view_file');
+    expect(stripStepTarget('Guardian Review')).toBe('Guardian Review');
   });
 });
 

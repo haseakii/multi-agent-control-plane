@@ -56,6 +56,14 @@ export function extractStepTarget(title: string): string | undefined {
   return undefined;
 }
 
+export function stripStepTarget(title: string): string {
+  if (!title || typeof title !== 'string') return title ?? '';
+  return title
+    .replace(/[:]\s*.+$/, '')
+    .replace(/\s*\([^)]+\)$/, '')
+    .trim();
+}
+
 export interface DelegationInfo {
   leaderName: string;
   workerName?: string;

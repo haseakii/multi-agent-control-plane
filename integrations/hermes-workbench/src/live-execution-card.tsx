@@ -10,6 +10,7 @@ import {
   formatTimer,
   resolveDelegation,
   stateLabel,
+  stripStepTarget,
   type DelegationInfo,
 } from './live-execution-model';
 import s from './live-execution-card.module.css';
@@ -21,6 +22,7 @@ export {
   formatTimer,
   resolveDelegation,
   stateLabel,
+  stripStepTarget,
   type DelegationInfo,
 };
 
@@ -34,7 +36,7 @@ export function LiveExecutionCard({
 }: {
   snapshot: SnapshotData;
   root: TaskData;
-  rounds: TaskData[];
+  rounds?: TaskData[];
   busy: boolean;
   onInspectProcess: () => void;
   onInspectArtifacts?: () => void;
@@ -130,9 +132,10 @@ export function LiveExecutionCard({
   const recentSteps = useMemo(() => {
     return activity.slice(-5).map((item) => {
       const isTool = item.kind === 'tool';
-      const presentation = isTool ? toolPresentation(item.text, item.state) : null;
-      const label = presentation?.label ?? item.text;
       const target = isTool ? extractStepTarget(item.text) : undefined;
+      const baseTitle = isTool ? stripStepTarget(item.text) : item.text;
+      const presentation = isTool ? toolPresentation(baseTitle, item.state) : null;
+      const label = presentation?.label ?? baseTitle;
       const status =
         presentation?.status ??
         (item.state === 'complete' || item.state === 'completed'
@@ -171,9 +174,11 @@ export function LiveExecutionCard({
       .filter((a) => a.kind === 'tool' && a.state === 'in_progress')
       .at(-1);
     if (runningTool) {
-      const pres = toolPresentation(runningTool.text, runningTool.state);
+      const baseTitle = stripStepTarget(runningTool.text);
+      const pres = toolPresentation(baseTitle, runningTool.state);
       const target = extractStepTarget(runningTool.text);
-      return target ? `正在${pres.label}: ${target}` : `正在${pres.label}`;
+      const verb = pres.label.startsWith('正在') ? pres.label : `正在${pres.label}`;
+      return target ? `${verb}: ${target}` : verb;
     }
     const latest = activity.at(-1);
     if (latest && latest.kind === 'message' && latest.state === 'streaming') {
@@ -238,7 +243,11 @@ export function LiveExecutionCard({
                     <span className={s.stepLabel}>
                       <span className={s.stepAgent}>[{step.agentName}]</span>
                       {step.label}
-                      {step.target && <span className={s.targetPill}>{step.target}</span>}
+                      {step.target && (
+                        <span className={s.targetPill} title={step.target}>
+                          {step.target}
+                        </span>
+                      )}
                       <span className={s.stepStatus}> · {step.status}</span>
                     </span>
                   </li>
@@ -319,7 +328,11 @@ export function LiveExecutionCard({
                   <span className={s.stepLabel}>
                     <span className={s.stepAgent}>[{step.agentName}]</span>
                     {step.label}
-                    {step.target && <span className={s.targetPill}>{step.target}</span>}
+                    {step.target && (
+                      <span className={s.targetPill} title={step.target}>
+                        {step.target}
+                      </span>
+                    )}
                     <span className={s.stepStatus}> · {step.status}</span>
                   </span>
                 </li>
