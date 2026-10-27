@@ -204,6 +204,12 @@
   color: #9c3327;
 }
 
+.badgeButton[data-status='blocked'] {
+  border-color: #f1cf8e;
+  background: #fffdf5;
+  color: #8c5b00;
+}
+
 .badgeIcon {
   font-size: 11px;
   flex-shrink: 0;

@@ -1,39 +1,16 @@
 import { useState, useEffect, useMemo } from 'react';
 import { toolPresentation } from './activity-presentation';
-import { taskFamily, type SnapshotData, type TaskData } from './adapter';
+import { taskFamily, terminal, type SnapshotData, type TaskData } from './adapter';
 import { agentActivity } from './agent-activity';
+import {
+  executionCardSummary,
+  formatDuration,
+  formatTimer,
+  stateLabel,
+} from './live-execution-model';
 import s from './live-execution-card.module.css';
 
-function stateLabel(state: string): string {
-  const labels: Record<string, string> = {
-    ready: '就绪',
-    waiting: '等待中',
-    waiting_children: '等待协作',
-    running: '执行中',
-    blocked: '已暂停',
-    failed: '失败',
-    completed: '已完成',
-    cancelled: '已取消',
-  };
-  return labels[state] ?? state;
-}
-
-export function formatDuration(ms: number): string {
-  if (ms <= 0 || !Number.isFinite(ms)) return '0秒';
-  const totalSeconds = Math.round(ms / 1000);
-  if (totalSeconds < 60) return `${totalSeconds}秒`;
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${minutes}分${seconds > 0 ? `${seconds}秒` : ''}`;
-}
-
-export function formatTimer(ms: number): string {
-  if (ms <= 0 || !Number.isFinite(ms)) return '00:00';
-  const totalSeconds = Math.floor(ms / 1000);
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-}
+export { executionCardSummary, formatDuration, formatTimer, stateLabel };
 
 export function LiveExecutionCard({
   snapshot,
@@ -75,13 +52,15 @@ export function LiveExecutionCard({
       const agentId = snapshot.assignments.find((item) => item.id === a.assignmentId)?.agentId;
       if (agentId) set.add(agentId);
     }
+    for (const item of activity) if (item.agentId) set.add(item.agentId);
     return set;
-  }, [family, attempts, snapshot.assignments]);
+  }, [family, attempts, activity, snapshot.assignments]);
 
   const collaboratorsCount = Math.max(1, collaborators.size);
 
   const activeAttempt =
-    attempts.find((a) => ['queued', 'running', 'waiting'].includes(a.state)) ?? attempts.at(-1);
+    attempts.filter((a) => ['queued', 'running', 'waiting'].includes(a.state)).at(-1) ??
+    attempts.at(-1);
   const activeAgentId =
     (activeAttempt
       ? snapshot.assignments.find((item) => item.id === activeAttempt.assignmentId)?.agentId
@@ -115,41 +94,39 @@ export function LiveExecutionCard({
     : Math.max(0, (finishedAtMs ?? Date.now()) - startedAtMs);
 
   const recentSteps = useMemo(() => {
-    return activity
-      .slice(-5)
-      .reverse()
-      .map((item) => {
-        const isTool = item.kind === 'tool';
-        const presentation = isTool ? toolPresentation(item.text, item.state) : null;
-        const label = presentation?.label ?? item.text;
-        const status =
-          presentation?.status ??
-          (item.state === 'complete' || item.state === 'completed'
-            ? '已完成'
-            : item.state === 'streaming' || item.state === 'in_progress'
-              ? '进行中'
-              : item.state === 'failed'
-                ? '失败'
-                : item.state);
-        const agentName =
-          snapshot.agents.find((a) => a.definition.id === item.agentId)?.definition.name ??
-          item.agentId;
-        const iconState =
-          item.state === 'completed' || item.state === 'complete'
-            ? 'done'
-            : item.state === 'in_progress' || item.state === 'streaming'
-              ? 'running'
-              : item.state === 'failed'
-                ? 'failed'
-                : 'other';
-        return {
-          id: item.id,
-          label,
-          status,
-          agentName,
-          iconState,
-        };
-      });
+    return activity.slice(-5).map((item) => {
+      const isTool = item.kind === 'tool';
+      const presentation = isTool ? toolPresentation(item.text, item.state) : null;
+      const label = presentation?.label ?? item.text;
+      const status =
+        presentation?.status ??
+        (item.state === 'complete' || item.state === 'completed'
+          ? '已完成'
+          : item.state === 'streaming' || item.state === 'in_progress'
+            ? '进行中'
+            : item.state === 'failed'
+              ? '失败'
+              : item.state);
+      const agentName =
+        snapshot.agents.find((a) => a.definition.id === item.agentId)?.definition.name ??
+        item.agentId ??
+        '成员';
+      const iconState =
+        item.state === 'completed' || item.state === 'complete'
+          ? 'done'
+          : item.state === 'in_progress' || item.state === 'streaming'
+            ? 'running'
+            : item.state === 'failed'
+              ? 'failed'
+              : 'other';
+      return {
+        id: item.id,
+        label,
+        status,
+        agentName,
+        iconState,
+      };
+    });
   }, [activity, snapshot.agents]);
 
   const currentAction = useMemo(() => {
@@ -173,8 +150,8 @@ export function LiveExecutionCard({
     return root.state === 'completed' ? '执行完成' : stateLabel(root.state);
   }, [activity, root.state, busy]);
 
-  // If empty and task is just initialized, return null
-  if (activity.length === 0 && attempts.length === 0 && root.state === 'ready') {
+  // If not busy and task is not in terminal state and not blocked (e.g. newly created draft or ready), don't render.
+  if (!busy && !terminal(root) && root.state !== 'blocked') {
     return null;
   }
 
@@ -230,24 +207,30 @@ export function LiveExecutionCard({
     );
   }
 
-  // Completed or stopped (badge mode)
-  const isFailed = root.state === 'failed' || root.state === 'cancelled';
-  const badgeTitle = isFailed
-    ? `⚠️ 本轮未完成（${stateLabel(root.state)}） · 耗时 ${formatDuration(durationMs)} · ${activity.length} 项步骤`
-    : `⚡ 本轮执行完毕 · 耗时 ${formatDuration(durationMs)} · ${collaboratorsCount} 个协作者 · ${activity.length} 项步骤`;
+  // Completed, cancelled, failed, or blocked (badge mode)
+  const {
+    status: badgeStatus,
+    icon: badgeIcon,
+    text: badgeText,
+  } = executionCardSummary({
+    state: root.state,
+    durationMs,
+    collaboratorsCount,
+    stepCount: activity.length,
+  });
 
   return (
     <div className={s.badgeContainer} data-state={root.state}>
       <button
         type="button"
         className={s.badgeButton}
-        data-status={isFailed ? 'failed' : 'completed'}
+        data-status={badgeStatus}
         aria-expanded={expanded}
         onClick={() => setExpanded(!expanded)}
         title="点击展开/收起本轮执行摘要"
       >
-        <span className={s.badgeIcon}>{isFailed ? '⚠️' : '⚡'}</span>
-        <span className={s.badgeText}>{badgeTitle}</span>
+        <span className={s.badgeIcon}>{badgeIcon}</span>
+        <span className={s.badgeText}>{badgeText}</span>
         <span className={s.badgeCaret}>{expanded ? '▴' : '▾'}</span>
       </button>
       {expanded && (
