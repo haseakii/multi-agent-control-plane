@@ -44,6 +44,11 @@ it('discovers reusable managed packages with no member, avoids duplicate downloa
       }),
   );
   await catalog.refresh();
+  // This fixture uses a Windows distribution even when discovery runs on Linux CI.
+  vi.spyOn(catalog, 'snapshot').mockReturnValue({
+    ...catalog.snapshot(),
+    platform: 'windows-x86_64',
+  });
   const install = vi.fn(async () => {
     throw new Error('fixture download');
   });
