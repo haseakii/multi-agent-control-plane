@@ -377,4 +377,42 @@ describe('ACP public session settings', () => {
       }
     }
   });
+
+  it('enriches Antigravity session settings with known candidate models', () => {
+    const rawOptions = [
+      {
+        id: 'model',
+        name: 'Model',
+        category: 'model',
+        type: 'select',
+        currentValue: 'gemini-3.8-flash',
+        options: [{ value: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash' }],
+      },
+      {
+        id: 'thinking_level',
+        name: 'Thinking Level',
+        category: 'thought_level',
+        type: 'select',
+        currentValue: 'medium',
+        options: [
+          { value: 'low', name: 'Low' },
+          { value: 'medium', name: 'Medium' },
+          { value: 'high', name: 'High' },
+        ],
+      },
+    ];
+    const snapshot = sessionSettingsFromResponse(
+      { configOptions: rawOptions },
+      { name: 'antigravity-acp', version: '1.4.1' },
+    );
+    expect(snapshot.source).toBe('config-options');
+    const modelOption = snapshot.options.find((opt) => opt.id === 'model');
+    expect(modelOption).toBeDefined();
+    const modelValues = modelOption!.options.map((opt) => opt.value);
+    expect(modelValues).toContain('gemini-3.8-flash');
+    expect(modelValues).toContain('claude-sonnet-4.6');
+    expect(modelValues).toContain('claude-opus-4.6');
+    expect(modelValues).toContain('gpt-oss-120b');
+    expect(modelValues).toContain('gemini-4-argon');
+  });
 });

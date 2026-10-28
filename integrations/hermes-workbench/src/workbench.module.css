@@ -28,6 +28,37 @@
   padding: 0 24px;
   background: var(--h-bg-pane);
 }
+.topbarHidden {
+  display: none !important;
+}
+.sidebarExpandBtn {
+  border: 1px solid var(--h-line);
+  background: var(--h-bg-pane);
+  border-radius: 6px;
+  padding: 6px 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--h-text);
+  cursor: pointer;
+  flex-shrink: 0;
+  font-size: 12px;
+}
+.sidebarExpandBtn:hover {
+  background: var(--h-bg-soft);
+}
+.headerCollapsed .taskHeader {
+  padding: 4px 16px;
+  background: var(--h-bg-pane);
+}
+.headerCollapsedBar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--h-line);
+  background: var(--h-bg-pane);
+}
 .brand {
   display: flex;
   flex-direction: column;

@@ -93,6 +93,7 @@ function SessionSettingsDialog({
   const [verified, setVerified] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [customModelInput, setCustomModelInput] = useState<Record<string, string>>({});
   const [presets, setPresets] = useState<SessionPresetData[]>([]);
   const [presetsLoading, setPresetsLoading] = useState(true);
   const [presetsError, setPresetsError] = useState('');
@@ -694,6 +695,7 @@ function SessionSettingsDialog({
           {options.length > 0 && (
             <div className={s.fields}>
               {options.map((option) => {
+                const isModel = option.category === 'model' || option.id === 'model';
                 const chosen = selected[option.id] ?? option.currentValue;
                 const known = option.options.some((item) => item.value === chosen);
                 return (
@@ -701,23 +703,41 @@ function SessionSettingsDialog({
                     <span>{sessionSettingLabel(option)}</span>
                     <select
                       aria-label={sessionSettingLabel(option)}
-                      disabled={!!pending}
+                      disabled={pending === 'save'}
                       value={chosen}
                       onChange={(event) => {
-                        // Models can change all dependent options; ask the member to provide fresh defaults.
                         const next = nextSessionSelection(option, selected, event.target.value);
                         setSelectedPreset('');
                         setSelected(next);
-                        void inspect(next);
                       }}
                     >
-                      {!known && <option value={chosen}>{chosen}（需重新核对）</option>}
+                      {!known && <option value={chosen}>{chosen}（自定义 / 需核对）</option>}
                       {option.options.map((item) => (
                         <option key={item.value} value={item.value}>
                           {item.name}
                         </option>
                       ))}
                     </select>
+                    {isModel && (
+                      <input
+                        type="text"
+                        className={s.customModelInput}
+                        aria-label="输入自定义模型ID"
+                        placeholder="或输入自定义模型 ID（如 claude-sonnet-4.6、gemini-4-argon）"
+                        value={customModelInput[option.id] ?? ''}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setCustomModelInput((prev) => ({ ...prev, [option.id]: val }));
+                          const trimmed = val.trim();
+                          if (trimmed) {
+                            const next = nextSessionSelection(option, selected, trimmed);
+                            setSelectedPreset('');
+                            setSelected(next);
+                          }
+                        }}
+                        disabled={pending === 'save'}
+                      />
+                    )}
                     {option.description && <small>{option.description}</small>}
                     {option.options.find((item) => item.value === chosen)?.description && (
                       <small>

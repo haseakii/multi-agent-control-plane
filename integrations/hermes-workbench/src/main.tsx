@@ -29,9 +29,12 @@ import {
   Eye,
   GitPullRequest,
   PanelLeft,
+  PanelLeftOpen,
   Settings2,
   Maximize2,
   Minimize2,
+  ChevronUp,
+  ChevronDown,
 } from 'lucide-react';
 import {
   artifactUrl,
@@ -426,7 +429,45 @@ function Workbench() {
   const [previewOpened, setPreviewOpened] = useState(false);
   const [fileFocus, setFileFocus] = useState<FileFocus | null>(null);
   const [reviewFocus, setReviewFocus] = useState<{ taskId: string }>();
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem('hermes.workbench.sidebarCollapsed') === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const [headerCollapsed, setHeaderCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem('hermes.workbench.headerCollapsed') === 'true';
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem('hermes.workbench.sidebarCollapsed', String(sidebarCollapsed));
+    } catch {}
+  }, [sidebarCollapsed]);
+  useEffect(() => {
+    try {
+      localStorage.setItem('hermes.workbench.headerCollapsed', String(headerCollapsed));
+    } catch {}
+  }, [headerCollapsed]);
+  useEffect(() => {
+    const handleShortcuts = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && !event.altKey) {
+        if (!event.shiftKey && (event.key === 'b' || event.key === 'B')) {
+          event.preventDefault();
+          setSidebarCollapsed((prev) => !prev);
+        } else if (event.shiftKey && (event.key === 'h' || event.key === 'H')) {
+          event.preventDefault();
+          setHeaderCollapsed((prev) => !prev);
+        }
+      }
+    };
+    window.addEventListener('keydown', handleShortcuts);
+    return () => window.removeEventListener('keydown', handleShortcuts);
+  }, []);
   const [reading, setReading] = useState(false);
   useEffect(() => {
     if (!reading) return;
@@ -950,15 +991,17 @@ function Workbench() {
     }
   };
   return (
-    <div className={`${s.app} ${reading ? s.reading : ''}`}>
-      <header className={s.topbar}>
+    <div
+      className={`${s.app} ${reading ? s.reading : ''} ${headerCollapsed ? s.headerCollapsed : ''} ${sidebarCollapsed ? s.sidebarCollapsed : ''}`}
+    >
+      <header className={`${s.topbar} ${headerCollapsed ? s.topbarHidden : ''}`}>
         <div className={s.brand}>
           <div className={s.brandRow}>
             <button
               type="button"
               className={s.sidebarToggle}
-              aria-label={sidebarCollapsed ? '展开任务列表' : '收起任务列表'}
-              title={sidebarCollapsed ? '展开任务列表' : '收起任务列表'}
+              aria-label={sidebarCollapsed ? '展开任务列表 (Ctrl+B)' : '收起任务列表 (Ctrl+B)'}
+              title={sidebarCollapsed ? '展开任务列表 (Ctrl+B)' : '收起任务列表 (Ctrl+B)'}
               aria-expanded={!sidebarCollapsed}
               aria-controls="task-history"
               onClick={() => setSidebarCollapsed((value) => !value)}
@@ -1154,6 +1197,30 @@ function Workbench() {
           </div>
         </aside>
         <main className={s.main}>
+          {headerCollapsed && !root && (
+            <div className={s.headerCollapsedBar}>
+              {sidebarCollapsed && (
+                <button
+                  type="button"
+                  className={s.sidebarExpandBtn}
+                  aria-label="展开任务列表 (Ctrl+B)"
+                  title="展开任务列表 (Ctrl+B)"
+                  onClick={() => setSidebarCollapsed(false)}
+                >
+                  <PanelLeftOpen size={16} /> 展开列表
+                </button>
+              )}
+              <button
+                type="button"
+                className={s.sidebarExpandBtn}
+                aria-label="展开顶部导航 (Ctrl+Shift+H)"
+                title="展开顶部导航 (Ctrl+Shift+H)"
+                onClick={() => setHeaderCollapsed(false)}
+              >
+                <ChevronDown size={16} /> 展开顶部导航
+              </button>
+            </div>
+          )}
           {workbench?.uiBuildId && workbench.uiBuildId !== __HERMES_BUILD_ID__ && (
             <div className={s.draftNotice} role="status">
               工作台已更新，草稿已自动保存。
@@ -1470,6 +1537,17 @@ function Workbench() {
             <>
               <div className={s.taskHeader}>
                 <div className={s.taskHeading}>
+                  {sidebarCollapsed && (
+                    <button
+                      type="button"
+                      className={s.sidebarExpandBtn}
+                      aria-label="展开任务列表 (Ctrl+B)"
+                      title="展开任务列表 (Ctrl+B)"
+                      onClick={() => setSidebarCollapsed(false)}
+                    >
+                      <PanelLeftOpen size={16} />
+                    </button>
+                  )}
                   <button aria-label="返回工作台" disabled={sending} onClick={() => select(null)}>
                     <ArrowLeft size={16} />
                   </button>
@@ -1536,6 +1614,21 @@ function Workbench() {
                     </button>
                   </nav>
                   <div className={s.taskUtilities}>
+                    <button
+                      type="button"
+                      aria-pressed={headerCollapsed}
+                      onClick={() => setHeaderCollapsed((prev) => !prev)}
+                      title={
+                        headerCollapsed
+                          ? '展开顶部导航 (Ctrl+Shift+H)'
+                          : '收起顶部导航 (Ctrl+Shift+H)'
+                      }
+                      aria-label={headerCollapsed ? '展开顶部导航' : '收起顶部导航'}
+                    >
+                      {headerCollapsed ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
+                      {headerCollapsed ? '展开头部' : '收起头部'}
+                    </button>
+
                     <button
                       type="button"
                       aria-pressed={reading}

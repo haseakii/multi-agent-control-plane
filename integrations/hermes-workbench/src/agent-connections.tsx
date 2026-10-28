@@ -423,10 +423,13 @@ export function AgentConnections({
                 setEditing(null);
                 revealMember(saved.definition.id);
                 setNotice(
-                  `${saved.definition.name} 已保存${saved.definition.enabled ? '' : '为停用状态'}。${!saved.definition.enabled ? '请启用成员，然后检查连接与登录。' : saved.readiness.runtime === 'ready' && ['ready', 'not_reported'].includes(saved.readiness.auth) ? '已有连接状态已保留，可继续使用。' : '请查看下方连接与登录状态，按提示完成检查。'}`,
+                  `${saved.definition.name} 已保存${saved.definition.enabled ? '' : '为停用状态'}。${!saved.definition.enabled ? '请启用成员，然后检查连接与登录。' : '正在自动确认连接与登录状态…'}`,
                 );
                 void refresh();
                 onChanged();
+                if (saved.definition.enabled && !active.has(saved.definition.id)) {
+                  void act(saved, 'probe');
+                }
               }}
             />
           )}
