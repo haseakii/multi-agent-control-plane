@@ -335,6 +335,22 @@
   background: var(--h-bg-pane, #fff);
   font: inherit;
 }
+.customModelInput {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px dashed var(--h-border, #cfc9bd);
+  border-radius: 8px;
+  color: inherit;
+  background: var(--h-bg-pane, #fff);
+  font: inherit;
+  font-size: 12px;
+  box-sizing: border-box;
+}
+.customModelInput:focus {
+  border-style: solid;
+  border-color: #ff7443;
+  outline: none;
+}
 .field small {
   color: var(--h-text-muted, #77736c);
   font-size: 11px;

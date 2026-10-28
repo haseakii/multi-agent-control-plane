@@ -260,6 +260,7 @@ export function AgentInstall({
         planHash: plan.planHash,
         requestId: idempotency.current.id,
         confirmed: true,
+        allowUpdate: true,
       });
       setRecords(await api('/api/agent-installations', Records));
     } catch (failure) {
@@ -406,6 +407,18 @@ export function AgentInstall({
             </details>
           )}
           <div className={s.actions}>
+            {row.installed && plan && (
+              <button
+                type="button"
+                disabled={disabled || busy || !!records?.busy}
+                onClick={() => {
+                  idempotency.current = { hash: plan.planHash, id: crypto.randomUUID() };
+                  void start();
+                }}
+              >
+                直接更新 / 重新下载
+              </button>
+            )}
             {(row.state === 'uninstalled' ||
               (['ready', 'failed', 'needs-attention'].includes(row.state) && !row.installed)) &&
               plan && (

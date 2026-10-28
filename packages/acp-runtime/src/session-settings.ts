@@ -94,7 +94,40 @@ function description(value: string | null | undefined): { description?: string }
   return value ? { description: value } : {};
 }
 
-function configOptionsSnapshot(value: unknown): SessionSettingsSnapshot {
+export type KnownModel = {
+  value: string;
+  name: string;
+  description?: string;
+};
+
+export const ANTIGRAVITY_KNOWN_MODELS: readonly KnownModel[] = [
+  { value: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash' },
+  {
+    value: 'claude-sonnet-4.6',
+    name: 'Claude Sonnet 4.6 (Thinking)',
+    description: 'Google AI Pro / Gemini Enterprise',
+  },
+  {
+    value: 'claude-opus-4.6',
+    name: 'Claude Opus 4.6 (Thinking)',
+    description: 'Google AI Pro / Gemini Enterprise',
+  },
+  {
+    value: 'gpt-oss-120b',
+    name: 'GPT-OSS 120B (Medium)',
+    description: 'Google AI Pro / Gemini Enterprise',
+  },
+  {
+    value: 'gemini-4-argon',
+    name: 'Gemini 4 Argon',
+    description: 'Google AI Pro / Gemini Enterprise',
+  },
+];
+
+function configOptionsSnapshot(
+  value: unknown,
+  agentInfo?: { name?: string; version?: string } | null,
+): SessionSettingsSnapshot {
   const raw = z.array(z.unknown()).max(64).parse(value);
   const options: SessionSettingOption[] = [];
   for (const input of raw) {
@@ -114,6 +147,21 @@ function configOptionsSnapshot(value: unknown): SessionSettingsSnapshot {
       const entry = choice.parse(variant);
       return [{ value: entry.value, name: entry.name, ...description(entry.description) }];
     });
+    if (
+      (base.id === 'model' || base.category === 'model') &&
+      (agentInfo?.name === 'antigravity-acp' ||
+        flattened.some((candidate) => candidate.value.includes('gemini-3.8-flash')))
+    ) {
+      for (const known of ANTIGRAVITY_KNOWN_MODELS) {
+        if (!flattened.some((candidate) => candidate.value === known.value)) {
+          flattened.push({
+            value: known.value,
+            name: known.name,
+            ...description(known.description),
+          });
+        }
+      }
+    }
     options.push(
       SessionSettingOptionSchema.parse({
         id: base.id,
@@ -165,11 +213,20 @@ function legacyModelsSnapshot(value: unknown): SessionSettingsSnapshot {
 }
 
 /** Whitelist known public selectors; discard opaque metadata and permission/session modes. */
-export function sessionSettingsFromResponse(response: unknown): SessionSettingsSnapshot {
+export function sessionSettingsFromResponse(
+  response: unknown,
+  agentInfo?: { name?: string; version?: string } | null,
+): SessionSettingsSnapshot {
   try {
     const input = record(response);
+    const meta = record(input?._meta);
+    const isAntigravity =
+      agentInfo?.name === 'antigravity-acp' || (meta && record(meta.antigravity) !== undefined);
+    const effectiveAgentInfo = isAntigravity
+      ? { name: 'antigravity-acp', ...(agentInfo?.version ? { version: agentInfo.version } : {}) }
+      : agentInfo;
     if (input?.configOptions != null) {
-      const settings = configOptionsSnapshot(input.configOptions);
+      const settings = configOptionsSnapshot(input.configOptions, effectiveAgentInfo);
       // Some peers advertise an empty (or permission-only) modern list alongside
       // the older model interface. Keep using that model interface in this case.
       if (settings.options.length || input.models == null) return settings;

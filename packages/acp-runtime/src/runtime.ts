@@ -505,13 +505,27 @@ export class AcpRuntimeConnection {
         }
         let updated: SessionSettingsSnapshot;
         try {
-          updated = sessionSettingsFromResponse(response);
+          updated = sessionSettingsFromResponse(response, this.initialized.agentInfo);
         } catch {
           this.invalidSettings.add(sessionId);
           throw new AcpSessionSettingsError('invalid-advertisement', snapshot);
         }
-        if (updated.source !== 'unavailable') this.recordSessionSettings(sessionId, response);
-        if (snapshot.source !== 'legacy-models' && updated.source !== 'config-options')
+        if (updated.source !== 'unavailable') {
+          this.recordSessionSettings(sessionId, response);
+        } else if (snapshot.source !== 'legacy-models') {
+          const currentSnapshot = this.getSessionSettings(sessionId);
+          this.settings.set(sessionId, {
+            ...currentSnapshot,
+            options: currentSnapshot.options.map((opt) =>
+              opt.id === id ? { ...opt, currentValue: value } : opt,
+            ),
+          });
+        }
+        if (
+          snapshot.source !== 'legacy-models' &&
+          updated.source !== 'config-options' &&
+          updated.source !== 'unavailable'
+        )
           throw new AcpSessionSettingsError('unconfirmed', this.getSessionSettings(sessionId));
         // Old set_model replies may be empty; only a genuine current_model_update or a
         // complete models response can confirm them. An acknowledgement is not a readback.
@@ -537,7 +551,7 @@ export class AcpRuntimeConnection {
 
   private recordSessionSettings(sessionId: string, response: unknown): void {
     try {
-      const snapshot = sessionSettingsFromResponse(response);
+      const snapshot = sessionSettingsFromResponse(response, this.initialized.agentInfo);
       this.settings.set(sessionId, snapshot);
       this.invalidSettings.delete(sessionId);
     } catch {

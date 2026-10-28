@@ -337,3 +337,47 @@ it('selects fixed packages only and reports unsupported platforms honestly', () 
     ).integrity,
   ).toBe('https-source');
 });
+
+it('allows explicit update without throwing candidate reuse blocker', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'cp-install-update-'));
+  const storage = openSqliteStorage({ filename: join(root, 'state.sqlite') });
+  const catalog = new AgentCatalogService(
+    undefined,
+    vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ version: '1.0.0', agents: [entry] }), {
+        headers: { 'content-type': 'application/json' },
+      }),
+    ),
+  );
+  await catalog.refresh();
+  const snapshot = catalog.snapshot();
+  vi.spyOn(catalog, 'snapshot').mockReturnValue({ ...snapshot, platform: 'windows-x86_64' });
+  const options = {
+    storage,
+    catalog,
+    agents: { list: () => [] } as any,
+    network: {} as any,
+    root: join(root, 'agents'),
+    releaseRoot: root,
+    installPackage: vi.fn(),
+  };
+  const service = new AgentInstallationsService(options);
+  try {
+    const plan = service.plan(entry.id);
+    const reqId = randomUUID();
+    const row = service.start({
+      requestId: reqId,
+      entryId: entry.id,
+      version: entry.version,
+      planHash: plan.planHash,
+      confirmed: true,
+      allowUpdate: true,
+    });
+    expect(row.state).toBe('queued');
+    expect(row.id).toBe(reqId);
+  } finally {
+    await service.settle();
+    storage.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});

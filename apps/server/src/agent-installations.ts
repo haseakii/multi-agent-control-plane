@@ -32,6 +32,7 @@ export const StartAgentInstallSchema = z
     version: z.string().min(1).max(128),
     planHash: z.string().regex(/^[a-f0-9]{64}$/),
     confirmed: z.literal(true),
+    allowUpdate: z.boolean().optional(),
   })
   .strict();
 export class AgentInstallationsService {
@@ -185,6 +186,7 @@ export class AgentInstallationsService {
       },
     );
     if (
+      !input.allowUpdate &&
       discovery.candidates.some(
         (candidate) =>
           candidate.available === true &&
