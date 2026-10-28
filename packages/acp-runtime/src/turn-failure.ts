@@ -1,3 +1,5 @@
+import { isAntigravityAgent } from './native-permission-resolver.js';
+
 /** Canonical diagnostics only: never surface an arbitrary transport exception or credential. */
 export const turnFailures = {
   ACP_CONNECTION_CLOSED: {
@@ -34,11 +36,7 @@ export function nativeTurnFailure(
   agentInfo: { name: string; version: string } | null,
   output: string,
 ): TurnFailure | undefined {
-  if (
-    agentInfo?.name === 'antigravity-acp' &&
-    agentInfo.version === '1.4.1' &&
-    output.trim() === 'Internal error encountered.'
-  )
+  if (isAntigravityAgent(agentInfo) && output.trim() === 'Internal error encountered.')
     return turnFailures.AGENT_UPSTREAM_INTERNAL;
   return undefined;
 }

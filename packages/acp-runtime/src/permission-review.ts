@@ -344,7 +344,22 @@ export class PermissionReviewCollector {
       action = text(input.action) ?? text(args.action);
     let target: string | null = null;
     for (const source of [input, args])
-      for (const key of ['target', 'path', 'filePath', 'url', 'taskId', 'agentId', 'artifactId'])
+      for (const key of [
+        'target',
+        'path',
+        'filePath',
+        'url',
+        'taskId',
+        'agentId',
+        'artifactId',
+        'Cwd',
+        'cwd',
+        'TargetFile',
+        'targetFile',
+        'Path',
+        'CommandLine',
+        'command',
+      ])
         target ??= text(source[key]);
     if (!target && Array.isArray(values.locations) && values.locations.length === 1)
       target = text(object(values.locations[0]).path);
@@ -360,6 +375,21 @@ export class PermissionReviewCollector {
       tool = text(semantics.tool);
       action = text(semantics.action);
       target = text(semantics.target);
+    }
+    tool ??= text(values.name) ?? text(input.name);
+    if (!tool && values.kind === 'execute') tool = 'run_command';
+    if (!action) {
+      if (values.kind === 'execute' || tool === 'run_command' || text(input.CommandLine))
+        action = 'process.execute';
+      else if (
+        values.kind === 'edit' ||
+        tool === 'edit_file' ||
+        tool === 'create_file' ||
+        text(input.TargetFile)
+      )
+        action = 'file.write';
+      else if (values.kind === 'read' || tool === 'read_file') action = 'file.read';
+      else if (values.kind && typeof values.kind === 'string') action = `acp.${values.kind}`;
     }
     const parameters = redactPermissionValue(
       {
