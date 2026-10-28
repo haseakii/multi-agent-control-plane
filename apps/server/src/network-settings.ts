@@ -24,9 +24,11 @@ const proxyKeys = [
   'HTTP_PROXY',
   'HTTPS_PROXY',
   'ALL_PROXY',
+  'GRPC_PROXY',
   'http_proxy',
   'https_proxy',
   'all_proxy',
+  'grpc_proxy',
 ];
 const hash = (v: unknown) => createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const supportsManagedHttp = () => {
@@ -63,8 +65,25 @@ export function resolveNetwork(
     boundary: agentId ? 'agent-environment' : 'control-plane-http',
   });
 }
-export function applyNetworkEnvironment(base: Record<string, string>, effective: EffectiveNetwork) {
-  if (effective.mode === 'unmanaged') return { ...base };
+export function applyNetworkEnvironment(
+  base: Record<string, string>,
+  effective: EffectiveNetwork,
+  systemEnv: NodeJS.ProcessEnv = process.env,
+) {
+  if (effective.mode === 'unmanaged') {
+    const env = { ...base };
+    for (const key of proxyKeys) {
+      if (systemEnv[key] !== undefined && env[key] === undefined) {
+        env[key] = systemEnv[key]!;
+      }
+    }
+    for (const key of ['NO_PROXY', 'no_proxy']) {
+      if (systemEnv[key] !== undefined && env[key] === undefined) {
+        env[key] = systemEnv[key]!;
+      }
+    }
+    return env;
+  }
   const env = { ...base };
   for (const key of proxyKeys) env[key] = effective.mode === 'proxy' ? effective.proxyUrl! : '';
   env.NO_PROXY = env.no_proxy = effective.bypass.join(',');
