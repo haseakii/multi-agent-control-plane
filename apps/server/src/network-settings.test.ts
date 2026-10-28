@@ -53,6 +53,8 @@ it('resolves each member independently and clears conflicting proxy environment 
   expect(applyNetworkEnvironment(base, a)).toMatchObject({
     HTTPS_PROXY: a.proxyUrl,
     https_proxy: a.proxyUrl,
+    GRPC_PROXY: a.proxyUrl,
+    grpc_proxy: a.proxyUrl,
     KEEP: 'unchanged',
     NODE_USE_ENV_PROXY: '1',
   });
@@ -60,6 +62,8 @@ it('resolves each member independently and clears conflicting proxy environment 
   expect(direct.HTTPS_PROXY).toBe('');
   expect(direct.https_proxy).toBe('');
   expect(direct.ALL_PROXY).toBe('');
+  expect(direct.GRPC_PROXY).toBe('');
+  expect(direct.grpc_proxy).toBe('');
   expect(direct.NO_PROXY).toContain('127.0.0.1');
   expect(direct.KEEP).toBe('unchanged');
   const original = resolveNetwork(
@@ -72,6 +76,15 @@ it('resolves each member independently and clears conflicting proxy environment 
     'a',
   );
   expect(applyNetworkEnvironment(base, original)).toEqual(base);
+  const unmanagedInherited = applyNetworkEnvironment({ KEEP: 'unchanged' }, original, {
+    HTTP_PROXY: 'http://system.proxy:7890',
+    GRPC_PROXY: 'http://system.proxy:7890',
+  });
+  expect(unmanagedInherited).toMatchObject({
+    KEEP: 'unchanged',
+    HTTP_PROXY: 'http://system.proxy:7890',
+    GRPC_PROXY: 'http://system.proxy:7890',
+  });
   const changed = settings('127.0.0.1:7888');
   expect(resolveNetwork(changed, 'a', 2).fingerprint).not.toBe(a.fingerprint);
   expect(resolveNetwork(changed, 'b', 2).fingerprint).toBe(b.fingerprint);
