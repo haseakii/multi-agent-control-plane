@@ -37,6 +37,7 @@ import {
   ChevronDown,
   Search,
   MoreHorizontal,
+  Shield,
   X,
 } from 'lucide-react';
 import {
