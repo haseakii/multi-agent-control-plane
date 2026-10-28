@@ -3,6 +3,20 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { redactPermissionValue, type PermissionSemantics } from './permission-review.js';
 
+export function isAntigravityAgent(
+  agentInfo: { name: string; version: string } | null | undefined,
+): boolean {
+  if (!agentInfo) return false;
+  const name = agentInfo.name.toLowerCase();
+  const isName =
+    name === 'antigravity-acp' ||
+    name === 'antigravity' ||
+    name.startsWith('antigravity-') ||
+    name.includes('antigravity');
+  if (!isName) return false;
+  return /^1(\.\d+)+(-[\w.-]+)?$/.test(agentInfo.version);
+}
+
 const RequestSchema = z
   .object({
     sessionId: z.string().min(1),
@@ -19,6 +33,9 @@ const CommandSchema = z
       .max(768)
       .refine((path) => win32.isAbsolute(path) || posix.isAbsolute(path)),
     WaitMsBeforeAsync: z.number().int().nonnegative().optional(),
+    toolSummary: z.string().max(768).optional(),
+    IsDaemon: z.boolean().optional(),
+    description: z.string().max(768).optional(),
   })
   .strict();
 
@@ -35,7 +52,7 @@ export function resolveNativeCommandPermission(request: {
   const parsed = RequestSchema.safeParse(request);
   if (!parsed.success) return null;
   const { agentInfo, toolCall } = parsed.data;
-  if (agentInfo?.name !== 'antigravity-acp' || agentInfo.version !== '1.4.1') return null;
+  if (!isAntigravityAgent(agentInfo)) return null;
   if (toolCall.kind !== 'execute' || Object.hasOwn(toolCall, '_meta')) return null;
   if (Object.hasOwn(toolCall, 'name') && toolCall.name !== 'run_command') return null;
   const input = CommandSchema.safeParse(toolCall.rawInput);
@@ -47,7 +64,7 @@ export function resolveNativeCommandPermission(request: {
     parameters: {
       command: input.data.CommandLine,
       workingDirectory: input.data.Cwd,
-      identitySource: 'antigravity-acp@1.4.1:native-command-envelope',
+      identitySource: `${agentInfo!.name}@${agentInfo!.version}:native-command-envelope`,
       confinement: 'unavailable',
     },
   };
@@ -63,6 +80,7 @@ const EditSchema = z
     AllowMultiple: z.boolean(),
     Description: z.string().max(768),
     Instruction: z.string().max(768),
+    toolSummary: z.string().max(768).optional(),
   })
   .strict()
   .refine((input) => input.EndLine >= input.StartLine);
@@ -84,6 +102,7 @@ const CreateSchema = z
     Overwrite: z.boolean(),
     Instruction: z.string().max(768).optional(),
     TargetFile: CommandSchema.shape.Cwd,
+    toolSummary: z.string().max(768).optional(),
   })
   .strict();
 const CreateDiffSchema = z
@@ -101,8 +120,7 @@ function nativeEdit(request: NativeRequest) {
   if (!parsed.success) return null;
   const { agentInfo, toolCall } = parsed.data;
   if (
-    agentInfo?.name !== 'antigravity-acp' ||
-    agentInfo.version !== '1.4.1' ||
+    !isAntigravityAgent(agentInfo) ||
     toolCall.kind !== 'edit' ||
     Object.hasOwn(toolCall, '_meta') ||
     (Object.hasOwn(toolCall, 'name') && toolCall.name !== 'edit_file')
@@ -126,8 +144,7 @@ function nativeCreate(request: NativeRequest) {
   if (!parsed.success) return null;
   const { agentInfo, toolCall } = parsed.data;
   if (
-    agentInfo?.name !== 'antigravity-acp' ||
-    agentInfo.version !== '1.4.1' ||
+    !isAntigravityAgent(agentInfo) ||
     toolCall.kind !== 'edit' ||
     Object.hasOwn(toolCall, '_meta') ||
     (Object.hasOwn(toolCall, 'name') && toolCall.name !== 'create_file')
@@ -199,7 +216,7 @@ export function resolveNativeToolPermission(request: NativeRequest): PermissionS
       action: 'file.write',
       target: create.TargetFile,
       parameters: {
-        identitySource: 'antigravity-acp@1.4.1:native-create-envelope',
+        identitySource: `${request.agentInfo?.name ?? 'antigravity-acp'}@${request.agentInfo?.version ?? '1.4.1'}:native-create-envelope`,
         fileOperation: 'write',
         overwrite: create.Overwrite,
         confinement: 'unavailable',
@@ -212,7 +229,7 @@ export function resolveNativeToolPermission(request: NativeRequest): PermissionS
     action: 'file.write',
     target: input.TargetFile,
     parameters: {
-      identitySource: 'antigravity-acp@1.4.1:native-edit-envelope',
+      identitySource: `${request.agentInfo?.name ?? 'antigravity-acp'}@${request.agentInfo?.version ?? '1.4.1'}:native-edit-envelope`,
       fileOperation: 'write',
       confinement: 'unavailable',
     },

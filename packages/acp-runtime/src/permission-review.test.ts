@@ -170,4 +170,24 @@ describe('bounded ACP permission review', () => {
     expect(Buffer.byteLength(JSON.stringify(review))).toBeLessThanOrEqual(16384);
     expect(JSON.stringify(review)).not.toContain('\uFFFD');
   });
+
+  it('infers tool, action, and target in generic fallback when resolver is not provided', () => {
+    const c = new PermissionReviewCollector();
+    const executeCall = {
+      toolCallId: 'call-1',
+      kind: 'execute',
+      title: '调试',
+      rawInput: {
+        CommandLine: 'dir C:\\Users\\admin\\.gemini\\mcp\\fleet',
+        Cwd: 'C:\\Users\\admin\\workspace',
+        toolSummary: '调试',
+      },
+    };
+    const review = c.review('one', executeCall, permissionWireShape(executeCall));
+    expect(review.status).toBe('complete');
+    expect(review.tool).toBe('run_command');
+    expect(review.action).toBe('process.execute');
+    expect(review.target).toBe('C:\\Users\\admin\\workspace');
+    expect(review.reasons).toEqual([]);
+  });
 });

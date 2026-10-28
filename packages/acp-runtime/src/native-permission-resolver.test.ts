@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
 import {
+  isAntigravityAgent,
   resolveNativeCommandPermission,
   resolveNativeToolPermission,
   validateNativeEditMetadata,
@@ -351,5 +352,44 @@ describe('pinned native file edit review', () => {
     expect(collector().review('session', mismatch, permissionWireShape(mismatch)).status).not.toBe(
       'complete',
     );
+  });
+
+  it('validates Antigravity agent identities and versions', () => {
+    expect(isAntigravityAgent({ name: 'antigravity-acp', version: '1.4.1' })).toBe(true);
+    expect(isAntigravityAgent({ name: 'antigravity-acp', version: '1.3.5' })).toBe(true);
+    expect(isAntigravityAgent({ name: 'antigravity-acp', version: '1.4.3' })).toBe(true);
+    expect(isAntigravityAgent({ name: 'antigravity', version: '1.3.5' })).toBe(true);
+    expect(isAntigravityAgent({ name: 'antigravity-acp', version: 'next' })).toBe(false);
+    expect(isAntigravityAgent({ name: 'other', version: '1.4.1' })).toBe(false);
+    expect(isAntigravityAgent(null)).toBe(false);
+    expect(isAntigravityAgent(undefined)).toBe(false);
+  });
+
+  it('resolves native commands with toolSummary and daemon flags across Antigravity 1.x versions', () => {
+    for (const version of ['1.4.1', '1.3.5', '1.4.3']) {
+      const result = resolveNativeCommandPermission({
+        sessionId: 'session',
+        agentInfo: { name: 'antigravity-acp', version },
+        toolCall: {
+          ...call,
+          rawInput: {
+            ...call.rawInput,
+            toolSummary: '调试',
+            IsDaemon: false,
+            description: 'Run dir on fleet mcp directory',
+          },
+        },
+      });
+      expect(result).toMatchObject({
+        tool: 'run_command',
+        action: 'process.execute',
+        target: 'D:\\example',
+        parameters: {
+          command: 'Get-ChildItem',
+          workingDirectory: 'D:\\example',
+          identitySource: `antigravity-acp@${version}:native-command-envelope`,
+        },
+      });
+    }
   });
 });
