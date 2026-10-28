@@ -40,7 +40,7 @@ export function AgentPermissions({ projectId }: { projectId: string }) {
   );
 }
 
-function AgentPermissionsDialog({
+export function AgentPermissionsDialog({
   projectId,
   onClose,
 }: {

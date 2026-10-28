@@ -1,6 +1,6 @@
 import { existsSync, statSync } from 'node:fs';
 import { createConnection } from 'node:net';
-import { delimiter, join } from 'node:path';
+import { basename, delimiter, join } from 'node:path';
 import { z } from 'zod';
 
 export const DetectedAgentCLISchema = z.object({
@@ -35,7 +35,16 @@ export const KNOWN_CLIS: KnownCLIDefinition[] = [
   {
     id: 'antigravity',
     name: 'Google Antigravity',
-    binaryNames: ['agy', 'agy.cmd', 'agy.exe', 'agy.bat'],
+    binaryNames: [
+      'agy',
+      'agy.cmd',
+      'agy.exe',
+      'agy.bat',
+      'antigravity',
+      'antigravity.cmd',
+      'antigravity.exe',
+      'antigravity.bat',
+    ],
     recommendedArgs: [],
     description: 'Google Antigravity 官方 CLI，原生支持 ACP 协议与多模型协作。',
   },
@@ -119,9 +128,13 @@ export function detectInstalledAgentCLIs(
     const isRegistered =
       normalizedRegistered.has(baseCmd.toLowerCase()) ||
       (resolvedPath ? normalizedRegistered.has(resolvedPath.toLowerCase()) : false) ||
-      registeredAgentCommands.some((c) =>
-        cli.binaryNames.some((b) => c.toLowerCase().endsWith(b.toLowerCase())),
-      );
+      registeredAgentCommands.some((c) => {
+        const fileBase = basename(c).toLowerCase();
+        const baseNoExt = fileBase.replace(/\.(cmd|exe|bat)$/i, '');
+        return cli.binaryNames.some(
+          (b) => fileBase === b.toLowerCase() || baseNoExt === b.toLowerCase(),
+        );
+      });
 
     return {
       id: cli.id,

@@ -105,7 +105,7 @@ import {
 } from './session-setting-values';
 import { readTaskExecutionActive } from './session-settings';
 import { conversationControlKeys } from './conversation-control-keys';
-import { AgentPermissions, Policy } from './agent-permissions';
+import { AgentPermissions, AgentPermissionsDialog, Policy } from './agent-permissions';
 import { ExecutionDetails } from './execution-details';
 import { TaskFeedback } from './task-feedback';
 import { ApprovalCard, ApprovalDialog, InlineApprovalCard } from './approval-card';
@@ -433,6 +433,7 @@ function Workbench() {
   const [fileFocus, setFileFocus] = useState<FileFocus | null>(null);
   const [reviewFocus, setReviewFocus] = useState<{ taskId: string }>();
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const [permissionsOpen, setPermissionsOpen] = useState(false);
   const moreMenuRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!moreMenuOpen) return;
@@ -1679,7 +1680,16 @@ function Workbench() {
 
                       {moreMenuOpen && (
                         <div className={s.moreMenuDropdown} role="menu">
-                          <AgentPermissions key={root.projectId} projectId={root.projectId} />
+                          <button
+                            type="button"
+                            className={s.moreMenuItem}
+                            onClick={() => {
+                              setMoreMenuOpen(false);
+                              setPermissionsOpen(true);
+                            }}
+                          >
+                            <Shield size={14} /> 项目权限设置
+                          </button>
                           {currentProject && (
                             <button
                               type="button"
@@ -2087,6 +2097,12 @@ function Workbench() {
           busy={sending}
           onDecide={(id, decision) => void action(() => decideApproval(id, decision))}
           onClose={() => setApprovalTarget(undefined)}
+        />
+      )}
+      {permissionsOpen && root && (
+        <AgentPermissionsDialog
+          projectId={root.projectId}
+          onClose={() => setPermissionsOpen(false)}
         />
       )}
       {externalClientsOpen && (

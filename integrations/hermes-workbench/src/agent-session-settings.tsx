@@ -971,6 +971,10 @@ export function CompactRuntimePills({
 
   const handleSelectModel = (val: string) => {
     if (!onChange || disabled || settingsLocked) return;
+    if (!cachedModels.some((m) => m.value.toLowerCase() === val.toLowerCase())) {
+      writeLocalModelCache(agentId, [{ value: val, name: val }]);
+      setCachedModels(readLocalModelCache(agentId, agentName));
+    }
     onChange({ ...(inheritedValues || {}), ...(values || {}), model: val });
     setOpenModelPicker(false);
   };

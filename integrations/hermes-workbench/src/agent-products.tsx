@@ -645,12 +645,15 @@ export function AgentProducts({
                           onClick={async () => {
                             try {
                               setBusy(true);
+                              const targetId = knownMembers.some((m) => m.definition.id === cli.id)
+                                ? `${cli.id}-${Date.now().toString(36)}`
+                                : cli.id;
                               const created = await fetchJSON(
                                 '/api/agents',
                                 {
                                   method: 'POST',
                                   body: JSON.stringify({
-                                    id: cli.id,
+                                    id: targetId,
                                     name: cli.name,
                                     enabled: true,
                                     runtime: {
