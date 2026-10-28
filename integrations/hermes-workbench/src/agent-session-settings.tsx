@@ -1001,7 +1001,7 @@ export function CompactRuntimePills({
     : cachedModels;
 
   return (
-    <div className={s.compactBar} aria-label="执行设置">
+    <section className={s.compactBar} aria-label={taskId ? '本轮运行设置' : '下次发送的运行设置'}>
       <div className={s.pillsGroup}>
         {/* Agent Pill */}
         <button
@@ -1161,7 +1161,7 @@ export function CompactRuntimePills({
           />,
           document.body,
         )}
-    </div>
+    </section>
   );
 }
 
