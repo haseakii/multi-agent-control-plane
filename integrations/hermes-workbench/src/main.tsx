@@ -35,6 +35,9 @@ import {
   Minimize2,
   ChevronUp,
   ChevronDown,
+  Search,
+  MoreHorizontal,
+  X,
 } from 'lucide-react';
 import {
   artifactUrl,
@@ -102,10 +105,10 @@ import {
 } from './session-setting-values';
 import { readTaskExecutionActive } from './session-settings';
 import { conversationControlKeys } from './conversation-control-keys';
-import { AgentPermissions } from './agent-permissions';
+import { AgentPermissions, Policy } from './agent-permissions';
 import { ExecutionDetails } from './execution-details';
 import { TaskFeedback } from './task-feedback';
-import { ApprovalCard, ApprovalDialog } from './approval-card';
+import { ApprovalCard, ApprovalDialog, InlineApprovalCard } from './approval-card';
 import { PermissionNotice } from './permission-notice';
 import { workbenchError } from './workbench-error';
 import { WorkspaceReviewPanel } from './workspace-review';
@@ -429,6 +432,18 @@ function Workbench() {
   const [previewOpened, setPreviewOpened] = useState(false);
   const [fileFocus, setFileFocus] = useState<FileFocus | null>(null);
   const [reviewFocus, setReviewFocus] = useState<{ taskId: string }>();
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const moreMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!moreMenuOpen) return;
+    function handleClickOutside(e: MouseEvent) {
+      if (moreMenuRef.current && !moreMenuRef.current.contains(e.target as Node)) {
+        setMoreMenuOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [moreMenuOpen]);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     try {
       return localStorage.getItem('hermes.workbench.sidebarCollapsed') === 'true';
@@ -1062,63 +1077,68 @@ function Workbench() {
             </span>
           </div>
           <div className={s.taskSearch}>
-            <select
-              aria-label="按项目查看任务"
-              value={taskProject}
-              disabled={renamingId !== null}
-              onChange={(event) => setTaskProject(event.target.value)}
-            >
-              <option value="">全部项目</option>
-              {taskProject && !historyProjects.some((project) => project.id === taskProject) && (
-                <option value={taskProject}>当前筛选项目（暂无任务）</option>
-              )}
-              {historyProjects.map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.name}（{project.count}）
-                </option>
-              ))}
-            </select>
-            <input
-              type="search"
-              aria-label="搜索历史任务"
-              placeholder="搜索任务、项目或成员"
-              value={taskSearch}
-              disabled={renamingId !== null}
-              onChange={(event) => setTaskSearch(event.target.value)}
-            />
-            <select
-              aria-label="任务状态筛选"
-              value={taskFilter}
-              disabled={renamingId !== null}
-              onChange={(event) => setTaskFilter(event.target.value as ConversationFilter)}
-            >
-              <option value="all">全部任务</option>
-              <option value="active">进行中</option>
-              <option value="attention">
-                待处理{attentionCount ? `（${attentionCount}）` : ''}
-              </option>
-              <option value="completed">已完成</option>
-              <option value="failed">失败或受阻</option>
-              <option value="draft">草稿</option>
-              <option value="cancelled">已停止</option>
-            </select>
-            {conversation && taskProject !== conversation.projectId && (
-              <button
-                type="button"
+            <div className={s.searchInputWrapper}>
+              <Search size={13} className={s.searchIcon} />
+              <input
+                type="search"
+                aria-label="搜索历史任务"
+                placeholder="搜索任务、项目或成员"
+                value={taskSearch}
                 disabled={renamingId !== null}
-                onClick={() => {
-                  setTaskProject(conversation.projectId);
-                  setTaskSearch('');
-                  setTaskFilter('all');
-                }}
-              >
-                只看当前会话的项目
-              </button>
-            )}
-            {(taskSearch || taskFilter !== 'all' || taskProject) && (
-              <button type="button" disabled={renamingId !== null} onClick={clearTaskFilter}>
-                清除筛选
-              </button>
+                onChange={(event) => setTaskSearch(event.target.value)}
+              />
+              {(taskSearch || taskFilter !== 'all' || taskProject) && (
+                <button
+                  type="button"
+                  className={s.clearSearchButton}
+                  title="清除所有筛选"
+                  disabled={renamingId !== null}
+                  onClick={clearTaskFilter}
+                >
+                  <X size={12} />
+                </button>
+              )}
+            </div>
+            {(taskProject || taskFilter !== 'all') && (
+              <div className={s.activeFilterTags}>
+                {taskProject && (
+                  <span className={s.filterTag}>
+                    {historyProjects.find((project) => project.id === taskProject)?.name ??
+                      '已选项目'}
+                    <button
+                      type="button"
+                      aria-label="清除项目筛选"
+                      onClick={() => setTaskProject('')}
+                    >
+                      ×
+                    </button>
+                  </span>
+                )}
+                {taskFilter !== 'all' && (
+                  <span className={s.filterTag}>
+                    {taskFilter === 'active'
+                      ? '进行中'
+                      : taskFilter === 'attention'
+                        ? '待处理'
+                        : taskFilter === 'completed'
+                          ? '已完成'
+                          : taskFilter === 'failed'
+                            ? '失败/受阻'
+                            : taskFilter === 'draft'
+                              ? '草稿'
+                              : taskFilter === 'cancelled'
+                                ? '已停止'
+                                : taskFilter}
+                    <button
+                      type="button"
+                      aria-label="清除状态筛选"
+                      onClick={() => setTaskFilter('all')}
+                    >
+                      ×
+                    </button>
+                  </span>
+                )}
+              </div>
             )}
           </div>
           <nav aria-label="任务列表">
@@ -1142,14 +1162,18 @@ function Workbench() {
                       onClick={() => select(task.id)}
                     >
                       <span>{task.title}</span>
-                      <small
-                        className={s.taskProject}
-                        title={
-                          historyProjects.find((project) => project.id === task.projectId)?.name
-                        }
-                      >
-                        {historyProjects.find((project) => project.id === task.projectId)?.name}
-                      </small>
+                      {historyProjects.find((project) => project.id === task.projectId)?.name && (
+                        <span
+                          className={s.taskProjectTag}
+                          title={`项目：${historyProjects.find((project) => project.id === task.projectId)?.name}（点击筛选此项目）`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setTaskProject(task.projectId);
+                          }}
+                        >
+                          {historyProjects.find((project) => project.id === task.projectId)?.name}
+                        </span>
+                      )}
                       <small data-state={needsAttention(task) ? 'attention' : task.state}>
                         {stateLabel(task.state)}
                         {task.pendingReview ? ' · 待审阅' : task.pendingApproval ? ' · 待确认' : ''}
@@ -1614,20 +1638,24 @@ function Workbench() {
                     </button>
                   </nav>
                   <div className={s.taskUtilities}>
-                    <button
-                      type="button"
-                      aria-pressed={headerCollapsed}
-                      onClick={() => setHeaderCollapsed((prev) => !prev)}
-                      title={
-                        headerCollapsed
-                          ? '展开顶部导航 (Ctrl+Shift+H)'
-                          : '收起顶部导航 (Ctrl+Shift+H)'
-                      }
-                      aria-label={headerCollapsed ? '展开顶部导航' : '收起顶部导航'}
-                    >
-                      {headerCollapsed ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
-                      {headerCollapsed ? '展开头部' : '收起头部'}
-                    </button>
+                    {artifacts.length > 0 && (
+                      <button
+                        aria-pressed={rail === 'results'}
+                        onClick={() => setRail(rail === 'results' ? null : 'results')}
+                        title={`查看产物 (${artifacts.length})`}
+                      >
+                        <FileText size={15} /> 产物 {artifacts.length}
+                      </button>
+                    )}
+                    {allSubagents.length > 0 && (
+                      <button
+                        aria-pressed={rail === 'agents'}
+                        onClick={() => setRail(rail === 'agents' ? null : 'agents')}
+                        title={`查看协作 (${allSubagents.length})`}
+                      >
+                        <Users size={15} /> 协作 {allSubagents.length}
+                      </button>
+                    )}
 
                     <button
                       type="button"
@@ -1638,30 +1666,74 @@ function Workbench() {
                       {reading ? '退出阅读（Esc）' : '放大对话'}
                     </button>
 
-                    <button
-                      aria-pressed={rail === 'agents'}
-                      onClick={() => setRail(rail === 'agents' ? null : 'agents')}
-                    >
-                      <Users size={15} /> 协作 {allSubagents.length}
-                    </button>
-                    <button
-                      aria-pressed={rail === 'results'}
-                      onClick={() => setRail(rail === 'results' ? null : 'results')}
-                    >
-                      <FileText size={15} /> 产物 {artifacts.length}
-                    </button>
-                    {currentProject && (
+                    <div className={s.moreUtilitiesWrapper} ref={moreMenuRef}>
                       <button
                         type="button"
-                        disabled={sending}
-                        onClick={() =>
-                          openNewTask({ kind: 'saved-project', projectId: currentProject.id })
-                        }
+                        aria-label="更多任务操作"
+                        aria-expanded={moreMenuOpen}
+                        onClick={() => setMoreMenuOpen((prev) => !prev)}
+                        title="更多操作"
                       >
-                        <Plus size={14} /> 在此项目新建任务
+                        <MoreHorizontal size={16} />
                       </button>
-                    )}
-                    <AgentPermissions key={root.projectId} projectId={root.projectId} />
+
+                      {moreMenuOpen && (
+                        <div className={s.moreMenuDropdown} role="menu">
+                          <AgentPermissions key={root.projectId} projectId={root.projectId} />
+                          {currentProject && (
+                            <button
+                              type="button"
+                              className={s.moreMenuItem}
+                              disabled={sending}
+                              onClick={() => {
+                                setMoreMenuOpen(false);
+                                openNewTask({
+                                  kind: 'saved-project',
+                                  projectId: currentProject.id,
+                                });
+                              }}
+                            >
+                              <Plus size={14} /> 在此项目新建任务
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            className={s.moreMenuItem}
+                            onClick={() => {
+                              setMoreMenuOpen(false);
+                              setHeaderCollapsed((prev) => !prev);
+                            }}
+                          >
+                            {headerCollapsed ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+                            {headerCollapsed ? '展开顶部导航' : '收起顶部导航 (Ctrl+Shift+H)'}
+                          </button>
+                          {artifacts.length === 0 && (
+                            <button
+                              type="button"
+                              className={s.moreMenuItem}
+                              onClick={() => {
+                                setMoreMenuOpen(false);
+                                setRail(rail === 'results' ? null : 'results');
+                              }}
+                            >
+                              <FileText size={14} /> 查看产物列表
+                            </button>
+                          )}
+                          {allSubagents.length === 0 && (
+                            <button
+                              type="button"
+                              className={s.moreMenuItem}
+                              onClick={() => {
+                                setMoreMenuOpen(false);
+                                setRail(rail === 'agents' ? null : 'agents');
+                              }}
+                            >
+                              <Users size={14} /> 查看协作面板
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1809,7 +1881,7 @@ function Workbench() {
                                         </button>
                                       </div>
                                     ) : (
-                                      <ApprovalCard
+                                      <InlineApprovalCard
                                         key={a.id}
                                         approval={a}
                                         taskTitle={
@@ -1820,6 +1892,36 @@ function Workbench() {
                                         onDecide={(id, decision) =>
                                           void action(() => decideApproval(id, decision))
                                         }
+                                        onTrustRule={async () => {
+                                          if (!root?.projectId) return;
+                                          try {
+                                            const url = `/api/projects/${encodeURIComponent(root.projectId)}/policy`;
+                                            const current = await fetchJSON(url, undefined, Policy);
+                                            if (current) {
+                                              await fetchJSON(
+                                                url,
+                                                {
+                                                  method: 'PUT',
+                                                  body: JSON.stringify({
+                                                    expectedRevision: current.revision,
+                                                    tools: current.tools,
+                                                    gitMerge: current.gitMerge,
+                                                    gitPush: current.gitPush,
+                                                    requireEnforcedExecution:
+                                                      current.requireEnforcedExecution,
+                                                    agentPermissions: {
+                                                      ...current.agentPermissions,
+                                                      workspaceFiles: 'auto' as const,
+                                                    },
+                                                  }),
+                                                },
+                                                Policy,
+                                              );
+                                            }
+                                          } catch {
+                                            // non-blocking
+                                          }
+                                        }}
                                       />
                                     ),
                                   )}

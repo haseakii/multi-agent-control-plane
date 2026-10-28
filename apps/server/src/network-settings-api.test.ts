@@ -73,6 +73,17 @@ it('uses strict atomic network settings without spawning members or altering rea
       auth: 'unknown',
     });
     expect(spawn).not.toHaveBeenCalled();
+
+    const proxyDetect = (
+      await app.inject({ method: 'GET', url: '/api/system/network/proxy-detection' })
+    ).json();
+    expect(proxyDetect).toHaveProperty('detected');
+
+    const agentDiscovery = (
+      await app.inject({ method: 'GET', url: '/api/system/agents/auto-discovery' })
+    ).json();
+    expect(agentDiscovery).toHaveProperty('agents');
+    expect(Array.isArray(agentDiscovery.agents)).toBe(true);
   } finally {
     await app.close();
     await runtime.close();

@@ -589,3 +589,103 @@
   font-size: 13px;
   margin-bottom: 12px;
 }
+
+/* Auto-discovery and proxy tip */
+.proxyTipBanner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  border-radius: 8px;
+  background: #fdf6ec;
+  border: 1px solid #f9e2ae;
+  color: #8c6014;
+  font-size: 12px;
+}
+.applyProxyBtn {
+  padding: 4px 10px;
+  border: 1px solid #e76b3f;
+  border-radius: 6px;
+  background: #e76b3f;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.autoDiscoveredSection {
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border: 1px solid #d4e8dd;
+  border-radius: 10px;
+  background: #f4faf6;
+}
+.autoDiscoveredHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 13px;
+  color: #276241;
+}
+.autoDiscoveredHeader span {
+  font-size: 11px;
+  color: #4b8565;
+}
+.autoDiscoveredGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 10px;
+}
+.autoDiscoveredCard {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid #dcece3;
+  border-radius: 8px;
+  background: #fff;
+}
+.autoDiscoveredInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.autoDiscoveredInfo strong {
+  font-size: 13px;
+  color: #1f2937;
+}
+.autoDiscoveredInfo p {
+  margin: 0;
+  font-size: 11px;
+  color: #6b7280;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.autoDiscoveredInfo code {
+  font-size: 10px;
+  color: #8a909d;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.oneClickAddBtn {
+  padding: 6px 12px;
+  border: 1px solid #2e8555;
+  border-radius: 6px;
+  background: #2e8555;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.oneClickAddBtn:hover:not(:disabled) {
+  background: #236943;
+}

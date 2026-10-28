@@ -1,5 +1,6 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { ShieldAlert, Terminal, AlertTriangle, ShieldCheck } from 'lucide-react';
 import type { SnapshotData } from './adapter';
 import { PermissionEditPreview } from './permission-edit-preview';
 import { approvalOutcome, approvalSummary } from './approval-summary';
@@ -11,6 +12,133 @@ type Props = {
   busy: boolean;
   onDecide: (id: string, decision: 'approve' | 'reject') => void;
 };
+
+export type InlineApprovalProps = Props & {
+  onTrustRule?: (approval: Approval) => Promise<void> | void;
+};
+
+export function InlineApprovalCard({
+  approval: a,
+  taskTitle,
+  busy,
+  onDecide,
+  onTrustRule,
+}: InlineApprovalProps) {
+  const [trustSimilar, setTrustSimilar] = useState(false);
+  const summary = approvalSummary(a.resource);
+  const pending = a.state === 'pending';
+  const outcome = approvalOutcome(a.state);
+  const stale =
+    Date.now() > Date.parse(a.decisionEligibility.checkedAt) + a.decisionEligibility.validForMs;
+
+  const handleApprove = async () => {
+    if (trustSimilar && onTrustRule) {
+      await onTrustRule(a);
+    }
+    onDecide(a.id, 'approve');
+  };
+
+  if (!pending) {
+    return (
+      <div className={s.inlineCardResolved} role="status">
+        <ShieldCheck size={15} className={s.resolvedIcon} />
+        <span>
+          {outcome.title}：{outcome.message}
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div className={s.inlineCard} role="alert" aria-label={`操作确认：${summary.title}`}>
+      <div className={s.inlineHeader}>
+        <div className={s.inlineTitleRow}>
+          <ShieldAlert size={16} className={s.inlineAlertIcon} />
+          <strong>操作确认请求</strong>
+          <span className={s.inlineSubtitle}>{summary.title}</span>
+        </div>
+        {summary.expiresAt && (
+          <span className={s.expireTag}>
+            请在 {new Date(summary.expiresAt).toLocaleTimeString('zh-CN', { hour12: false })} 前处理
+          </span>
+        )}
+      </div>
+
+      <div className={s.inlineBody}>
+        {a.acp?.review.action === 'process.execute' ? (
+          <div className={s.commandBox}>
+            <div className={s.commandHeader}>
+              <Terminal size={13} />
+              <span>请求执行命令</span>
+            </div>
+            <code>{summary.command ?? '未提供完整命令'}</code>
+            {summary.directory && (
+              <small className={s.directoryHint}>工作目录：{summary.directory}</small>
+            )}
+          </div>
+        ) : (
+          <div className={s.targetBox}>
+            <span className={s.targetLabel}>操作目标：</span>
+            <code>{summary.target ?? a.acp?.review.target ?? '文件或资源操作'}</code>
+          </div>
+        )}
+
+        {summary.risk && (
+          <div className={s.inlineRisk}>
+            <AlertTriangle size={13} className={s.riskIcon} />
+            <span>{summary.risk}</span>
+          </div>
+        )}
+
+        <PermissionEditPreview resource={a.resource} />
+
+        <details className={s.inlineDetails}>
+          <summary>技术参数与执行边界</summary>
+          <dl>
+            <dt>工具</dt>
+            <dd>{a.acp?.review.tool ?? '未提供'}</dd>
+            <dt>操作</dt>
+            <dd>{a.acp?.review.action ?? a.action}</dd>
+            <dt>边界</dt>
+            <dd>
+              {a.boundary ?? '未提供'} · {a.enforcementMode}
+            </dd>
+          </dl>
+          <pre>{JSON.stringify(a.resource, null, 2)}</pre>
+        </details>
+      </div>
+
+      <div className={s.inlineFooter}>
+        <label className={s.trustCheckbox}>
+          <input
+            type="checkbox"
+            checked={trustSimilar}
+            onChange={(e) => setTrustSimilar(e.target.checked)}
+          />
+          <span>本任务内自动批准同类操作（保留审计记录）</span>
+        </label>
+        <div className={s.buttonGroup}>
+          <button
+            type="button"
+            className={s.rejectBtn}
+            disabled={busy || !a.decisionEligibility.canReject}
+            onClick={() => onDecide(a.id, 'reject')}
+          >
+            拒绝
+          </button>
+          <button
+            type="button"
+            className={s.approveBtn}
+            disabled={busy || !a.decisionEligibility.canApprove || stale}
+            onClick={() => void handleApprove()}
+          >
+            允许本次
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 export function ApprovalCard({ approval: a, taskTitle, busy, onDecide }: Props) {
   const summary = approvalSummary(a.resource);
   const pending = a.state === 'pending';

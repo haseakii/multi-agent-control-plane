@@ -147,11 +147,81 @@
   flex: 1;
 }
 .taskSearch {
-  display: grid;
-  gap: 8px;
-  margin: 0 0 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 0 10px;
 }
-.taskSearch input,
+.searchInputWrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+.searchIcon {
+  position: absolute;
+  left: 9px;
+  color: var(--h-text-3);
+  pointer-events: none;
+}
+.taskSearch input {
+  min-width: 0;
+  width: 100%;
+  padding: 7px 28px 7px 28px;
+  border: 1px solid var(--h-line);
+  border-radius: 8px;
+  background: var(--h-bg-pane);
+  color: var(--h-text);
+  font: inherit;
+  font-size: 12px;
+}
+.clearSearchButton {
+  position: absolute;
+  right: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 50%;
+  background: var(--h-bg-soft);
+  color: var(--h-text-3);
+  cursor: pointer;
+  padding: 0;
+}
+.clearSearchButton:hover {
+  color: var(--h-text);
+  background: var(--h-line);
+}
+.activeFilterTags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.filterTag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border: 1px solid var(--h-line);
+  border-radius: 12px;
+  background: var(--h-bg-soft);
+  color: var(--h-text-2);
+  font-size: 11px;
+}
+.filterTag button {
+  border: none;
+  background: transparent;
+  color: var(--h-text-3);
+  cursor: pointer;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1;
+}
+.filterTag button:hover {
+  color: var(--h-text);
+}
 .taskSearch select,
 .taskSearch button {
   min-width: 0;
@@ -445,6 +515,66 @@
 .taskHeader .taskUtilities button[aria-pressed='true'] {
   color: var(--h-text);
   border-color: var(--h-line);
+}
+.moreUtilitiesWrapper {
+  position: relative;
+  display: inline-flex;
+}
+.moreMenuDropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 1000;
+  min-width: 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  background: var(--h-bg-pane);
+  border: 1px solid var(--h-line);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  animation: popoverFadeIn 0.12s ease-out;
+}
+.moreMenuItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--h-text);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+}
+.moreMenuItem:hover {
+  background: var(--h-bg-soft);
+}
+.inlineApprovalsArea {
+  margin: 4px 0;
+}
+.taskProjectTag {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--h-bg-soft);
+  color: var(--h-text-3);
+  font-size: 11px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+}
+.taskProjectTag:hover {
+  background: var(--h-line);
+  color: var(--h-text);
 }
 .statePill {
   display: inline-block;

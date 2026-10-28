@@ -5,13 +5,13 @@ import { Shield, X } from 'lucide-react';
 import { fetchJSON } from '@/lib/transport';
 import s from './agent-permissions.module.css';
 
-const Rules = z.object({
+export const Rules = z.object({
   workspaceFiles: z.enum(['ask', 'auto', 'deny']),
   commands: z.enum(['ask', 'deny']),
   outsideWorkspace: z.enum(['ask', 'deny']),
 });
 
-const Policy = z.object({
+export const Policy = z.object({
   revision: z.number(),
   tools: z.record(z.string(), z.enum(['allow', 'deny'])),
   gitMerge: z.enum(['ask', 'deny']),

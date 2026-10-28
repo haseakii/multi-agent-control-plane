@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { NetworkSettingsError, type NetworkSettingsService } from './network-settings.js';
 import { SaveNetworkSettingsSchema } from '@control-plane/core';
+import { detectLocalProxy } from './agent-auto-discovery.js';
 export function registerNetworkSettingsRoutes(
   app: FastifyInstance,
   service: NetworkSettingsService,
@@ -19,6 +20,14 @@ export function registerNetworkSettingsRoutes(
       return service.view();
     } catch (error) {
       return fail(reply, error);
+    }
+  });
+  app.get('/api/system/network/proxy-detection', async (_request, reply) => {
+    reply.header('cache-control', 'no-store');
+    try {
+      return await detectLocalProxy();
+    } catch {
+      return reply.send({ detected: false });
     }
   });
   app.patch('/api/system/network', async (request, reply) => {

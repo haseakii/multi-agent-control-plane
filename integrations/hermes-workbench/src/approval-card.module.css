@@ -235,3 +235,245 @@
     font-size: 17px;
   }
 }
+
+/* Inline approval card styles */
+.inlineCard {
+  margin: 12px 16px;
+  border: 1px solid #e76b3f40;
+  border-left: 4px solid #e76b3f;
+  border-radius: 12px;
+  background: var(--h-bg-pane, #fff);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
+  overflow: hidden;
+  font-size: 13px;
+  animation: inlineCardSlide 0.15s ease-out;
+}
+
+@keyframes inlineCardSlide {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.inlineHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  background: color-mix(in srgb, #e76b3f 8%, var(--h-bg-pane, #fff));
+  border-bottom: 1px solid #e76b3f20;
+}
+
+.inlineTitleRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.inlineAlertIcon {
+  color: #e76b3f;
+  flex-shrink: 0;
+}
+
+.inlineSubtitle {
+  font-size: 12px;
+  color: var(--h-text-muted, #7b776f);
+}
+
+.expireTag {
+  font-size: 11px;
+  color: var(--h-text-muted, #7b776f);
+  white-space: nowrap;
+}
+
+.inlineBody {
+  padding: 12px 14px;
+}
+
+.commandBox {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.commandHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--h-text-muted, #5f5c56);
+}
+
+.commandBox code {
+  display: block;
+  padding: 10px 12px;
+  border: 1px solid var(--h-border, #d8d4cc);
+  border-radius: 8px;
+  background: #1e1e1e;
+  color: #e6e6e6;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.directoryHint {
+  font-size: 11px;
+  color: var(--h-text-muted, #7b776f);
+}
+
+.targetBox {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.targetLabel {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--h-text-muted, #5f5c56);
+}
+
+.targetBox code {
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--h-bg-soft, #f5f3ee);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+}
+
+.inlineRisk {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: #fdf6ec;
+  color: #b7791f;
+  font-size: 11px;
+}
+
+.riskIcon {
+  flex-shrink: 0;
+}
+
+.inlineDetails {
+  margin-top: 10px;
+  font-size: 11px;
+  color: var(--h-text-muted, #7b776f);
+}
+
+.inlineDetails summary {
+  cursor: pointer;
+  padding: 4px 0;
+  color: var(--h-text-muted, #5f5c56);
+}
+
+.inlineDetails dl {
+  display: grid;
+  grid-template-columns: 4em 1fr;
+  gap: 4px 8px;
+  margin: 6px 0;
+}
+
+.inlineDetails dd {
+  margin: 0;
+}
+
+.inlineDetails pre {
+  margin: 6px 0 0;
+  padding: 8px;
+  border-radius: 6px;
+  background: var(--h-bg-soft, #f7f5f0);
+  font-size: 11px;
+  max-height: 120px;
+  overflow: auto;
+}
+
+.inlineFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--h-bg-soft, #fbfaf8);
+  border-top: 1px solid var(--h-border, #eee);
+}
+
+.trustCheckbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--h-text, #292823);
+  cursor: pointer;
+}
+
+.trustCheckbox input {
+  cursor: pointer;
+}
+
+.buttonGroup {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.rejectBtn {
+  padding: 6px 14px;
+  border: 1px solid var(--h-border, #d8d4cc);
+  border-radius: 6px;
+  background: var(--h-bg-pane, #fff);
+  color: var(--h-text, #292823);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.rejectBtn:hover:not(:disabled) {
+  background: var(--h-bg-soft, #f5f3ee);
+}
+
+.approveBtn {
+  padding: 6px 16px;
+  border: 1px solid #e76b3f;
+  border-radius: 6px;
+  background: #e76b3f;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.approveBtn:hover:not(:disabled) {
+  background: #d65427;
+}
+
+.inlineCardResolved {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 16px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: #3f9b7915;
+  color: #2e694e;
+  font-size: 12px;
+}
+
+.resolvedIcon {
+  color: #38654f;
+  flex-shrink: 0;
+}
