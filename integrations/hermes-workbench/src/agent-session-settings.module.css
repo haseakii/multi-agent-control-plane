@@ -507,6 +507,28 @@
   font-weight: 600;
 }
 
+.settingsTrigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--h-border, #d8d4cc);
+  border-radius: 14px;
+  background: var(--h-bg-pane, #fff);
+  color: var(--h-text, #292823);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.settingsTrigger:hover {
+  border-color: #e76b3f;
+  background: color-mix(in srgb, #e76b3f 6%, var(--h-bg-pane, #fff));
+}
+
 .pillIcon {
   color: #e76b3f;
   flex-shrink: 0;

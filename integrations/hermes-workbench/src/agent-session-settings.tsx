@@ -1119,6 +1119,19 @@ export function CompactRuntimePills({
             </div>
           )}
         </div>
+
+        {/* Settings button to view or open full parameters dialog */}
+        <button
+          type="button"
+          className={s.settingsTrigger}
+          disabled={disabled}
+          onClick={() => setOpenFullSettings(true)}
+          aria-haspopup="dialog"
+        >
+          <SlidersHorizontal size={13} />
+          <span>{settingsLocked ? '查看运行设置' : '运行设置'}</span>
+          {values ? ' · 已选' : ''}
+        </button>
       </div>
 
       {/* Right side status / hint */}
