@@ -1,6 +1,16 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { SlidersHorizontal, RefreshCw, X } from 'lucide-react';
+import {
+  SlidersHorizontal,
+  RefreshCw,
+  X,
+  Bot,
+  Zap,
+  ChevronDown,
+  Settings,
+  Check,
+  RotateCcw,
+} from 'lucide-react';
 import {
   currentSessionValues,
   editableSessionOptions,
@@ -26,6 +36,13 @@ import {
   type SessionPresetData,
   type SessionSettingsData,
 } from './session-settings';
+import {
+  readLocalModelCache,
+  writeLocalModelCache,
+  formatModelLabel,
+  type CachedModelOption,
+} from './local-model-cache';
+export { readLocalModelCache, writeLocalModelCache, formatModelLabel, type CachedModelOption };
 import s from './agent-session-settings.module.css';
 
 type Props = {
@@ -161,6 +178,14 @@ function SessionSettingsDialog({
       .then((next) => {
         if (controller.signal.aborted) return;
         setData(next);
+        if (next.settings) {
+          const modelOpt = next.settings.options.find(
+            (opt) => opt.category === 'model' || opt.id === 'model',
+          );
+          if (modelOpt && modelOpt.options.length > 0) {
+            writeLocalModelCache(agentId, modelOpt.options);
+          }
+        }
         const selection = {
           ...(next.settings ? currentSessionValues(next.settings) : {}),
           ...next.defaults.values,
@@ -211,6 +236,14 @@ function SessionSettingsDialog({
       );
       if (controller.signal.aborted || request.current !== controller) return;
       setData(next);
+      if (next.settings) {
+        const modelOpt = next.settings.options.find(
+          (opt) => opt.category === 'model' || opt.id === 'model',
+        );
+        if (modelOpt && modelOpt.options.length > 0) {
+          writeLocalModelCache(agentId, modelOpt.options);
+        }
+      }
       setNow(Date.now());
       setSelected(next.settings ? currentSessionValues(next.settings) : {});
       setVerified(true);
@@ -844,51 +877,290 @@ function SessionSettingsDialog({
   );
 }
 
-export function ComposerRuntimeSettings(props: Props) {
-  const cacheKey = JSON.stringify([props.agentId, props.projectId, props.values]);
-  const [cached, setCached] = useState<{
-    key: string;
-    settings: AgentSessionSettingsData['settings'];
-  }>();
+export interface CompactRuntimePillsProps extends Props {
+  taskId?: string;
+  statusText?: string;
+  statusState?: 'applied' | 'failed' | 'requested' | 'unavailable' | 'running';
+}
+
+export function CompactRuntimePills({
+  taskId,
+  agentId,
+  agentName,
+  projectId,
+  values,
+  inheritedValues,
+  onChange,
+  inheritPrevious,
+  disabled,
+  settingsLocked,
+  confirmedSettings,
+  statusText,
+  statusState,
+}: CompactRuntimePillsProps) {
+  const [openFullSettings, setOpenFullSettings] = useState(false);
+  const [openModelPicker, setOpenModelPicker] = useState(false);
+  const [modelSearch, setModelSearch] = useState('');
+  const [customModel, setCustomModel] = useState('');
+  const [cachedModels, setCachedModels] = useState<CachedModelOption[]>(() =>
+    readLocalModelCache(agentId, agentName),
+  );
+  const popoverRef = useRef<HTMLDivElement>(null);
+
+  // Background capability cache read (never spawns agent process)
   useEffect(() => {
-    if (!props.values || !Object.keys(props.values).length) return;
+    let active = true;
     const controller = new AbortController();
     const timer = window.setTimeout(() => controller.abort(), 10000);
-    // This endpoint reads the existing capability cache and never starts an Agent.
-    void readAgentSessionSettings(props.agentId, props.projectId, controller.signal)
+    void readAgentSessionSettings(agentId, projectId, controller.signal)
       .then((next) => {
-        if (!controller.signal.aborted) setCached({ key: cacheKey, settings: next.settings });
+        if (!active || controller.signal.aborted) return;
+        if (next.settings) {
+          const modelOpt = next.settings.options.find(
+            (opt) => opt.category === 'model' || opt.id === 'model',
+          );
+          if (modelOpt && modelOpt.options.length > 0) {
+            writeLocalModelCache(agentId, modelOpt.options);
+            setCachedModels(readLocalModelCache(agentId, agentName));
+          }
+        }
       })
-      .catch(() => {
-        /* Raw selected values remain visible when the cache is unavailable. */
-      })
+      .catch(() => {})
       .finally(() => window.clearTimeout(timer));
     return () => {
+      active = false;
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [cacheKey]);
+  }, [agentId, projectId, agentName]);
+
+  // Close popover when clicking outside
+  useEffect(() => {
+    if (!openModelPicker) return;
+    function handleClickOutside(event: MouseEvent) {
+      if (popoverRef.current && !popoverRef.current.contains(event.target as Node)) {
+        setOpenModelPicker(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [openModelPicker]);
+
+  const activeModelValue =
+    values?.model ||
+    inheritedValues?.model ||
+    (confirmedSettings?.options.find((o) => o.id === 'model' || o.category === 'model')
+      ?.currentValue ??
+      '');
+
+  const activeThinkingValue =
+    values?.thinking ||
+    inheritedValues?.thinking ||
+    (confirmedSettings?.options.find((o) => o.id === 'thinking' || o.category === 'thinking')
+      ?.currentValue ??
+      '');
+
+  const matchedCached = cachedModels.find((m) => m.value === activeModelValue);
+  const displayModelLabel = matchedCached
+    ? matchedCached.name
+    : activeModelValue
+      ? formatModelLabel(activeModelValue)
+      : '默认模型';
+
+  const isOverridden = !!values && Object.keys(values).length > 0;
+
+  const handleSelectModel = (val: string) => {
+    if (!onChange || disabled || settingsLocked) return;
+    onChange({ ...(inheritedValues || {}), ...(values || {}), model: val });
+    setOpenModelPicker(false);
+  };
+
+  const handleCustomModelSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = customModel.trim();
+    if (!trimmed || !onChange || disabled || settingsLocked) return;
+    writeLocalModelCache(agentId, [{ value: trimmed, name: trimmed }]);
+    setCachedModels(readLocalModelCache(agentId, agentName));
+    onChange({ ...(inheritedValues || {}), ...(values || {}), model: trimmed });
+    setCustomModel('');
+    setOpenModelPicker(false);
+  };
+
+  const handleReset = () => {
+    if (!onChange || disabled || settingsLocked) return;
+    onChange(undefined);
+    setOpenModelPicker(false);
+  };
+
+  const filteredModels = modelSearch.trim()
+    ? cachedModels.filter(
+        (m) =>
+          m.name.toLowerCase().includes(modelSearch.toLowerCase()) ||
+          m.value.toLowerCase().includes(modelSearch.toLowerCase()),
+      )
+    : cachedModels;
+
   return (
-    <section className={s.runtimeBar} aria-label="下次发送的运行设置">
-      <div className={s.runtimeCopy}>
-        <span className={s.runtimeLabel}>{props.agentName} · 下次发送</span>
-        <span className={s.runtimeSummary}>
-          {props.values
-            ? Object.keys(props.values).length
-              ? `${sessionSettingValuesSummary(props.values, cached?.key === cacheKey ? cached.settings : undefined)} · 执行前由成员确认`
-              : '下次使用成员原生设置，执行前由成员确认'
-            : '使用成员默认；可选择实际支持的模型和思考等级'}
-        </span>
+    <div className={s.compactBar} aria-label="执行设置">
+      <div className={s.pillsGroup}>
+        {/* Agent Pill */}
+        <button
+          type="button"
+          className={s.agentPill}
+          disabled={disabled}
+          onClick={() => setOpenFullSettings(true)}
+          title={`成员：${agentName}（点击管理运行参数）`}
+        >
+          <Bot size={13} className={s.pillIcon} />
+          <span className={s.pillText}>{agentName}</span>
+          <Settings size={11} className={s.pillSettingsIcon} />
+        </button>
+
+        {/* Model Pill & Popover */}
+        <div className={s.modelPillContainer} ref={popoverRef}>
+          <button
+            type="button"
+            className={`${s.modelPill} ${isOverridden ? s.pillOverridden : ''}`}
+            disabled={disabled}
+            onClick={() => {
+              if (settingsLocked) {
+                setOpenFullSettings(true);
+              } else {
+                setOpenModelPicker((prev) => !prev);
+              }
+            }}
+            title={
+              settingsLocked
+                ? '执行中沿用本轮参数，点击查看'
+                : `当前模型：${displayModelLabel}（点击切换）`
+            }
+          >
+            <Zap size={13} className={s.pillIcon} />
+            <span className={s.pillText}>{displayModelLabel}</span>
+            {activeThinkingValue && <span className={s.thoughtBadge}>{activeThinkingValue}</span>}
+            {isOverridden && <span className={s.overrideBadge}>下次生效</span>}
+            <ChevronDown size={12} className={s.pillChevron} />
+          </button>
+
+          {openModelPicker && (
+            <div className={s.modelPopover} role="menu" aria-label="选择模型">
+              <div className={s.popoverHeader}>
+                <strong>切换模型</strong>
+                <span className={s.popoverSub}>即时生效 · 无等待</span>
+              </div>
+
+              {cachedModels.length > 4 && (
+                <div className={s.popoverSearch}>
+                  <input
+                    type="search"
+                    placeholder="过滤模型..."
+                    value={modelSearch}
+                    onChange={(e) => setModelSearch(e.target.value)}
+                    autoFocus
+                  />
+                </div>
+              )}
+
+              <div className={s.modelOptionList}>
+                {filteredModels.map((item) => {
+                  const selected = item.value === activeModelValue;
+                  return (
+                    <button
+                      key={item.value}
+                      type="button"
+                      className={`${s.modelOptionItem} ${selected ? s.modelOptionSelected : ''}`}
+                      onClick={() => handleSelectModel(item.value)}
+                    >
+                      <div className={s.modelOptionMain}>
+                        <span className={s.modelOptionName}>{item.name}</span>
+                        {item.description && (
+                          <small className={s.modelOptionDesc}>{item.description}</small>
+                        )}
+                      </div>
+                      {selected && <Check size={14} className={s.checkIcon} />}
+                    </button>
+                  );
+                })}
+                {filteredModels.length === 0 && <div className={s.noModelHint}>暂无匹配模型</div>}
+              </div>
+
+              {/* Custom Model ID form */}
+              <form className={s.customModelForm} onSubmit={handleCustomModelSubmit}>
+                <input
+                  type="text"
+                  placeholder="或输入模型 ID (如 claude-sonnet-4.6)"
+                  value={customModel}
+                  onChange={(e) => setCustomModel(e.target.value)}
+                />
+                <button type="submit" disabled={!customModel.trim()}>
+                  使用
+                </button>
+              </form>
+
+              <div className={s.popoverFooter}>
+                {isOverridden && (
+                  <button type="button" className={s.resetButton} onClick={handleReset}>
+                    <RotateCcw size={12} />
+                    恢复成员默认
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className={s.moreSettingsButton}
+                  onClick={() => {
+                    setOpenModelPicker(false);
+                    setOpenFullSettings(true);
+                  }}
+                >
+                  <SlidersHorizontal size={12} />
+                  更多参数与思考等级...
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
-      <SessionSettingsControl {...props} />
-    </section>
+
+      {/* Right side status / hint */}
+      <div className={s.compactStatus}>
+        {statusText && (
+          <span className={s.statusBadge} data-state={statusState || 'info'}>
+            {statusText}
+          </span>
+        )}
+      </div>
+
+      {/* Full Settings Dialog */}
+      {openFullSettings &&
+        createPortal(
+          <SessionSettingsDialog
+            agentId={agentId}
+            agentName={agentName}
+            projectId={projectId}
+            values={values}
+            inheritedValues={inheritedValues}
+            onChange={onChange}
+            inheritPrevious={inheritPrevious}
+            disabled={disabled}
+            settingsLocked={settingsLocked}
+            confirmedSettings={confirmedSettings}
+            onClose={() => setOpenFullSettings(false)}
+          />,
+          document.body,
+        )}
+    </div>
   );
+}
+
+export function ComposerRuntimeSettings(props: Props) {
+  return <CompactRuntimePills {...props} />;
 }
 
 export function TaskRuntimeSettings({ taskId, ...props }: Props & { taskId: string }) {
   const [data, setData] = useState<TaskSessionSettingsData>();
   const [executionActive, setExecutionActive] = useState<boolean>();
   const [error, setError] = useState('');
+
   useEffect(() => {
     let active = true;
     let controller: AbortController | undefined;
@@ -923,46 +1195,40 @@ export function TaskRuntimeSettings({ taskId, ...props }: Props & { taskId: stri
       window.clearTimeout(timer);
     };
   }, [taskId]);
-  const summary = data?.confirmed ? sessionSettingsSummary(data.confirmed) : '';
+
   const locked = props.settingsLocked || executionActive !== false;
+  const statusState =
+    data?.state === 'applied'
+      ? 'applied'
+      : data?.state === 'failed'
+        ? 'failed'
+        : data?.state === 'requested'
+          ? 'requested'
+          : undefined;
+
+  const statusText =
+    data?.state === 'applied'
+      ? '本轮已确认'
+      : data?.state === 'failed'
+        ? data.error || '设置未生效'
+        : data?.state === 'requested'
+          ? '等待成员确认设置'
+          : locked
+            ? '执行中'
+            : error
+              ? '读取中…'
+              : undefined;
+
   return (
-    <section className={`${s.runtimeBar} ${s.taskRuntime}`} aria-label="本轮运行设置">
-      <div className={s.runtimeCopy}>
-        <span className={s.runtimeLabel}>
-          {data?.state === 'applied'
-            ? '本轮已确认'
-            : data?.state === 'failed'
-              ? '设置未生效'
-              : data?.state === 'requested'
-                ? '等待成员确认设置'
-                : '本轮设置'}
-        </span>
-        <span className={s.runtimeSummary}>
-          {summary ||
-            (data?.state === 'unavailable'
-              ? '此历史任务未记录模型设置'
-              : data?.state === 'requested'
-                ? '确认后显示实际模型和参数'
-                : data?.state === 'failed'
-                  ? data.error || '成员未接受设置，提示未发送'
-                  : data?.state === 'applied'
-                    ? '使用成员自身设置'
-                    : error
-                      ? '暂时无法读取，稍后自动重试'
-                      : '正在读取…')}
-        </span>
-        {props.values && <small>已选择下轮覆盖；发送后确认实际生效。</small>}
-        {locked && <small>执行中可查看设置；补充要求沿用本轮参数。</small>}
-        {data?.state === 'failed' && summary && <small className={s.error}>{data.error}</small>}
-      </div>
-      <SessionSettingsControl
-        {...props}
-        disabled={props.disabled}
-        settingsLocked={locked}
-        confirmedSettings={data?.confirmed}
-        inheritPrevious
-        inheritedValues={data?.confirmed ? currentSessionValues(data.confirmed) : data?.requested}
-      />
-    </section>
+    <CompactRuntimePills
+      taskId={taskId}
+      {...props}
+      settingsLocked={locked}
+      confirmedSettings={data?.confirmed}
+      inheritPrevious
+      inheritedValues={data?.confirmed ? currentSessionValues(data.confirmed) : data?.requested}
+      statusText={statusText}
+      statusState={statusState}
+    />
   );
 }

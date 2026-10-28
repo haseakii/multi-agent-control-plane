@@ -79,6 +79,25 @@ const Discovery = z.object({
   note: z.string(),
   localCheck: LocalCheck.optional(),
 });
+const DetectedAgentCLI = z.object({
+  id: z.string(),
+  name: z.string(),
+  command: z.string(),
+  args: z.array(z.string()),
+  description: z.string(),
+  installed: z.boolean(),
+  resolvedPath: z.string().optional(),
+  registered: z.boolean(),
+});
+const AutoDiscoveryData = z.object({
+  agents: z.array(DetectedAgentCLI),
+});
+const ProxyDetectionData = z.object({
+  detected: z.boolean(),
+  port: z.number().int().optional(),
+  proxyUrl: z.string().optional(),
+  clientHint: z.string().optional(),
+});
 function safeLink(value?: string) {
   try {
     const url = new URL(value ?? '');
@@ -140,6 +159,26 @@ export function AgentProducts({
   const [onlyDrafts, setOnlyDrafts] = useState(false);
   const [draftStatus, setDraftStatus] = useState('empty');
   const [restored, setRestored] = useState(false);
+  const [autoDiscovered, setAutoDiscovered] = useState<z.infer<typeof DetectedAgentCLI>[]>([]);
+  const [detectedProxy, setDetectedProxy] = useState<z.infer<typeof ProxyDetectionData>>();
+  const [proxyApplied, setProxyApplied] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    void fetchJSON('/api/system/agents/auto-discovery', undefined, AutoDiscoveryData)
+      .then((res) => {
+        if (active) setAutoDiscovered(res.agents);
+      })
+      .catch(() => {});
+    void fetchJSON('/api/system/network/proxy-detection', undefined, ProxyDetectionData)
+      .then((res) => {
+        if (active) setDetectedProxy(res);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
   const activeRead = useRef<{ dispose(): void } | undefined>(undefined);
   function stopWaiting() {
     activeRead.current?.dispose();
@@ -544,6 +583,104 @@ export function AgentProducts({
       {!selected ? (
         showInstallations ? null : (
           <>
+            {detectedProxy?.detected && !proxyApplied && (
+              <div className={s.proxyTipBanner}>
+                <span>
+                  💡 检测到本机代理客户端已运行 ({detectedProxy.proxyUrl} ·{' '}
+                  {detectedProxy.clientHint})，使用海外模型推荐开启
+                </span>
+                <button
+                  type="button"
+                  className={s.applyProxyBtn}
+                  onClick={async () => {
+                    try {
+                      const net = await fetchJSON(
+                        '/api/system/network',
+                        undefined,
+                        z.object({ revision: z.number() }),
+                      );
+                      await fetchJSON(
+                        '/api/system/network',
+                        {
+                          method: 'PATCH',
+                          body: JSON.stringify({
+                            expectedRevision: net.revision,
+                            global: { mode: 'proxy', proxyUrl: detectedProxy.proxyUrl },
+                            members: {},
+                          }),
+                        },
+                        z.unknown(),
+                      );
+                      setProxyApplied(true);
+                    } catch {
+                      // non-blocking
+                    }
+                  }}
+                >
+                  一键开启代理
+                </button>
+              </div>
+            )}
+
+            {autoDiscovered.filter((a) => a.installed && !a.registered).length > 0 && (
+              <div className={s.autoDiscoveredSection}>
+                <div className={s.autoDiscoveredHeader}>
+                  <strong>✨ 检测到本机已安装的 Agent</strong>
+                  <span>一键接入即可直接在工作台使用</span>
+                </div>
+                <div className={s.autoDiscoveredGrid}>
+                  {autoDiscovered
+                    .filter((a) => a.installed && !a.registered)
+                    .map((cli) => (
+                      <div key={cli.id} className={s.autoDiscoveredCard}>
+                        <div className={s.autoDiscoveredInfo}>
+                          <strong>{cli.name}</strong>
+                          <p>{cli.description}</p>
+                          <code title={cli.resolvedPath}>{cli.resolvedPath || cli.command}</code>
+                        </div>
+                        <button
+                          type="button"
+                          className={s.oneClickAddBtn}
+                          disabled={disabled || busy}
+                          onClick={async () => {
+                            try {
+                              setBusy(true);
+                              const created = await fetchJSON(
+                                '/api/agents',
+                                {
+                                  method: 'POST',
+                                  body: JSON.stringify({
+                                    id: cli.id,
+                                    name: cli.name,
+                                    enabled: true,
+                                    runtime: {
+                                      type: 'acp-stdio',
+                                      command: cli.command,
+                                      args: cli.args,
+                                    },
+                                    auth: { mode: 'agent-managed' },
+                                    capabilities: [],
+                                    orchestration: { canBeBoss: true },
+                                    controlBridge: { transport: 'none', scopes: [] },
+                                  }),
+                                },
+                                AgentConnection,
+                              );
+                              onExisting(created.definition.id);
+                            } catch (e) {
+                              setError(`一键接入失败：${configurationError(e)}`);
+                            } finally {
+                              setBusy(false);
+                            }
+                          }}
+                        >
+                          + 一键接入
+                        </button>
+                      </div>
+                    ))}
+                </div>
+              </div>
+            )}
             <div className={s.actions}>
               <button type="button" disabled={disabled || busy} onClick={() => void refresh()}>
                 {busy ? '正在刷新…' : catalog?.entries.length ? '刷新产品目录' : '加载产品目录'}

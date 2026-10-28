@@ -1,4 +1,5 @@
 import { inspectAgentConfiguration } from '@control-plane/runner';
+import { detectInstalledAgentCLIs } from './agent-auto-discovery.js';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { AgentConnectionFailure } from '@control-plane/acp-runtime';
@@ -586,6 +587,14 @@ export function registerAgentControlRoutes(
   service: AgentControlService,
 ): void {
   app.get('/api/agents', async () => service.list());
+
+  app.get('/api/system/agents/auto-discovery', async () => {
+    const agents = service.list();
+    const registeredCommands = agents.map((a) => a.definition.runtime.command);
+    return {
+      agents: detectInstalledAgentCLIs(registeredCommands),
+    };
+  });
 
   app.post('/api/agents/check-local', async (request, reply) => {
     try {
