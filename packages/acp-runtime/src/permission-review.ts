@@ -354,10 +354,12 @@ export class PermissionReviewCollector {
         'artifactId',
         'Cwd',
         'cwd',
+        'workingDirectory',
         'TargetFile',
         'targetFile',
         'Path',
         'CommandLine',
+        'commandLine',
         'command',
       ])
         target ??= text(source[key]);
@@ -377,26 +379,94 @@ export class PermissionReviewCollector {
       target = text(semantics.target);
     }
     tool ??= text(values.name) ?? text(input.name);
-    if (!tool && values.kind === 'execute') tool = 'run_command';
+    if (!tool) {
+      if (
+        values.kind === 'execute' ||
+        text(input.CommandLine) ||
+        text(input.commandLine) ||
+        text(input.command)
+      ) {
+        tool = 'run_command';
+      } else if (
+        values.kind === 'edit' ||
+        (text(input.TargetFile) && (text(input.ReplacementContent) || text(input.TargetContent)))
+      ) {
+        tool = 'edit_file';
+      } else if (text(input.TargetFile) && text(input.CodeContent)) {
+        tool = 'create_file';
+      } else if (values.kind === 'read') {
+        tool = 'read_file';
+      }
+    }
     if (!action) {
-      if (values.kind === 'execute' || tool === 'run_command' || text(input.CommandLine))
+      if (
+        values.kind === 'execute' ||
+        tool === 'run_command' ||
+        text(input.CommandLine) ||
+        text(input.commandLine) ||
+        text(input.command)
+      ) {
         action = 'process.execute';
-      else if (
+      } else if (
         values.kind === 'edit' ||
         tool === 'edit_file' ||
         tool === 'create_file' ||
-        text(input.TargetFile)
-      )
+        text(input.TargetFile) ||
+        text(input.targetFile)
+      ) {
         action = 'file.write';
-      else if (values.kind === 'read' || tool === 'read_file') action = 'file.read';
-      else if (values.kind && typeof values.kind === 'string') action = `acp.${values.kind}`;
+      } else if (values.kind === 'read' || tool === 'read_file') {
+        action = 'file.read';
+      } else if (values.kind && typeof values.kind === 'string') {
+        action = `acp.${values.kind}`;
+      }
     }
+    if (!target) {
+      if (tool === 'run_command' || action === 'process.execute') {
+        target =
+          text(input.Cwd) ??
+          text(input.cwd) ??
+          text(input.workingDirectory) ??
+          text(input.CommandLine) ??
+          text(input.commandLine) ??
+          text(input.command);
+      } else if (tool === 'edit_file' || tool === 'create_file' || action === 'file.write') {
+        target =
+          text(input.TargetFile) ??
+          text(input.targetFile) ??
+          text(input.path) ??
+          text(input.filePath);
+      }
+    }
+    const resolvedParams =
+      semantics?.parameters !== undefined
+        ? semantics.parameters
+        : (tool === 'run_command' || action === 'process.execute') &&
+            (input.CommandLine ||
+              input.commandLine ||
+              input.command ||
+              input.Cwd ||
+              input.cwd ||
+              input.workingDirectory)
+          ? {
+              command:
+                text(input.CommandLine) ??
+                text(input.commandLine) ??
+                text(input.command) ??
+                undefined,
+              workingDirectory:
+                text(input.Cwd) ??
+                text(input.cwd) ??
+                text(input.workingDirectory) ??
+                undefined,
+            }
+          : undefined;
     const parameters = redactPermissionValue(
       {
         rawInput: values.rawInput ?? null,
         locations: values.locations ?? [],
         content: values.content ?? [],
-        ...(semantics?.parameters === undefined ? {} : { resolved: semantics.parameters }),
+        ...(resolvedParams ? { resolved: resolvedParams } : {}),
       },
       this.contentMetadataPaths(session, values),
     );

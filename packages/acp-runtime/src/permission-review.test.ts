@@ -189,5 +189,25 @@ describe('bounded ACP permission review', () => {
     expect(review.action).toBe('process.execute');
     expect(review.target).toBe('C:\\Users\\admin\\workspace');
     expect(review.reasons).toEqual([]);
+
+    const callWithoutKind = {
+      toolCallId: 'call-2',
+      rawInput: {
+        CommandLine: 'dir C:\\Users\\admin\\.gemini\\mcp\\fleet',
+        Cwd: 'C:\\Users\\admin\\workspace',
+      },
+    };
+    const review2 = c.review('one', callWithoutKind, permissionWireShape(callWithoutKind));
+    expect(review2.status).toBe('complete');
+    expect(review2.tool).toBe('run_command');
+    expect(review2.action).toBe('process.execute');
+    expect(review2.target).toBe('C:\\Users\\admin\\workspace');
+    expect(review2.parameters).toMatchObject({
+      resolved: {
+        command: 'dir C:\\Users\\admin\\.gemini\\mcp\\fleet',
+        workingDirectory: 'C:\\Users\\admin\\workspace',
+      },
+    });
+    expect(review2.reasons).toEqual([]);
   });
 });
