@@ -455,10 +455,7 @@ export class PermissionReviewCollector {
                 text(input.command) ??
                 undefined,
               workingDirectory:
-                text(input.Cwd) ??
-                text(input.cwd) ??
-                text(input.workingDirectory) ??
-                undefined,
+                text(input.Cwd) ?? text(input.cwd) ?? text(input.workingDirectory) ?? undefined,
             }
           : undefined;
     const parameters = redactPermissionValue(
