@@ -30,3 +30,6 @@ Build a local-first, vendor-neutral multi-agent control plane. Do not encode ven
 ## V0 priority
 Prove one end-to-end path:
 User -> Boss -> discover agents -> delegate task -> worker ACP session -> durable result -> Boss resumes -> final response.
+
+## Technical reference
+See [ARCHITECTURE.md](./ARCHITECTURE.md) for module map, data schema, protocol lifecycle, subsystem details, and optimization roadmap.
