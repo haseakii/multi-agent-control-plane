@@ -135,13 +135,21 @@ export function TaskInstructionPanel({ taskId }: { taskId: string }) {
           maxLength={4000}
           disabled={busy || uncertain || !snapshot?.canSubmit}
           onChange={(event) => setDraft(event.target.value)}
-          placeholder="例如：请在报告中补充验证步骤。请勿输入凭据。"
+          onKeyDown={(event) => {
+            if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+              event.preventDefault();
+              const form = event.currentTarget.form;
+              if (form) form.requestSubmit();
+            }
+          }}
+          placeholder="例如：请在报告中补充验证步骤。请勿输入凭据。（按 Ctrl+Enter 发送）"
         />
         <p className="section-note">
           {snapshot ? reasons[snapshot.reason] : '正在确认任务状态…'} {draft.length}/4000
         </p>
         <button
           type="submit"
+          title="支持按 Ctrl+Enter 快捷提交"
           disabled={busy || (!uncertain && !snapshot?.canSubmit) || !draft.trim()}
         >
           {busy ? '正在保存…' : uncertain ? '重试确认' : '保存任务补充'}

@@ -35,6 +35,24 @@ const sourceLabels = {
   history: '同会话、同工具调用的先前事件',
   unknown: '未提供',
 };
+
+export function getApprovalRiskLevel(
+  tool?: string | null,
+  action?: string | null,
+): { level: 'danger' | 'warning' | 'info'; label: string } {
+  const text = `${tool ?? ''} ${action ?? ''}`.toLowerCase();
+  if (
+    /terminal|bash|shell|exec|run_command|command|cmd|powershell|delete|destroy|reset|force|push/.test(
+      text,
+    )
+  ) {
+    return { level: 'danger', label: '高危操作' };
+  }
+  if (/write|edit|modify|patch|save|update|create|merge/.test(text)) {
+    return { level: 'warning', label: '变更写入' };
+  }
+  return { level: 'info', label: '只读/常规' };
+}
 export function approvalAvailability(
   approval: ApprovalItem,
   healthy: boolean,
@@ -102,6 +120,7 @@ export function ApprovalReview({
   headingRef?: RefObject<HTMLHeadingElement | null>;
 }) {
   const review = approval.acp?.review;
+  const risk = getApprovalRiskLevel(review?.tool ?? approval.action, review?.action);
   return (
     <section
       className="approval-review"
@@ -124,6 +143,7 @@ export function ApprovalReview({
         </button>
       </div>
       <p>
+        <span className={`risk-badge risk-${risk.level}`}>{risk.label}</span>{' '}
         {approvalStateLabel(approval.state)} ·{' '}
         {approval.enforcementMode === 'cooperative' ? '协作式执行边界' : approval.enforcementMode}
       </p>
@@ -379,53 +399,62 @@ export function ApprovalPanel({
         <div className="stack">
           {approvals
             .filter((item) => visibleIds.includes(item.id))
-            .map((approval) => (
-              <article className="approval-card" data-state={approval.state} key={approval.id}>
-                <div className="task-heading">
-                  <strong>{approval.acp?.review.tool ?? approval.action}</strong>
-                  <span className="badge">{approvalStateLabel(approval.state)}</span>
-                </div>
-                <p className="approval-note">
-                  {approval.action === 'git.push' &&
-                  approval.boundary === 'control-plane-git' &&
-                  approval.state === 'pending'
-                    ? '请在任务的“推送已审阅提交”面板查看提交和远端地址后批准。'
-                    : approval.action === 'git.merge' &&
-                        approval.boundary === 'control-plane-git' &&
-                        approval.state === 'pending'
-                      ? '请在任务的“变更审阅与本地合并”面板查看快照并批准。'
-                      : approval.decisionEligibility
-                        ? eligibilityLabels[approval.decisionEligibility.reason]
-                        : '服务端资格未提供，操作不可用。'}
-                </p>
-                {operation?.id === approval.id ? (
-                  <p role={operation.status === 'failed' ? 'alert' : 'status'}>
-                    {operation.message}
+            .map((approval) => {
+              const risk = getApprovalRiskLevel(
+                approval.acp?.review.tool ?? approval.action,
+                approval.acp?.review.action,
+              );
+              return (
+                <article className="approval-card" data-state={approval.state} key={approval.id}>
+                  <div className="task-heading">
+                    <strong>{approval.acp?.review.tool ?? approval.action}</strong>
+                    <div className="card-badge-group">
+                      <span className={`risk-badge risk-${risk.level}`}>{risk.label}</span>
+                      <span className="badge">{approvalStateLabel(approval.state)}</span>
+                    </div>
+                  </div>
+                  <p className="approval-note">
+                    {approval.action === 'git.push' &&
+                    approval.boundary === 'control-plane-git' &&
+                    approval.state === 'pending'
+                      ? '请在任务的“推送已审阅提交”面板查看提交和远端地址后批准。'
+                      : approval.action === 'git.merge' &&
+                          approval.boundary === 'control-plane-git' &&
+                          approval.state === 'pending'
+                        ? '请在任务的“变更审阅与本地合并”面板查看快照并批准。'
+                        : approval.decisionEligibility
+                          ? eligibilityLabels[approval.decisionEligibility.reason]
+                          : '服务端资格未提供，操作不可用。'}
                   </p>
-                ) : null}
-                <button
-                  type="button"
-                  data-approval-trigger={approval.id}
-                  onClick={() => {
-                    if (!live.current.visibleIds.includes(approval.id)) return;
-                    const selection = { id: approval.id, generation: ++generation.current };
-                    live.current.selection = selection;
-                    setSelected(selection);
-                    setRefreshGeneration(selection.generation);
-                    const settled = () => {
-                      if (live.current.selection === selection) {
-                        setRefreshGeneration((value) =>
-                          value === selection.generation ? null : value,
-                        );
-                      }
-                    };
-                    void onRefresh().then(settled, settled);
-                  }}
-                >
-                  查看审批详情
-                </button>
-              </article>
-            ))}
+                  {operation?.id === approval.id ? (
+                    <p role={operation.status === 'failed' ? 'alert' : 'status'}>
+                      {operation.message}
+                    </p>
+                  ) : null}
+                  <button
+                    type="button"
+                    data-approval-trigger={approval.id}
+                    onClick={() => {
+                      if (!live.current.visibleIds.includes(approval.id)) return;
+                      const selection = { id: approval.id, generation: ++generation.current };
+                      live.current.selection = selection;
+                      setSelected(selection);
+                      setRefreshGeneration(selection.generation);
+                      const settled = () => {
+                        if (live.current.selection === selection) {
+                          setRefreshGeneration((value) =>
+                            value === selection.generation ? null : value,
+                          );
+                        }
+                      };
+                      void onRefresh().then(settled, settled);
+                    }}
+                  >
+                    查看审批详情
+                  </button>
+                </article>
+              );
+            })}
           {!approvals.some((item) => visibleIds.includes(item.id)) ? (
             <p className="empty">当前任务范围没有可显示的审批记录。</p>
           ) : null}

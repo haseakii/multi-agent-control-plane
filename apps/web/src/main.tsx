@@ -46,6 +46,8 @@ import { ProjectSetupPanel } from './project-setup-panel';
 import { TaskRecordPanel } from './task-record-panel';
 import { useControlUpdates } from './use-control-updates';
 import { api, HttpError } from './http';
+import { ToastContainer, toast } from './toast-notification';
+import { ArtifactContentViewer } from './artifact-content-viewer';
 
 type AgentForm = {
   id: string;
@@ -154,7 +156,7 @@ function ArtifactPreview({ artifact, onClose }: { artifact: Artifact; onClose: (
         content === null ? (
           <p>正在加载结果…</p>
         ) : (
-          <pre className="result-content">{content}</pre>
+          <ArtifactContentViewer artifact={artifact} content={content} />
         )
       ) : null}
       {!canPreview ? <p>此结果暂不支持预览，请下载查看。</p> : null}
@@ -199,8 +201,40 @@ function App() {
   const [selectedProjectId, setSelectedProjectId] = useState('');
   const [goalTitle, setGoalTitle] = useState('');
   const [goalObjective, setGoalObjective] = useState('');
+
+  useEffect(() => {
+    if (notice) toast.show(notice, 'success');
+  }, [notice]);
+  useEffect(() => {
+    if (error) toast.show(error, 'error');
+  }, [error]);
+  useEffect(() => {
+    if (loadError) toast.show(loadError, 'error');
+  }, [loadError]);
+
   const goalComposerRef = useRef<HTMLDetailsElement>(null);
   const goalObjectiveRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (!selectedProjectId) return;
+    try {
+      const saved = localStorage.getItem(`draft:goal:${selectedProjectId}`);
+      if (saved && !goalObjective) {
+        setGoalObjective(saved);
+      }
+    } catch {}
+  }, [selectedProjectId]);
+
+  useEffect(() => {
+    if (!selectedProjectId) return;
+    try {
+      if (goalObjective) {
+        localStorage.setItem(`draft:goal:${selectedProjectId}`, goalObjective);
+      } else {
+        localStorage.removeItem(`draft:goal:${selectedProjectId}`);
+      }
+    } catch {}
+  }, [selectedProjectId, goalObjective]);
   const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -409,6 +443,9 @@ function App() {
       setSelectedTaskId(task.id);
       setGoalTitle('');
       setGoalObjective('');
+      try {
+        localStorage.removeItem(`draft:goal:${projectId}`);
+      } catch {}
       if (goalComposerRef.current) goalComposerRef.current.open = false;
       setNotice(`「${task.title}」已开始，进度会自动更新。`);
     });
@@ -446,6 +483,9 @@ function App() {
       setSelectedTaskId(task.id);
       setGoalTitle('');
       setGoalObjective('');
+      try {
+        localStorage.removeItem(`draft:goal:${project.id}`);
+      } catch {}
       setNotice('草稿已保存，尚未启动 Agent。');
     });
   };
@@ -1310,7 +1350,14 @@ function App() {
                       maxLength={100_000}
                       value={goalObjective}
                       onChange={(event) => setGoalObjective(event.target.value)}
-                      placeholder="例如：帮我检查项目的登录流程，找出问题并给出修复建议，让另一位成员复核结果。"
+                      onKeyDown={(event) => {
+                        if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+                          event.preventDefault();
+                          const form = event.currentTarget.form;
+                          if (form) form.requestSubmit();
+                        }
+                      }}
+                      placeholder="例如：帮我检查项目的登录流程，找出问题并给出修复建议，让另一位成员复核结果。（按 Ctrl+Enter 开始协作）"
                       disabled={busy === 'goal'}
                     />
                     <div className="example-prompts" aria-label="任务示例">
@@ -1333,7 +1380,9 @@ function App() {
                           key={label}
                           type="button"
                           onClick={() => {
-                            setGoalObjective(text!);
+                            setGoalObjective((prev) =>
+                              prev.trim() ? `${prev.trim()}\n\n${text}` : text!,
+                            );
                             goalObjectiveRef.current?.focus();
                           }}
                         >
@@ -1365,6 +1414,7 @@ function App() {
                         className="primary-button"
                         ref={goalSubmitRef}
                         type="submit"
+                        title="支持按 Ctrl+Enter 快捷提交"
                         disabled={
                           busy !== null ||
                           !project ||
@@ -1731,6 +1781,7 @@ function App() {
           </>
         ) : null}
       </dialog>
+      <ToastContainer />
     </div>
   );
 }
