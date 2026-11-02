@@ -4,7 +4,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createClientMcpServer, createClientHttpTransport } from './client-server.js';
 import type { ClientToolName } from './client-contract.js';
 
-it('advertises validated MCP collaboration tools without approval/merge authority', async () => {
+it('advertises validated MCP collaboration tools with approval capabilities but without raw merge/push authority', async () => {
   const invoke = vi.fn(async () => ({ projects: [{ id: 'p', name: 'Project' }] }));
   const server = createClientMcpServer({ invoke }),
     client = new Client({ name: 'test', version: '1' });
@@ -13,12 +13,15 @@ it('advertises validated MCP collaboration tools without approval/merge authorit
     await server.connect(b);
     await client.connect(a);
     const tools = (await client.listTools()).tools;
-    expect(tools).toHaveLength(9);
+    expect(tools).toHaveLength(12);
     for (const name of ['collaboration_submit_task', 'collaboration_continue_task'])
       expect(tools.find((t) => t.name === name)?.inputSchema.properties).toHaveProperty(
         'attachments',
       );
-    expect(tools.some((t) => /approve|merge|push/.test(t.name))).toBe(false);
+    expect(tools.some((t) => t.name === 'collaboration_list_approvals')).toBe(true);
+    expect(tools.some((t) => t.name === 'collaboration_decide_approval')).toBe(true);
+    expect(tools.some((t) => t.name === 'collaboration_decide_all_approvals')).toBe(true);
+    expect(tools.some((t) => /merge|push/.test(t.name))).toBe(false);
     expect(
       (await client.callTool({ name: 'collaboration_list_projects', arguments: {} }))
         .structuredContent,
@@ -51,11 +54,13 @@ it('shows only live granted tools on tools/list, including after permissions cha
     await client.connect(a);
     const read = (await client.listTools()).tools;
     expect(read.map((tool) => tool.name)).toEqual(allowed);
-    expect(read.some((tool) => /submit|continue|cancel|prepare_review/.test(tool.name))).toBe(
-      false,
-    );
+    expect(
+      read.some((tool) =>
+        /submit|continue|cancel|prepare_review|decide_approval|decide_all/.test(tool.name),
+      ),
+    ).toBe(false);
     allowed = clientToolDefinitions.map((tool) => tool.name);
-    expect((await client.listTools()).tools).toHaveLength(9);
+    expect((await client.listTools()).tools).toHaveLength(12);
     allowed = [];
     expect((await client.listTools()).tools).toEqual([]);
   } finally {

@@ -265,8 +265,8 @@ it('passes selected settings through MCP submission and continuation without add
       ).statusCode,
     ).toBe(200);
     expect(follow.mock.calls[0]?.[1]).toMatchObject({ sessionSettings: { model: 'test-model' } });
-    expect(clientToolDefinitions.map((tool) => tool.name)).toHaveLength(9);
-    expect(clientToolDefinitions.some((tool) => /approve|merge|push/.test(tool.name))).toBe(false);
+    expect(clientToolDefinitions.map((tool) => tool.name)).toHaveLength(12);
+    expect(clientToolDefinitions.some((tool) => /merge|push/.test(tool.name))).toBe(false);
   } finally {
     await f.close();
   }

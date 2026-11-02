@@ -84,6 +84,32 @@ export const ClientAttachmentUploadQuerySchema = z
     'Choose the tool target.',
   );
 
+export const ClientListApprovalsSchema = z
+  .object({
+    projectId: Id,
+    taskId: Id.optional(),
+    state: z.enum(['pending', 'all']).default('pending'),
+  })
+  .strict();
+
+export const ClientDecideApprovalSchema = z
+  .object({
+    approvalId: Id,
+    decision: z.enum(['approve', 'reject']),
+    rememberRule: z.boolean().optional(),
+    reason: z.string().trim().min(1).max(500).optional(),
+  })
+  .strict();
+
+export const ClientDecideAllApprovalsSchema = z
+  .object({
+    projectId: Id,
+    taskId: Id.optional(),
+    decision: z.enum(['approve', 'reject']),
+    rememberRule: z.boolean().optional(),
+  })
+  .strict();
+
 /** Shared validated contract; transport adapters do not own orchestration. */
 export const clientToolDefinitions = [
   {
@@ -128,7 +154,7 @@ export const clientToolDefinitions = [
   {
     name: 'collaboration_get_task',
     description:
-      'Read durable status, latestAttempt.failure, recovery guidance, incremental process records, artifacts, usage and review state. Follow nextTaskId when present. Supply the returned cursor; waitMs up to 30000 avoids busy polling. Failure does not discard workspace changes. Pending approvals must be handled by the human in the workbench.',
+      'Read durable status, latestAttempt.failure, recovery guidance, incremental process records, artifacts, usage and review state. Follow nextTaskId when present. Supply the returned cursor; waitMs up to 30000 avoids busy polling. Failure does not discard workspace changes. Pending approvals can be inspected and decided via collaboration_list_approvals, collaboration_decide_approval, or collaboration_decide_all_approvals, or handled in the workbench.',
     schema: TaskId.extend({
       after: Id.optional(),
       limit: z.number().int().min(1).max(100).default(30),
@@ -167,6 +193,27 @@ export const clientToolDefinitions = [
     description:
       'Prepare a fixed code diff for human review after execution finishes. Returns changed files and patch artifact. This does not approve, merge, push, or change source files. Ask the human to inspect and approve through the workbench.',
     schema: TaskId,
+    readOnly: false,
+  },
+  {
+    name: 'collaboration_list_approvals',
+    description:
+      'List pending permission requests and approvals requiring human or supervisor confirmation. Shows requested command, action, target, risk, and approval eligibility. Choose whether to decide individually or batch approve.',
+    schema: ClientListApprovalsSchema,
+    readOnly: true,
+  },
+  {
+    name: 'collaboration_decide_approval',
+    description:
+      'Approve or reject a pending permission request. When rememberRule is true and decision is approve, future similar operations in the project (such as commands or workspace files) are automatically approved, matching the workbench approval flow.',
+    schema: ClientDecideApprovalSchema,
+    readOnly: false,
+  },
+  {
+    name: 'collaboration_decide_all_approvals',
+    description:
+      'Batch approve or reject all eligible pending permission requests in a project or task subtree. Returns summary of decided and skipped approvals. When rememberRule is true and decision is approve, project permissions are updated to auto-approve future similar actions.',
+    schema: ClientDecideAllApprovalsSchema,
     readOnly: false,
   },
 ] as const;

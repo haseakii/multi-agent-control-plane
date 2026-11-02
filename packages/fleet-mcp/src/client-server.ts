@@ -20,7 +20,7 @@ export function createClientMcpServer(transport: ClientToolTransport) {
     { name: 'local-collaboration', version: '0.1.0' },
     {
       instructions:
-        'Use this server to collaborate with registered ACP agents from this conversation. Discover projects and agents, submit once, then wait for incremental progress with get_task (cursor and waitMs). Continue using the latest task ID. The same work is visible in the web workbench. Review/merge and sensitive permissions require the human there; never approve them yourself. Pass the relevant objective/context, not credentials or the whole chat. Reuse an idempotency key only for the same request retry. Large results are artifacts.',
+        'Use this server to collaborate with registered ACP agents from this conversation. Discover projects and agents, submit tasks, and wait for incremental progress with get_task (cursor and waitMs). Continue using the latest task ID. When permission requests arise (e.g. command execution or file operations), inspect them with collaboration_list_approvals, and approve or reject them using collaboration_decide_approval or batch approve them with collaboration_decide_all_approvals (optionally remembering the rule to auto-approve future operations). Pass relevant objective/context, not credentials or whole chat history. Source code merge remains visible in the web workbench.',
     },
   );
   for (const tool of clientToolDefinitions) {

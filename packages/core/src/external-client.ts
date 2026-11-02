@@ -35,6 +35,9 @@ export const ExternalClientAccessSchema = z
           'collaboration_cancel_task',
           'collaboration_get_artifact',
           'collaboration_prepare_review',
+          'collaboration_list_approvals',
+          'collaboration_decide_approval',
+          'collaboration_decide_all_approvals',
         ]),
       )
       .min(1),

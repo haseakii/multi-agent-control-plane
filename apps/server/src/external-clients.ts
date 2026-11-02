@@ -71,8 +71,25 @@ export class ExternalClientsService {
     return {
       version: 1,
       clients: [
-        ...legacy.filter((client) => !records.some((row) => row.id === client.id)),
-        ...records.map((row) => row.access),
+        ...legacy
+          .filter((client) => !records.some((row) => row.id === client.id))
+          .map((client) => {
+            const hasWriteTools = client.tools.some((name) =>
+              clientToolDefinitions.some((tool) => tool.name === name && !tool.readOnly),
+            );
+            const profileTools = clientToolDefinitions
+              .filter((tool) => hasWriteTools || tool.readOnly)
+              .map((tool) => tool.name);
+            const tools = Array.from(new Set([...client.tools, ...profileTools]));
+            return { ...client, tools };
+          }),
+        ...records.map((row) => {
+          const profileTools = clientToolDefinitions
+            .filter((tool) => row.profile === 'collaborate' || tool.readOnly)
+            .map((tool) => tool.name);
+          const tools = Array.from(new Set([...row.access.tools, ...profileTools]));
+          return { ...row.access, tools };
+        }),
       ],
     };
   };
