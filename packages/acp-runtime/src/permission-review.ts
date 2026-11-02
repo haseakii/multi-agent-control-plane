@@ -419,6 +419,10 @@ export class PermissionReviewCollector {
         action = 'file.read';
       } else if (values.kind && typeof values.kind === 'string') {
         action = `acp.${values.kind}`;
+        // For generic ACP permission kinds (e.g. 'other', 'browse', 'network') there is
+        // no specific tool name we can infer — use the kind as the tool identifier so the
+        // review does not get a 'missing_tool' reason and can still be acted on by the user.
+        tool ??= `acp.${values.kind}`;
       }
     }
     if (!target) {
@@ -436,6 +440,10 @@ export class PermissionReviewCollector {
           text(input.targetFile) ??
           text(input.path) ??
           text(input.filePath);
+      } else if (action?.startsWith('acp.')) {
+        // For generic ACP permission kinds, use the title or name as a human-readable
+        // target so the operator can see what the agent is requesting access to.
+        target = text(values.title) ?? text(values.name) ?? `tool:${tool}`;
       }
     }
     const resolvedParams =
@@ -489,6 +497,11 @@ export class PermissionReviewCollector {
       reasons.push('history_expired');
     let review: AcpPermissionReview = {
       version: 1,
+      // wire_unavailable means the ACP wire snapshot was not captured for this request
+      // (e.g. map eviction or a non-standard call path). It degrades confidence but the
+      // tool/action/target inference may still be fully populated, so it does NOT block
+      // approval the way sdk_filtered or sensitive_redacted (real tampering / secret
+      // leakage signals) do. Leave it to the missing/complete path instead.
       status: reasons.includes('truncated')
         ? 'truncated'
         : reasons.includes('sdk_filtered') ||

@@ -7,8 +7,8 @@ import s from './agent-permissions.module.css';
 
 export const Rules = z.object({
   workspaceFiles: z.enum(['ask', 'auto', 'deny']),
-  commands: z.enum(['ask', 'deny']),
-  outsideWorkspace: z.enum(['ask', 'deny']),
+  commands: z.enum(['ask', 'auto', 'deny']),
+  outsideWorkspace: z.enum(['ask', 'auto', 'deny']),
 });
 
 export const Policy = z.object({
@@ -165,11 +165,19 @@ export function AgentPermissionsDialog({
                     onChange={(e) =>
                       setPolicy({
                         ...policy,
-                        agentPermissions: { ...policy.agentPermissions, [key]: e.target.value },
+                        agentPermissions: {
+                          ...policy.agentPermissions,
+                          [key]: e.target.value as 'ask' | 'auto' | 'deny',
+                        },
                       })
                     }
                   >
                     <option value="ask">每次确认</option>
+                    <option value="auto">
+                      {key === 'commands'
+                        ? '自动批准执行命令'
+                        : '自动批准访问工作区外文件'}
+                    </option>
                     <option value="deny">拒绝</option>
                   </select>
                 </label>

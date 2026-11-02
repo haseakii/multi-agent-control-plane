@@ -18,8 +18,8 @@ export const ProjectToolActionSchema = z.enum([
 export const AgentPermissionsSchema = z
   .object({
     workspaceFiles: z.enum(['ask', 'auto', 'deny']).default('ask'),
-    commands: z.enum(['ask', 'deny']).default('ask'),
-    outsideWorkspace: z.enum(['ask', 'deny']).default('ask'),
+    commands: z.enum(['ask', 'auto', 'deny']).default('ask'),
+    outsideWorkspace: z.enum(['ask', 'auto', 'deny']).default('ask'),
   })
   .strict();
 export const ProjectPolicyInputSchema = z

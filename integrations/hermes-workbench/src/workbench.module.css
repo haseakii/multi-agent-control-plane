@@ -472,7 +472,7 @@
 .taskToolbar {
   display: flex;
   flex-wrap: nowrap;
-  overflow-x: auto;
+  overflow: visible;
   align-items: center;
   justify-content: space-between;
   gap: 10px;

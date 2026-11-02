@@ -461,6 +461,14 @@
   background: #d65427;
 }
 
+.approveBtn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  background: #e76b3f;
+  border-color: #e76b3f;
+  color: #fff;
+}
+
 .inlineCardResolved {
   display: flex;
   align-items: center;

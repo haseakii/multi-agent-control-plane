@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import { getDefaultStore, Provider } from 'jotai';
@@ -434,12 +435,20 @@ function Workbench() {
   const [fileFocus, setFileFocus] = useState<FileFocus | null>(null);
   const [reviewFocus, setReviewFocus] = useState<{ taskId: string }>();
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null);
   const [permissionsOpen, setPermissionsOpen] = useState(false);
   const moreMenuRef = useRef<HTMLDivElement>(null);
+  const moreMenuDropdownRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!moreMenuOpen) return;
     function handleClickOutside(e: MouseEvent) {
-      if (moreMenuRef.current && !moreMenuRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      if (
+        moreMenuRef.current &&
+        !moreMenuRef.current.contains(target) &&
+        moreMenuDropdownRef.current &&
+        !moreMenuDropdownRef.current.contains(target)
+      ) {
         setMoreMenuOpen(false);
       }
     }
@@ -1668,82 +1677,119 @@ function Workbench() {
                       {reading ? '退出阅读（Esc）' : '放大对话'}
                     </button>
 
+                    {root && (
+                      <button
+                        type="button"
+                        onClick={() => setPermissionsOpen(true)}
+                        title="项目权限设置（弹窗）"
+                        aria-label="项目权限设置"
+                      >
+                        <Shield size={14} /> 权限设置
+                      </button>
+                    )}
+
                     <div className={s.moreUtilitiesWrapper} ref={moreMenuRef}>
                       <button
                         type="button"
                         aria-label="更多任务操作"
                         aria-expanded={moreMenuOpen}
-                        onClick={() => setMoreMenuOpen((prev) => !prev)}
+                        onClick={() => {
+                          if (!moreMenuOpen && moreMenuRef.current) {
+                            const rect = moreMenuRef.current.getBoundingClientRect();
+                            setMenuPos({
+                              top: rect.bottom + 4,
+                              right: Math.max(8, window.innerWidth - rect.right),
+                            });
+                          }
+                          setMoreMenuOpen((prev) => !prev);
+                        }}
                         title="更多操作"
                       >
                         <MoreHorizontal size={16} />
                       </button>
 
-                      {moreMenuOpen && (
-                        <div className={s.moreMenuDropdown} role="menu">
-                          <button
-                            type="button"
-                            className={s.moreMenuItem}
-                            onClick={() => {
-                              setMoreMenuOpen(false);
-                              setPermissionsOpen(true);
+                      {moreMenuOpen &&
+                        menuPos &&
+                        createPortal(
+                          <div
+                            ref={moreMenuDropdownRef}
+                            className={s.moreMenuDropdown}
+                            style={{
+                              position: 'fixed',
+                              top: `${menuPos.top}px`,
+                              right: `${menuPos.right}px`,
+                              zIndex: 9999,
                             }}
+                            role="menu"
                           >
-                            <Shield size={14} /> 项目权限设置
-                          </button>
-                          {currentProject && (
-                            <button
-                              type="button"
-                              className={s.moreMenuItem}
-                              disabled={sending}
-                              onClick={() => {
-                                setMoreMenuOpen(false);
-                                openNewTask({
-                                  kind: 'saved-project',
-                                  projectId: currentProject.id,
-                                });
-                              }}
-                            >
-                              <Plus size={14} /> 在此项目新建任务
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            className={s.moreMenuItem}
-                            onClick={() => {
-                              setMoreMenuOpen(false);
-                              setHeaderCollapsed((prev) => !prev);
-                            }}
-                          >
-                            {headerCollapsed ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
-                            {headerCollapsed ? '展开顶部导航' : '收起顶部导航 (Ctrl+Shift+H)'}
-                          </button>
-                          {artifacts.length === 0 && (
                             <button
                               type="button"
                               className={s.moreMenuItem}
                               onClick={() => {
                                 setMoreMenuOpen(false);
-                                setRail(rail === 'results' ? null : 'results');
+                                setPermissionsOpen(true);
                               }}
                             >
-                              <FileText size={14} /> 查看产物列表
+                              <Shield size={14} /> 项目权限设置
                             </button>
-                          )}
-                          {allSubagents.length === 0 && (
+                            {currentProject && (
+                              <button
+                                type="button"
+                                className={s.moreMenuItem}
+                                disabled={sending}
+                                onClick={() => {
+                                  setMoreMenuOpen(false);
+                                  openNewTask({
+                                    kind: 'saved-project',
+                                    projectId: currentProject.id,
+                                  });
+                                }}
+                              >
+                                <Plus size={14} /> 在此项目新建任务
+                              </button>
+                            )}
                             <button
                               type="button"
                               className={s.moreMenuItem}
                               onClick={() => {
                                 setMoreMenuOpen(false);
-                                setRail(rail === 'agents' ? null : 'agents');
+                                setHeaderCollapsed((prev) => !prev);
                               }}
                             >
-                              <Users size={14} /> 查看协作面板
+                              {headerCollapsed ? (
+                                <ChevronDown size={14} />
+                              ) : (
+                                <ChevronUp size={14} />
+                              )}
+                              {headerCollapsed ? '展开顶部导航' : '收起顶部导航 (Ctrl+Shift+H)'}
                             </button>
-                          )}
-                        </div>
-                      )}
+                            {artifacts.length === 0 && (
+                              <button
+                                type="button"
+                                className={s.moreMenuItem}
+                                onClick={() => {
+                                  setMoreMenuOpen(false);
+                                  setRail(rail === 'results' ? null : 'results');
+                                }}
+                              >
+                                <FileText size={14} /> 查看产物列表
+                              </button>
+                            )}
+                            {allSubagents.length === 0 && (
+                              <button
+                                type="button"
+                                className={s.moreMenuItem}
+                                onClick={() => {
+                                  setMoreMenuOpen(false);
+                                  setRail(rail === 'agents' ? null : 'agents');
+                                }}
+                              >
+                                <Users size={14} /> 查看协作面板
+                              </button>
+                            )}
+                          </div>,
+                          document.body,
+                        )}
                     </div>
                   </div>
                 </div>
@@ -1922,7 +1968,9 @@ function Workbench() {
                                                       current.requireEnforcedExecution,
                                                     agentPermissions: {
                                                       ...current.agentPermissions,
-                                                      workspaceFiles: 'auto' as const,
+                                                      ...(a.acp?.review.action === 'process.execute'
+                                                        ? { commands: 'auto' as const }
+                                                        : { workspaceFiles: 'auto' as const }),
                                                     },
                                                   }),
                                                 },
