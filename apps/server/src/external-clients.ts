@@ -396,6 +396,9 @@ export class ExternalClientsService {
         next.revision,
         access.projects.map((project) => project.projectId),
       );
+      if (input.profile !== 'autonomous') {
+        this.options.runtime.revokeTaskScopeGrantsForClient(id, 'client_demoted');
+      }
       return { id, revision: next.revision };
     });
   }
@@ -426,6 +429,7 @@ export class ExternalClientsService {
             },
       );
       this.audit(access, 'revoked', (row?.revision ?? 0) + 1);
+      this.options.runtime.revokeTaskScopeGrantsForClient(id, 'client_revoked');
     });
     return { id, enabled: false };
   }

@@ -63,6 +63,7 @@ import {
   ProjectPolicyInputSchema,
   SessionSettingValuesSchema,
   SessionSettingsSnapshotSchema,
+  classifyApprovalOperation,
 } from '@control-plane/core';
 import {
   ClientSubmitSchema,
@@ -1311,31 +1312,46 @@ export class ControlPlaneRuntime {
     if (!approval) throw new TaskControlError(404, 'Approval not found.');
     if (approval.state !== 'pending' && approval.state !== state)
       throw new TaskControlError(409, 'Approval is already decided or expired.');
+
+    // P0-02 Security Boundary: Restrict external MCP client approval decisions
+    if (actor.startsWith('mcp-client:')) {
+      const clientId = actor.slice('mcp-client:'.length);
+      const client = this.storage.repositories.externalClients.get(clientId);
+      if (!client || !client.access.enabled) {
+        throw new TaskControlError(403, 'External client is revoked or disabled.');
+      }
+      if (!client.access.projects.some((p) => p.projectId === approval.projectId)) {
+        throw new TaskControlError(403, 'External client is not authorized for this project.');
+      }
+      if (client.profile !== 'autonomous') {
+        throw new TaskControlError(
+          403,
+          'External client profile does not permit deciding approvals.',
+        );
+      }
+      if (!approval.taskId) {
+        throw new TaskControlError(
+          403,
+          'External client cannot decide approvals without a bound task.',
+        );
+      }
+      const taskOrigin = this.clientTaskOrigin(approval.taskId);
+      if (taskOrigin !== actor) {
+        throw new TaskControlError(
+          403,
+          'External client is not authorized to decide approvals for tasks originating from other clients or local operator.',
+        );
+      }
+    }
+
     const result = this.approvals.resolve(approvalId, state, actor);
     if (approval.state === state) return result;
 
     // Grant task-scoped auto rule ONLY after approval was successfully resolved to approved
     if (rememberRule && state === 'approved' && result.state === 'approved' && approval.taskId) {
-      const action = approval.acp?.review.action ?? approval.action;
-      const tool = approval.acp?.review.tool;
-      const ruleKey =
-        action === 'process.execute' ||
-        action === 'command.execute' ||
-        tool === 'run_command' ||
-        tool === 'bash' ||
-        tool === 'exec'
-          ? 'commands'
-          : action.startsWith('file.') ||
-              action.startsWith('workspace.') ||
-              tool === 'edit_file' ||
-              tool === 'create_file' ||
-              tool === 'read_file' ||
-              tool === 'write' ||
-              tool === 'read'
-            ? 'workspaceFiles'
-            : null;
-      if (ruleKey) {
-        this.grantTaskScopePermission(approval.taskId, ruleKey, actor);
+      const category = classifyApprovalOperation(approval);
+      if (category === 'commands' || category === 'workspaceFiles') {
+        this.grantTaskScopePermission(approval.taskId, category, actor);
       }
     }
 
@@ -1540,6 +1556,23 @@ export class ControlPlaneRuntime {
     }
   }
 
+  revokeTaskScopeGrantsForClient(clientId: string, reason: string = 'client_revoked') {
+    const actor = `mcp-client:${clientId}`;
+    for (const [taskId, grants] of this.taskScopeGrants.entries()) {
+      for (const g of grants) {
+        if (g.actor === actor && !g.revoked) {
+          g.revoked = true;
+          this.event(
+            g.projectId,
+            'task.scope.revoked',
+            { taskId, rule: g.rule, actor, reason },
+            taskId,
+          );
+        }
+      }
+    }
+  }
+
   getTaskScopePermissions(taskId: string): ReadonlySet<'commands' | 'workspaceFiles'> {
     const result = new Set<'commands' | 'workspaceFiles'>();
     const task = this.storage.repositories.tasks.get(taskId);
@@ -1569,9 +1602,28 @@ export class ControlPlaneRuntime {
       const grants = this.taskScopeGrants.get(currentId);
       if (grants) {
         for (const g of grants) {
-          if (!g.revoked) {
-            result.add(g.rule);
+          if (g.revoked) continue;
+
+          // Re-validate actor validity:
+          // If granted by an external MCP client (actor === 'mcp-client:<id>'), re-check client state
+          if (g.actor.startsWith('mcp-client:')) {
+            const clientId = g.actor.slice('mcp-client:'.length);
+            const client = this.storage.repositories.externalClients.get(clientId);
+            if (!client || !client.access.enabled) {
+              g.revoked = true;
+              continue;
+            }
+            if (!client.access.projects.some((p) => p.projectId === task.projectId)) {
+              g.revoked = true;
+              continue;
+            }
+            if (client.profile !== 'autonomous') {
+              g.revoked = true;
+              continue;
+            }
           }
+
+          result.add(g.rule);
         }
       }
       currentId = currentTask.parentTaskId;
@@ -1579,7 +1631,7 @@ export class ControlPlaneRuntime {
     return result;
   }
 
-  private clientTaskOrigin(taskId: string): string | undefined {
+  clientTaskOrigin(taskId: string): string | undefined {
     let currentId: string | undefined = taskId;
     while (currentId) {
       const task = this.storage.repositories.tasks.get(currentId);

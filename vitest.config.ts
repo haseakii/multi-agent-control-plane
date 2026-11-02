@@ -20,6 +20,8 @@ export default defineConfig({
     // Real Git, ACP and native Windows fixtures share the machine's process/IO
     // budget. Bound workers so unrelated fixture startup cannot starve a test.
     maxWorkers: 2,
+    testTimeout: 15000,
+    hookTimeout: 15000,
     env: process.platform === 'win32' ? { TEMP: testTemp, TMP: testTemp } : {},
     include: [
       'apps/**/*.test.ts',

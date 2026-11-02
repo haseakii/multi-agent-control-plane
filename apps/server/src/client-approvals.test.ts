@@ -9,7 +9,12 @@ import { createControlPlaneRuntime } from './runtime-composition.js';
 import { buildServer } from './server.js';
 import { ExternalClientsService } from './external-clients.js';
 import type { AcpApprovalBinding, Approval } from '@control-plane/core';
-import { TaskSchema, AssignmentSchema, ExecutionAttemptSchema } from '@control-plane/core';
+import {
+  TaskSchema,
+  AssignmentSchema,
+  ExecutionAttemptSchema,
+  AuditEventSchema,
+} from '@control-plane/core';
 
 function createFixture() {
   const root = mkdtempSync(join(tmpdir(), 'client-approvals-')),
@@ -128,11 +133,32 @@ function mockAcpApproval(
   };
 }
 
+function seedClientTaskOrigin(
+  f: ReturnType<typeof createFixture>,
+  taskId: string,
+  projectId: string,
+  clientId = 'test-client',
+) {
+  f.storage.repositories.events.append(
+    AuditEventSchema.parse({
+      id: 'event-submit-' + taskId + '-' + randomUUID().slice(0, 8),
+      projectId,
+      taskId,
+      type: 'client.task.submitted',
+      actor: { type: 'agent', id: `mcp-client:${clientId}` },
+      payload: { clientId, requestHash: '0'.repeat(64), executionMode: 'worker' },
+      occurredAt: new Date().toISOString(),
+    }),
+  );
+}
+
 it('allows external MCP clients to list, inspect, decide individually, and batch approve pending requests', async () => {
   const f = createFixture();
   try {
     f.runtime.createProject({ id: 'proj-a', name: 'Project Alpha' });
     f.runtime.createProject({ id: 'proj-b', name: 'Project Beta' });
+    seedClientTaskOrigin(f, 'task-1', 'proj-a');
+    seedClientTaskOrigin(f, 'task-2', 'proj-a');
     f.storage.repositories.tasks.upsert(
       TaskSchema.parse({
         id: 'task-1',
@@ -551,6 +577,7 @@ it('enforces zero residual authorization on approval rejection, failure, or unkn
         updatedAt: new Date().toISOString(),
       }),
     );
+    seedClientTaskOrigin(f, 'task-p02', 'proj-p02');
 
     const asgnP02 = AssignmentSchema.parse({
       id: 'asgn-p02',
@@ -714,6 +741,7 @@ it('enforces precise per-item batch scoping without cross-task permission spread
           updatedAt: new Date().toISOString(),
         }),
       );
+      seedClientTaskOrigin(f, taskId, 'proj-batch');
       const asgn = AssignmentSchema.parse({
         id: asgnId,
         taskId,

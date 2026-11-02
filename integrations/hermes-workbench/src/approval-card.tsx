@@ -4,6 +4,7 @@ import { ShieldAlert, Terminal, AlertTriangle, ShieldCheck } from 'lucide-react'
 import type { SnapshotData } from './adapter';
 import { PermissionEditPreview } from './permission-edit-preview';
 import { approvalOutcome, approvalSummary } from './approval-summary';
+import { canRememberApproval } from './approval-classification';
 import s from './approval-card.module.css';
 type Approval = SnapshotData['approvals'][number];
 type Props = {
@@ -30,16 +31,7 @@ export function InlineApprovalCard({
   const outcome = approvalOutcome(a.state);
   const stale =
     Date.now() > Date.parse(a.decisionEligibility.checkedAt) + a.decisionEligibility.validForMs;
-  const canRemember =
-    a.acp?.review.action === 'process.execute' ||
-    a.acp?.review.action === 'command.execute' ||
-    a.acp?.review.tool === 'run_command' ||
-    a.acp?.review.tool === 'bash' ||
-    a.acp?.review.tool === 'exec' ||
-    Boolean(a.acp?.review.action?.startsWith('workspace.')) ||
-    Boolean(a.acp?.review.action?.startsWith('file.')) ||
-    ['edit_file', 'create_file', 'read_file', 'write', 'read'].includes(a.acp?.review.tool ?? '') ||
-    ['file.read', 'file.write', 'file.workspace'].includes(a.action);
+  const canRemember = canRememberApproval(a);
 
   const handleApprove = async () => {
     if (trustSimilar && canRemember && onTrustRule) {

@@ -205,14 +205,14 @@ export const clientToolDefinitions = [
   {
     name: 'collaboration_decide_approval',
     description:
-      'Approve or reject a pending permission request. When rememberRule is true and decision is approve, future similar operations within the specific task scope (such as commands or workspace files) are automatically approved with an audit trail, without mutating global project policy.',
+      'Approve or reject a pending permission request for tasks originated or delegated by this client. Autonomous clients can only decide approvals for their own tasks or delegated subtasks; local operator or cross-client tasks are rejected with 403. When rememberRule is true and decision is approve, future similar operations within the specific task scope (such as commands or workspace files) are automatically approved with an audit trail, without mutating global project policy.',
     schema: ClientDecideApprovalSchema,
     readOnly: false,
   },
   {
     name: 'collaboration_decide_all_approvals',
     description:
-      'Batch approve or reject all eligible pending permission requests in a project or task subtree. Returns summary of decided and skipped approvals. When rememberRule is true and decision is approve, affected tasks receive task-scoped auto-approval rules for similar operations, without mutating global project policy.',
+      'Batch approve or reject eligible pending permission requests for tasks originated or delegated by this client in a project or task subtree. Approvals from other clients or local operators are strictly excluded. Returns summary of decided and skipped approvals. When rememberRule is true and decision is approve, affected tasks receive task-scoped auto-approval rules for similar operations, without mutating global project policy.',
     schema: ClientDecideAllApprovalsSchema,
     readOnly: false,
   },
