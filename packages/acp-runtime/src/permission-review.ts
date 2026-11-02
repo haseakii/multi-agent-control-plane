@@ -443,7 +443,7 @@ export class PermissionReviewCollector {
       } else if (action?.startsWith('acp.')) {
         // For generic ACP permission kinds, use the title or name as a human-readable
         // target so the operator can see what the agent is requesting access to.
-        target = text(values.title) ?? text(values.name) ?? `tool:${tool}`;
+        target = text(values.title) ?? text(values.name) ?? (tool ? `tool:${tool}` : 'workspace');
       }
     }
     const resolvedParams =
@@ -505,7 +505,6 @@ export class PermissionReviewCollector {
       status: reasons.includes('truncated')
         ? 'truncated'
         : reasons.includes('sdk_filtered') ||
-            reasons.includes('wire_unavailable') ||
             reasons.includes('sensitive_redacted')
           ? 'invalid'
           : reasons.includes('history_expired')
