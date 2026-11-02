@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
@@ -55,7 +55,7 @@ function createFixture() {
       payload: { toolName, input },
     });
 
-  return { root, storage, runtime, app, call, token };
+  return { root, storage, runtime, app, call, token, service };
 }
 
 function mockAcpApproval(
@@ -315,10 +315,12 @@ it('allows external MCP clients to list, inspect, decide individually, and batch
       approvalId: appFile.id,
       decision: 'approved',
       state: 'approved',
-      rememberedRule: { key: 'workspaceFiles', value: 'auto' },
+      rememberedRule: { key: 'workspaceFiles', value: 'task-scope:auto' },
     });
     expect(f.storage.repositories.approvals.get(appFile.id)?.state).toBe('approved');
-    expect(f.runtime.getProjectPolicy('proj-a').agentPermissions.workspaceFiles).toBe('auto');
+    // Task-scoped rule is granted, project-wide policy is NOT mutated
+    expect(f.runtime.getTaskScopePermissions('task-1').has('workspaceFiles')).toBe(true);
+    expect(f.runtime.getProjectPolicy('proj-a').agentPermissions.workspaceFiles).toBe('ask');
 
     // 4. Ineligible approval rejection vs approval attempt
     const cantApprove = await f.call('collaboration_decide_approval', {
@@ -382,7 +384,10 @@ it('allows external MCP clients to list, inspect, decide individually, and batch
     expect(batchBody.rememberedRules).toEqual(['commands']);
     expect(f.storage.repositories.approvals.get(batch1.id)?.state).toBe('approved');
     expect(f.storage.repositories.approvals.get(batch2.id)?.state).toBe('approved');
-    expect(f.runtime.getProjectPolicy('proj-a').agentPermissions.commands).toBe('auto');
+    // Task-scoped rules granted for affected tasks; project policy remains ask
+    expect(f.runtime.getTaskScopePermissions('task-1').has('commands')).toBe(true);
+    expect(f.runtime.getTaskScopePermissions('task-2').has('commands')).toBe(true);
+    expect(f.runtime.getProjectPolicy('proj-a').agentPermissions.commands).toBe('ask');
 
     // Calling decide_all when empty returns clean summary
     const emptyBatch = await f.call('collaboration_decide_all_approvals', {
@@ -405,13 +410,14 @@ it('allows external MCP clients to list, inspect, decide individually, and batch
   }
 });
 
-it('configures autonomous external clients that automatically approve execution permissions without manual prompts', async () => {
+it('isolates autonomous client permissions without mutating project policy, and enforces approval boundaries', async () => {
   const f = createFixture();
   try {
     f.runtime.createProject({ id: 'proj-auto', name: 'Auto Project' });
     f.runtime.setWorkspaceMode('proj-auto', { mode: 'task-local' });
     expect(f.runtime.getProjectPolicy('proj-auto').agentPermissions.commands).toBe('ask');
 
+    // 1. Create an autonomous client
     const res = await f.app.inject({
       method: 'POST',
       url: '/api/external-clients',
@@ -424,10 +430,71 @@ it('configures autonomous external clients that automatically approve execution 
       },
     });
     expect(res.statusCode).toBe(200);
+    const autoCreated = res.json();
+    const autoRecord = f.storage.repositories.externalClients.get(autoCreated.id)!;
+    expect(autoRecord.profile).toBe('autonomous');
 
+    // Invariant: Creating autonomous client does NOT mutate global project policy
     const policy = f.runtime.getProjectPolicy('proj-auto');
-    expect(policy.agentPermissions.commands).toBe('auto');
-    expect(policy.agentPermissions.workspaceFiles).toBe('auto');
+    expect(policy.agentPermissions.commands).toBe('ask');
+    expect(policy.agentPermissions.workspaceFiles).toBe('ask');
+
+    // Autonomous client receives approval tools in its grant list
+    expect(autoRecord.access.tools).toContain('collaboration_decide_approval');
+    expect(autoRecord.access.tools).toContain('collaboration_decide_all_approvals');
+
+    const autoToken = JSON.parse(
+      readFileSync(f.service.connectionFile(autoRecord.id), 'utf8'),
+    ).token;
+
+    // 2. Create a collaborate client
+    const collabRes = await f.app.inject({
+      method: 'POST',
+      url: '/api/external-clients',
+      payload: {
+        requestId: randomUUID(),
+        name: 'Collab Agent',
+        target: 'vscode',
+        profile: 'collaborate',
+        projects: [{ projectId: 'proj-auto' }],
+      },
+    });
+    expect(collabRes.statusCode).toBe(200);
+    const collabCreated = collabRes.json();
+    const collabRecord = f.storage.repositories.externalClients.get(collabCreated.id)!;
+    expect(collabRecord.profile).toBe('collaborate');
+
+    // Collaborate client does NOT have approval tools
+    expect(collabRecord.access.tools).not.toContain('collaboration_decide_approval');
+    expect(collabRecord.access.tools).not.toContain('collaboration_decide_all_approvals');
+
+    const collabToken = JSON.parse(
+      readFileSync(f.service.connectionFile(collabRecord.id), 'utf8'),
+    ).token;
+
+    // 3. Calling decide_approval with collaborate client token returns 403 Forbidden
+    const collabAttempt = await f.call(
+      'collaboration_decide_approval',
+      { approvalId: 'any-approval-id', decision: 'approve' },
+      collabToken,
+    );
+    expect(collabAttempt.statusCode).toBe(403);
+    expect(collabAttempt.json().error).toContain('not authorized');
+
+    // 4. Revoking the client immediately strips client authorization
+    const revokeRes = await f.app.inject({
+      method: 'POST',
+      url: `/api/external-clients/${autoRecord.id}/revoke`,
+      payload: {},
+    });
+    expect(revokeRes.statusCode).toBe(200);
+
+    const afterRevoke = await f.call(
+      'collaboration_decide_approval',
+      { approvalId: 'any-approval-id', decision: 'approve' },
+      autoToken,
+    );
+    expect(afterRevoke.statusCode).toBe(401);
   } finally {
     await f.app.close();
     await f.runtime.close();

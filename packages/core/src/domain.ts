@@ -375,7 +375,10 @@ export const AcpPermissionReviewSchema = z
   .refine(
     (value) =>
       value.status !== 'complete' ||
-      (value.reasons.length === 0 && !!value.tool && !!value.action && !!value.target),
+      (value.reasons.every((r) => r === 'wire_unavailable') &&
+        !!value.tool &&
+        !!value.action &&
+        !!value.target),
     'A complete permission review requires explicit tool, action and target',
   );
 export type AcpPermissionReview = z.infer<typeof AcpPermissionReviewSchema>;

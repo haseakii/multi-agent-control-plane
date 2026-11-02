@@ -11,10 +11,33 @@ import {
   AuditEventSchema,
   type ExternalClientRecord,
 } from '@control-plane/core';
-import { ClientAccessFileSchema, clientToolDefinitions } from '@control-plane/fleet-mcp';
+import {
+  ClientAccessFileSchema,
+  clientToolDefinitions,
+  type ClientToolName,
+} from '@control-plane/fleet-mcp';
 import type { ControlPlaneRuntime } from './runtime-composition.js';
 import { TaskControlError } from './task-control.js';
 import { installCodexClient, codexCliPath } from './external-client-install.js';
+
+export function toolsForProfile(profile: 'read' | 'collaborate' | 'autonomous'): ClientToolName[] {
+  switch (profile) {
+    case 'read':
+      return clientToolDefinitions.filter((tool) => tool.readOnly).map((tool) => tool.name);
+    case 'collaborate':
+      return clientToolDefinitions
+        .filter(
+          (tool) =>
+            tool.readOnly ||
+            !['collaboration_decide_approval', 'collaboration_decide_all_approvals'].includes(
+              tool.name,
+            ),
+        )
+        .map((tool) => tool.name);
+    case 'autonomous':
+      return clientToolDefinitions.map((tool) => tool.name);
+  }
+}
 
 const ProjectsSchema = ExternalClientAccessSchema.shape.projects.refine(
   (values) => new Set(values.map((value) => value.projectId)).size === values.length,
@@ -74,19 +97,25 @@ export class ExternalClientsService {
         ...legacy
           .filter((client) => !records.some((row) => row.id === client.id))
           .map((client) => {
+            const hasApprovalTools = client.tools.some((name) =>
+              ['collaboration_decide_approval', 'collaboration_decide_all_approvals'].includes(
+                name,
+              ),
+            );
             const hasWriteTools = client.tools.some((name) =>
               clientToolDefinitions.some((tool) => tool.name === name && !tool.readOnly),
             );
-            const profileTools = clientToolDefinitions
-              .filter((tool) => hasWriteTools || tool.readOnly)
-              .map((tool) => tool.name);
+            const profile = hasApprovalTools
+              ? 'autonomous'
+              : hasWriteTools
+                ? 'collaborate'
+                : 'read';
+            const profileTools = toolsForProfile(profile);
             const tools = Array.from(new Set([...client.tools, ...profileTools]));
             return { ...client, tools };
           }),
         ...records.map((row) => {
-          const profileTools = clientToolDefinitions
-            .filter((tool) => row.profile !== 'read' || tool.readOnly)
-            .map((tool) => tool.name);
+          const profileTools = toolsForProfile(row.profile);
           const tools = Array.from(new Set([...row.access.tools, ...profileTools]));
           return { ...row.access, tools };
         }),
@@ -315,44 +344,13 @@ export class ExternalClientsService {
             enabled: true,
             tokenSha256: createHash('sha256').update(token).digest('hex'),
             projects,
-            tools: clientToolDefinitions
-              .filter((t) => input.profile !== 'read' || t.readOnly)
-              .map((t) => t.name),
+            tools: toolsForProfile(input.profile),
           },
         }),
       );
-      if (input.profile === 'autonomous') {
-        this.ensureAutonomousPolicy(projects);
-      }
       this.audit(this.repo.externalClients.get(id)!.access, 'created', 1);
     });
     return this.configuration(id);
-  }
-  private ensureAutonomousPolicy(projects: readonly { projectId: string }[]) {
-    for (const grant of projects) {
-      try {
-        const policy = this.options.runtime.getProjectPolicy(grant.projectId);
-        if (
-          policy.agentPermissions.commands !== 'auto' ||
-          policy.agentPermissions.workspaceFiles !== 'auto'
-        ) {
-          this.options.runtime.setProjectPolicy(grant.projectId, {
-            expectedRevision: policy.revision,
-            tools: policy.tools,
-            gitMerge: policy.gitMerge,
-            gitPush: policy.gitPush,
-            requireEnforcedExecution: policy.requireEnforcedExecution,
-            agentPermissions: {
-              ...policy.agentPermissions,
-              commands: 'auto',
-              workspaceFiles: 'auto',
-            },
-          });
-        }
-      } catch {
-        // non-fatal
-      }
-    }
   }
   updateGrants(id: string, raw: unknown) {
     const input = UpdateExternalClientGrantsSchema.parse(raw);
@@ -387,18 +385,13 @@ export class ExternalClientsService {
         access: {
           ...access,
           projects,
-          tools: clientToolDefinitions
-            .filter((tool) => input.profile !== 'read' || tool.readOnly)
-            .map((tool) => tool.name),
+          tools: toolsForProfile(input.profile),
         },
         profile: input.profile,
         revision: record.revision + 1,
         lastUpdate: { requestId: input.requestId, requestHash },
       };
       this.repo.externalClients.upsert(next);
-      if (input.profile === 'autonomous') {
-        this.ensureAutonomousPolicy(projects);
-      }
       // Audit both removed and retained project scopes without granting removed scopes.
       this.audit(
         next.access,

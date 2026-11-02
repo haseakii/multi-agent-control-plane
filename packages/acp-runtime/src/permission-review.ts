@@ -495,20 +495,20 @@ export class PermissionReviewCollector {
     const historyUsed = Object.values(provenance).includes('history');
     if ((stale || previous?.expired) && reasons.some((r) => r.startsWith('missing_')))
       reasons.push('history_expired');
+    const nonWireReasons = reasons.filter((r) => r !== 'wire_unavailable');
     let review: AcpPermissionReview = {
       version: 1,
-      // wire_unavailable means the ACP wire snapshot was not captured for this request
-      // (e.g. map eviction or a non-standard call path). It degrades confidence but the
-      // tool/action/target inference may still be fully populated, so it does NOT block
-      // approval the way sdk_filtered or sensitive_redacted (real tampering / secret
-      // leakage signals) do. Leave it to the missing/complete path instead.
+      // wire_unavailable indicates the wire snapshot was omitted/unavailable while tool/action/target
+      // and parameters were inferred from the SDK call. If no actual parameter or structural field is missing,
+      // the status is complete so an operator can review and decide, but wire_unavailable remains in reasons
+      // so automatic execution policies require human confirmation.
       status: reasons.includes('truncated')
         ? 'truncated'
         : reasons.includes('sdk_filtered') || reasons.includes('sensitive_redacted')
           ? 'invalid'
           : reasons.includes('history_expired')
             ? 'expired'
-            : reasons.length
+            : nonWireReasons.length
               ? 'missing'
               : 'complete',
       tool,

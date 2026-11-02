@@ -10,7 +10,7 @@ type Props = {
   approval: Approval;
   taskTitle: string;
   busy: boolean;
-  onDecide: (id: string, decision: 'approve' | 'reject') => void;
+  onDecide: (id: string, decision: 'approve' | 'reject', rememberRule?: boolean) => void;
 };
 
 export type InlineApprovalProps = Props & {
@@ -35,7 +35,7 @@ export function InlineApprovalCard({
     if (trustSimilar && onTrustRule) {
       await onTrustRule(a);
     }
-    onDecide(a.id, 'approve');
+    onDecide(a.id, 'approve', trustSimilar);
   };
 
   if (!pending) {
@@ -130,12 +130,49 @@ export function InlineApprovalCard({
             type="button"
             className={s.approveBtn}
             disabled={busy || !a.decisionEligibility.canApprove || stale}
+            title={
+              !a.decisionEligibility.canApprove
+                ? `无法批准：${
+                    a.decisionEligibility.reason === 'details_missing'
+                      ? '请求信息不完整'
+                      : a.decisionEligibility.reason === 'details_invalid'
+                        ? '安全验证未通过'
+                        : a.decisionEligibility.reason === 'details_truncated'
+                          ? '内容被截断'
+                          : a.decisionEligibility.reason === 'details_redacted'
+                            ? '包含被遮蔽的敏感字段'
+                            : '已过期失效'
+                  }`
+                : undefined
+            }
             onClick={() => void handleApprove()}
           >
-            允许本次
+            {!a.decisionEligibility.canApprove ? '无法批准' : '允许本次'}
           </button>
         </div>
       </div>
+      {(!a.decisionEligibility.canApprove || stale) && (
+        <div
+          className={s.inlineRisk}
+          style={{ margin: '0 14px 10px', background: '#fff3ed', color: '#c2410c' }}
+          role="status"
+        >
+          <AlertTriangle size={13} className={s.riskIcon} />
+          <span>
+            当前状态无法批准（
+            {a.decisionEligibility.reason === 'details_missing'
+              ? '请求信息不完整'
+              : a.decisionEligibility.reason === 'details_invalid'
+                ? '安全验证未通过'
+                : a.decisionEligibility.reason === 'details_truncated'
+                  ? '请求内容被截断'
+                  : a.decisionEligibility.reason === 'details_redacted'
+                    ? '请求包含被遮蔽的敏感字段'
+                    : '请求已过期失效'}
+            ）；若有风险请直接点击“拒绝”。
+          </span>
+        </div>
+      )}
     </div>
   );
 }

@@ -43,24 +43,35 @@ const detectRuleToRemember = (approval: {
   acp?: { review: { action: string | null; tool?: string | null } } | undefined;
 }): 'commands' | 'workspaceFiles' | 'outsideWorkspace' | null => {
   const action = approval.acp?.review.action ?? approval.action;
+  const tool = approval.acp?.review.tool;
   if (
     action === 'process.execute' ||
     action === 'command.execute' ||
-    action.includes('process') ||
-    action.includes('command')
+    tool === 'run_command' ||
+    tool === 'bash' ||
+    tool === 'exec'
   ) {
     return 'commands';
   }
-  if (action === 'file.outside_workspace' || action.includes('outside')) {
+  if (action === 'file.outside_workspace') {
     return 'outsideWorkspace';
   }
-  if (action.includes('workspace') || action.includes('file')) {
+  if (
+    action === 'file.write' ||
+    action === 'file.read' ||
+    action === 'file.workspace' ||
+    action.startsWith('file.') ||
+    action.startsWith('workspace.') ||
+    tool === 'edit_file' ||
+    tool === 'create_file' ||
+    tool === 'read_file' ||
+    tool === 'write' ||
+    tool === 'read'
+  ) {
     return 'workspaceFiles';
   }
-  if (approval.acp?.review.tool === 'bash' || approval.acp?.review.tool === 'exec') {
-    return 'commands';
-  }
-  return 'commands';
+  // Unknown actions must NEVER default to commands
+  return null;
 };
 
 /** An external client has project-scoped authority, never an ACP session grant or operator identity. */
@@ -626,30 +637,16 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
             approval.id,
             targetState,
             `mcp-client:${identity.id}`,
+            value.reason,
           );
 
           let rememberedRule: { key: string; value: string } | null = null;
           if (value.rememberRule && targetState === 'approved') {
             const ruleKey = detectRuleToRemember(approval);
-            if (ruleKey) {
-              try {
-                const currentPolicy = runtime.getProjectPolicy(approval.projectId);
-                if (currentPolicy.agentPermissions[ruleKey] !== 'auto') {
-                  runtime.setProjectPolicy(approval.projectId, {
-                    expectedRevision: currentPolicy.revision,
-                    tools: currentPolicy.tools,
-                    gitMerge: currentPolicy.gitMerge,
-                    gitPush: currentPolicy.gitPush,
-                    requireEnforcedExecution: currentPolicy.requireEnforcedExecution,
-                    agentPermissions: {
-                      ...currentPolicy.agentPermissions,
-                      [ruleKey]: 'auto',
-                    },
-                  });
-                  rememberedRule = { key: ruleKey, value: 'auto' };
-                }
-              } catch {
-                // non-fatal
+            if (ruleKey && (ruleKey === 'commands' || ruleKey === 'workspaceFiles')) {
+              if (approval.taskId) {
+                runtime.grantTaskScopePermission(approval.taskId, ruleKey);
+                rememberedRule = { key: ruleKey, value: 'task-scope:auto' };
               }
             }
           }
@@ -663,7 +660,7 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
             tool: approval.acp?.review.tool ?? null,
             target: approval.acp?.review.target ?? null,
             rememberedRule,
-            message: `请求已${targetState === 'approved' ? '批准' : '拒绝'}${rememberedRule ? `，已记住设置：后续同类操作自动批准` : ''}。`,
+            message: `请求已${targetState === 'approved' ? '批准' : '拒绝'}${rememberedRule ? `，已记住设置：本任务内同类操作自动批准` : ''}。`,
           };
           break;
         }
@@ -746,30 +743,22 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
           }
 
           const rememberedRules: string[] = [];
-          if (rulesToUpdate.size > 0) {
-            try {
-              const currentPolicy = runtime.getProjectPolicy(value.projectId);
-              const nextPermissions = { ...currentPolicy.agentPermissions };
-              let changed = false;
-              for (const rk of rulesToUpdate) {
-                if (nextPermissions[rk] !== 'auto') {
-                  nextPermissions[rk] = 'auto';
-                  changed = true;
+          if (rulesToUpdate.size > 0 && targetState === 'approved') {
+            for (const rk of rulesToUpdate) {
+              if (rk === 'commands' || rk === 'workspaceFiles') {
+                if (value.taskId) {
+                  runtime.grantTaskScopePermission(value.taskId, rk);
+                  rememberedRules.push(rk);
+                } else {
+                  for (const d of decided) {
+                    const fullItem = pendingList.find((p) => p.id === d.approvalId);
+                    if (fullItem?.taskId) {
+                      runtime.grantTaskScopePermission(fullItem.taskId, rk);
+                    }
+                  }
                   rememberedRules.push(rk);
                 }
               }
-              if (changed) {
-                runtime.setProjectPolicy(value.projectId, {
-                  expectedRevision: currentPolicy.revision,
-                  tools: currentPolicy.tools,
-                  gitMerge: currentPolicy.gitMerge,
-                  gitPush: currentPolicy.gitPush,
-                  requireEnforcedExecution: currentPolicy.requireEnforcedExecution,
-                  agentPermissions: nextPermissions,
-                });
-              }
-            } catch {
-              // non-fatal
             }
           }
 

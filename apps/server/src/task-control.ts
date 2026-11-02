@@ -87,7 +87,11 @@ export const SubmitGoalSchema = z
     'Choose session settings or a preset, not both.',
   );
 const ApprovalDecisionSchema = z
-  .object({ actor: z.string().trim().min(1).max(128).default('local-user') })
+  .object({
+    actor: z.string().trim().min(1).max(128).default('local-user'),
+    reason: z.string().trim().min(1).max(500).optional(),
+    rememberRule: z.boolean().optional(),
+  })
   .strict();
 
 function sendError(reply: FastifyReply, error: unknown) {
@@ -648,8 +652,9 @@ export function registerTaskControlRoutes(
   ] as const) {
     app.post(`/api/approvals/:id/${action}`, async (request, reply) => {
       try {
-        const { actor } = ApprovalDecisionSchema.parse(request.body ?? {});
-        return service.decideApproval((request.params as { id: string }).id, state, actor);
+        const { actor, reason, rememberRule } = ApprovalDecisionSchema.parse(request.body ?? {});
+        const approvalId = (request.params as { id: string }).id;
+        return service.decideApproval(approvalId, state, actor, reason, rememberRule);
       } catch (error) {
         return sendError(reply, error);
       }

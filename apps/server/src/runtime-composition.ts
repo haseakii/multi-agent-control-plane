@@ -775,7 +775,7 @@ export class ControlPlaneRuntime {
       })
     );
   }
-  setProjectPolicy(projectId: string, raw: unknown) {
+  setProjectPolicy(projectId: string, raw: unknown, actor = 'local-operator') {
     const input = ProjectPolicyInputSchema.parse(raw);
     return this.storage.repositories.transaction(() => {
       const current = this.getProjectPolicy(projectId);
@@ -795,7 +795,7 @@ export class ControlPlaneRuntime {
         gitPush: saved.gitPush,
         requireEnforcedExecution: saved.requireEnforcedExecution,
         agentPermissions: saved.agentPermissions,
-        actor: 'local-operator',
+        actor,
       });
       return saved;
     });
@@ -1300,11 +1300,22 @@ export class ControlPlaneRuntime {
       validForMs: Math.min(3000, remaining),
     });
   }
-  decideApproval(approvalId: string, state: 'approved' | 'rejected', actor: string) {
+  decideApproval(
+    approvalId: string,
+    state: 'approved' | 'rejected',
+    actor: string,
+    reason?: string,
+    rememberRule?: boolean,
+  ) {
     const approval = this.storage.repositories.approvals.get(approvalId);
     if (!approval) throw new TaskControlError(404, 'Approval not found.');
     if (approval.state !== 'pending' && approval.state !== state)
       throw new TaskControlError(409, 'Approval is already decided or expired.');
+    if (rememberRule && state === 'approved' && approval.taskId) {
+      const ruleKey =
+        approval.acp?.review.action === 'process.execute' ? 'commands' : 'workspaceFiles';
+      this.grantTaskScopePermission(approval.taskId, ruleKey);
+    }
     const result = this.approvals.resolve(approvalId, state, actor);
     if (approval.state === state) return result;
     this.event(
@@ -1313,6 +1324,8 @@ export class ControlPlaneRuntime {
       {
         approvalId,
         state,
+        actor,
+        ...(reason ? { reason } : {}),
         enforcementMode: result.enforcementMode,
         boundary: result.boundary ?? 'unknown',
       },
@@ -1454,6 +1467,29 @@ export class ControlPlaneRuntime {
       this.launch(assignment, attempt, false);
       return { task, reused: false };
     });
+  }
+
+  private readonly taskScopeRules = new Map<string, Set<'commands' | 'workspaceFiles'>>();
+
+  grantTaskScopePermission(taskId: string, rule: 'commands' | 'workspaceFiles') {
+    let rules = this.taskScopeRules.get(taskId);
+    if (!rules) {
+      rules = new Set();
+      this.taskScopeRules.set(taskId, rules);
+    }
+    rules.add(rule);
+  }
+
+  getTaskScopePermissions(taskId: string): ReadonlySet<'commands' | 'workspaceFiles'> {
+    const result = new Set<'commands' | 'workspaceFiles'>();
+    let currentId: string | undefined = taskId;
+    while (currentId) {
+      const rules = this.taskScopeRules.get(currentId);
+      if (rules) for (const r of rules) result.add(r);
+      const t = this.storage.repositories.tasks.get(currentId);
+      currentId = t?.parentTaskId;
+    }
+    return result;
   }
 
   private clientTaskOrigin(taskId: string): string | undefined {
@@ -3184,6 +3220,30 @@ export class ControlPlaneRuntime {
       const policy = this.getProjectPolicy(task.projectId);
       const binding = this.storage.repositories.assignmentWorkspaces.get(execution.assignment.id);
       const workspace = binding && this.storage.repositories.workspaces.get(binding.workspaceId);
+      const taskScopeAutoRules = this.getTaskScopePermissions(task.id);
+
+      let originClient:
+        | {
+            id: string;
+            profile: 'read' | 'collaborate' | 'autonomous';
+            enabled: boolean;
+            authorizedProjects: string[];
+          }
+        | undefined;
+      const originActor = this.clientTaskOrigin(task.id);
+      if (originActor && originActor.startsWith('mcp-client:')) {
+        const clientId = originActor.slice('mcp-client:'.length);
+        const clientRecord = this.storage.repositories.externalClients.get(clientId);
+        if (clientRecord && clientRecord.access.enabled) {
+          originClient = {
+            id: clientRecord.id,
+            profile: clientRecord.profile,
+            enabled: clientRecord.access.enabled,
+            authorizedProjects: clientRecord.access.projects.map((p) => p.projectId),
+          };
+        }
+      }
+
       const effect = agentPermissionDecision(
         policy,
         acp.review,
@@ -3193,12 +3253,29 @@ export class ControlPlaneRuntime {
               isolated: binding.mode === 'git-worktree' || binding.mode === 'task-local',
             }
           : undefined,
+        {
+          taskScopeAutoRules,
+          originClient,
+          projectId: task.projectId,
+        },
       );
       if (effect !== 'ask') {
+        const isAutonomousClient = effect === 'auto' && originClient?.profile === 'autonomous';
+        const isTaskScopeRule =
+          effect === 'auto' &&
+          !isAutonomousClient &&
+          ((acp.review.action === 'process.execute' && taskScopeAutoRules.has('commands')) ||
+            taskScopeAutoRules.has('workspaceFiles'));
+        const decisionActor = isAutonomousClient
+          ? `autonomous-client:${originClient!.id}`
+          : isTaskScopeRule
+            ? `task-rule:${task.id}`
+            : `project-policy:${policy.revision}`;
+
         const decided = this.approvals.resolve(
           approval.id,
           effect === 'auto' ? 'approved' : 'rejected',
-          `project-policy:${policy.revision}`,
+          decisionActor,
         );
         this.event(
           task.projectId,
