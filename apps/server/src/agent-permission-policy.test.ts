@@ -177,12 +177,81 @@ it('strictly denies or falls back to ask when commands: auto encounters incomple
     ),
   ).toBe('ask');
 
-  // 4. Missing command content falls back to ask
+  // 4. Missing, empty, whitespace-only command, or target as directory path falls back to ask
   expect(
     agentPermissionDecision(
       autoCommandPolicy,
       { ...commandReview, target: null, parameters: {} },
       f.workspace,
+    ),
+  ).toBe('ask');
+  expect(
+    agentPermissionDecision(
+      autoCommandPolicy,
+      {
+        ...commandReview,
+        target: 'D:\\workspace\\project',
+        parameters: { resolved: { workingDirectory: 'D:\\workspace\\project' } },
+      },
+      f.workspace,
+    ),
+  ).toBe('ask');
+  expect(
+    agentPermissionDecision(
+      autoCommandPolicy,
+      {
+        ...commandReview,
+        target: 'D:\\workspace\\project',
+        parameters: { resolved: { command: '', workingDirectory: 'D:\\workspace\\project' } },
+      },
+      f.workspace,
+    ),
+  ).toBe('ask');
+  expect(
+    agentPermissionDecision(
+      autoCommandPolicy,
+      {
+        ...commandReview,
+        target: 'D:\\workspace\\project',
+        parameters: {
+          resolved: { command: '   \t  \n', workingDirectory: 'D:\\workspace\\project' },
+        },
+      },
+      f.workspace,
+    ),
+  ).toBe('ask');
+
+  // Even with taskScopeAutoRules or autonomous client, missing command body must NOT auto-approve
+  expect(
+    agentPermissionDecision(
+      f.policy,
+      {
+        ...commandReview,
+        target: 'D:\\workspace\\project',
+        parameters: { resolved: { workingDirectory: 'D:\\workspace\\project' } },
+      },
+      f.workspace,
+      { taskScopeAutoRules: new Set(['commands']) },
+    ),
+  ).toBe('ask');
+  expect(
+    agentPermissionDecision(
+      f.policy,
+      {
+        ...commandReview,
+        target: 'D:\\workspace\\project',
+        parameters: { resolved: { workingDirectory: 'D:\\workspace\\project' } },
+      },
+      f.workspace,
+      {
+        originClient: {
+          id: 'client-1',
+          profile: 'autonomous',
+          enabled: true,
+          authorizedProjects: ['proj-1'],
+        },
+        projectId: 'proj-1',
+      },
     ),
   ).toBe('ask');
 

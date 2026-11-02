@@ -205,14 +205,14 @@ export const clientToolDefinitions = [
   {
     name: 'collaboration_decide_approval',
     description:
-      'Approve or reject a pending permission request. When rememberRule is true and decision is approve, future similar operations in the project (such as commands or workspace files) are automatically approved, matching the workbench approval flow.',
+      'Approve or reject a pending permission request. When rememberRule is true and decision is approve, future similar operations within the specific task scope (such as commands or workspace files) are automatically approved with an audit trail, without mutating global project policy.',
     schema: ClientDecideApprovalSchema,
     readOnly: false,
   },
   {
     name: 'collaboration_decide_all_approvals',
     description:
-      'Batch approve or reject all eligible pending permission requests in a project or task subtree. Returns summary of decided and skipped approvals. When rememberRule is true and decision is approve, project permissions are updated to auto-approve future similar actions.',
+      'Batch approve or reject all eligible pending permission requests in a project or task subtree. Returns summary of decided and skipped approvals. When rememberRule is true and decision is approve, affected tasks receive task-scoped auto-approval rules for similar operations, without mutating global project policy.',
     schema: ClientDecideAllApprovalsSchema,
     readOnly: false,
   },

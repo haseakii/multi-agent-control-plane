@@ -30,12 +30,22 @@ export function InlineApprovalCard({
   const outcome = approvalOutcome(a.state);
   const stale =
     Date.now() > Date.parse(a.decisionEligibility.checkedAt) + a.decisionEligibility.validForMs;
+  const canRemember =
+    a.acp?.review.action === 'process.execute' ||
+    a.acp?.review.action === 'command.execute' ||
+    a.acp?.review.tool === 'run_command' ||
+    a.acp?.review.tool === 'bash' ||
+    a.acp?.review.tool === 'exec' ||
+    Boolean(a.acp?.review.action?.startsWith('workspace.')) ||
+    Boolean(a.acp?.review.action?.startsWith('file.')) ||
+    ['edit_file', 'create_file', 'read_file', 'write', 'read'].includes(a.acp?.review.tool ?? '') ||
+    ['file.read', 'file.write', 'file.workspace'].includes(a.action);
 
   const handleApprove = async () => {
-    if (trustSimilar && onTrustRule) {
+    if (trustSimilar && canRemember && onTrustRule) {
       await onTrustRule(a);
     }
-    onDecide(a.id, 'approve', trustSimilar);
+    onDecide(a.id, 'approve', trustSimilar && canRemember);
   };
 
   if (!pending) {
@@ -109,13 +119,21 @@ export function InlineApprovalCard({
       </div>
 
       <div className={s.inlineFooter}>
-        <label className={s.trustCheckbox}>
+        <label
+          className={s.trustCheckbox}
+          title={!canRemember ? '当前操作类型不支持自动记住，仅支持单次处理' : undefined}
+          style={!canRemember ? { opacity: 0.6, cursor: 'not-allowed' } : undefined}
+        >
           <input
             type="checkbox"
-            checked={trustSimilar}
+            checked={trustSimilar && canRemember}
+            disabled={!canRemember}
             onChange={(e) => setTrustSimilar(e.target.checked)}
           />
-          <span>本任务内自动批准同类操作（保留审计记录）</span>
+          <span>
+            本任务内自动批准同类操作（保留审计记录）
+            {!canRemember ? '（当前操作类型不支持自动记住）' : ''}
+          </span>
         </label>
         <div className={s.buttonGroup}>
           <button

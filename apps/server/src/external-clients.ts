@@ -97,26 +97,23 @@ export class ExternalClientsService {
         ...legacy
           .filter((client) => !records.some((row) => row.id === client.id))
           .map((client) => {
-            const hasApprovalTools = client.tools.some((name) =>
-              ['collaboration_decide_approval', 'collaboration_decide_all_approvals'].includes(
-                name,
-              ),
-            );
             const hasWriteTools = client.tools.some((name) =>
               clientToolDefinitions.some((tool) => tool.name === name && !tool.readOnly),
             );
-            const profile = hasApprovalTools
-              ? 'autonomous'
-              : hasWriteTools
-                ? 'collaborate'
-                : 'read';
+            // Legacy clients without a profile record are conservatively assigned 'collaborate'
+            // or 'read'. They are NEVER automatically promoted to 'autonomous'.
+            const profile = hasWriteTools ? 'collaborate' : 'read';
             const profileTools = toolsForProfile(profile);
-            const tools = Array.from(new Set([...client.tools, ...profileTools]));
+            // Profile tools act as an absolute upper bound / ceiling:
+            const tools = profileTools.filter((tool) => client.tools.includes(tool));
             return { ...client, tools };
           }),
         ...records.map((row) => {
           const profileTools = toolsForProfile(row.profile);
-          const tools = Array.from(new Set([...row.access.tools, ...profileTools]));
+          // Effective tools are bounded by row.profile. Even if historical DB records contain
+          // surplus tools (e.g. legacy collaborate client with approval tools or demoted autonomous),
+          // they are strictly capped to the current profile's allowed tools.
+          const tools = profileTools.filter((tool) => row.access.tools.includes(tool));
           return { ...row.access, tools };
         }),
       ],

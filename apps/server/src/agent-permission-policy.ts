@@ -86,13 +86,14 @@ export function agentPermissionDecision(
 
   // 3. Process / Command execution evaluation
   if (review.action === 'process.execute') {
-    // Commands must have a valid non-empty command parameter
+    // Commands strictly require a trusted, non-empty command body from resolved parameters.
+    // Working directory (cwd), target, or arbitrary display labels must NEVER be used as a substitute.
+    const rawCommand = resolved.command;
     const commandText =
-      (typeof resolved.command === 'string' && resolved.command.trim()) ||
-      (typeof review.target === 'string' && review.target.trim())
-        ? ((resolved.command as string | undefined) ?? review.target)
-        : null;
-    if (!commandText) return 'ask';
+      typeof rawCommand === 'string' && rawCommand.trim().length > 0 ? rawCommand.trim() : null;
+    if (!commandText) {
+      return 'ask';
+    }
 
     // Check task-scoped auto rule
     if (context?.taskScopeAutoRules?.has('commands')) {

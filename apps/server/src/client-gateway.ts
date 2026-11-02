@@ -638,16 +638,19 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
             targetState,
             `mcp-client:${identity.id}`,
             value.reason,
+            value.rememberRule,
           );
 
           let rememberedRule: { key: string; value: string } | null = null;
-          if (value.rememberRule && targetState === 'approved') {
+          if (
+            value.rememberRule &&
+            targetState === 'approved' &&
+            decided.state === 'approved' &&
+            approval.taskId
+          ) {
             const ruleKey = detectRuleToRemember(approval);
             if (ruleKey && (ruleKey === 'commands' || ruleKey === 'workspaceFiles')) {
-              if (approval.taskId) {
-                runtime.grantTaskScopePermission(approval.taskId, ruleKey);
-                rememberedRule = { key: ruleKey, value: 'task-scope:auto' };
-              }
+              rememberedRule = { key: ruleKey, value: 'task-scope:auto' };
             }
           }
 
@@ -690,13 +693,14 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
             tool?: string | null;
             target?: string | null;
             state: string;
+            rememberedRule?: string | null;
           }> = [];
           const skipped: Array<{
             approvalId: string;
             action: string;
             reason: string;
           }> = [];
-          const rulesToUpdate = new Set<'commands' | 'workspaceFiles' | 'outsideWorkspace'>();
+          const rememberedRulesSet = new Set<string>();
 
           for (const item of pendingList) {
             const eligibility = runtime.approvalDecisionEligibility(item);
@@ -721,18 +725,35 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
             }
 
             try {
-              const res = runtime.decideApproval(item.id, targetState, `mcp-client:${identity.id}`);
+              // Pass rememberRule to decideApproval so it grants task-scoped permission ONLY for this item's taskId and rule
+              const res = runtime.decideApproval(
+                item.id,
+                targetState,
+                `mcp-client:${identity.id}`,
+                undefined,
+                value.rememberRule,
+              );
+              let itemRememberedRule: string | null = null;
+              if (
+                value.rememberRule &&
+                targetState === 'approved' &&
+                res.state === 'approved' &&
+                item.taskId
+              ) {
+                const ruleKey = detectRuleToRemember(item);
+                if (ruleKey === 'commands' || ruleKey === 'workspaceFiles') {
+                  itemRememberedRule = ruleKey;
+                  rememberedRulesSet.add(ruleKey);
+                }
+              }
               decided.push({
                 approvalId: item.id,
                 action: item.action,
                 tool: item.acp?.review.tool ?? null,
                 target: item.acp?.review.target ?? null,
                 state: res.state,
+                rememberedRule: itemRememberedRule,
               });
-              if (value.rememberRule && targetState === 'approved') {
-                const ruleKey = detectRuleToRemember(item);
-                if (ruleKey) rulesToUpdate.add(ruleKey);
-              }
             } catch (err) {
               skipped.push({
                 approvalId: item.id,
@@ -742,25 +763,7 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
             }
           }
 
-          const rememberedRules: string[] = [];
-          if (rulesToUpdate.size > 0 && targetState === 'approved') {
-            for (const rk of rulesToUpdate) {
-              if (rk === 'commands' || rk === 'workspaceFiles') {
-                if (value.taskId) {
-                  runtime.grantTaskScopePermission(value.taskId, rk);
-                  rememberedRules.push(rk);
-                } else {
-                  for (const d of decided) {
-                    const fullItem = pendingList.find((p) => p.id === d.approvalId);
-                    if (fullItem?.taskId) {
-                      runtime.grantTaskScopePermission(fullItem.taskId, rk);
-                    }
-                  }
-                  rememberedRules.push(rk);
-                }
-              }
-            }
-          }
+          const rememberedRules: string[] = Array.from(rememberedRulesSet);
 
           result = {
             projectId: value.projectId,

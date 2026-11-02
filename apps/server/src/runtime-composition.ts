@@ -1311,13 +1311,34 @@ export class ControlPlaneRuntime {
     if (!approval) throw new TaskControlError(404, 'Approval not found.');
     if (approval.state !== 'pending' && approval.state !== state)
       throw new TaskControlError(409, 'Approval is already decided or expired.');
-    if (rememberRule && state === 'approved' && approval.taskId) {
-      const ruleKey =
-        approval.acp?.review.action === 'process.execute' ? 'commands' : 'workspaceFiles';
-      this.grantTaskScopePermission(approval.taskId, ruleKey);
-    }
     const result = this.approvals.resolve(approvalId, state, actor);
     if (approval.state === state) return result;
+
+    // Grant task-scoped auto rule ONLY after approval was successfully resolved to approved
+    if (rememberRule && state === 'approved' && result.state === 'approved' && approval.taskId) {
+      const action = approval.acp?.review.action ?? approval.action;
+      const tool = approval.acp?.review.tool;
+      const ruleKey =
+        action === 'process.execute' ||
+        action === 'command.execute' ||
+        tool === 'run_command' ||
+        tool === 'bash' ||
+        tool === 'exec'
+          ? 'commands'
+          : action.startsWith('file.') ||
+              action.startsWith('workspace.') ||
+              tool === 'edit_file' ||
+              tool === 'create_file' ||
+              tool === 'read_file' ||
+              tool === 'write' ||
+              tool === 'read'
+            ? 'workspaceFiles'
+            : null;
+      if (ruleKey) {
+        this.grantTaskScopePermission(approval.taskId, ruleKey, actor);
+      }
+    }
+
     this.event(
       result.projectId,
       'approval.decided',
@@ -1469,33 +1490,107 @@ export class ControlPlaneRuntime {
     });
   }
 
-  private readonly taskScopeRules = new Map<string, Set<'commands' | 'workspaceFiles'>>();
+  private readonly taskScopeGrants = new Map<
+    string,
+    Array<{
+      taskId: string;
+      projectId: string;
+      rule: 'commands' | 'workspaceFiles';
+      actor: string;
+      grantedAt: string;
+      revoked?: boolean;
+    }>
+  >();
 
-  grantTaskScopePermission(taskId: string, rule: 'commands' | 'workspaceFiles') {
-    let rules = this.taskScopeRules.get(taskId);
-    if (!rules) {
-      rules = new Set();
-      this.taskScopeRules.set(taskId, rules);
+  grantTaskScopePermission(
+    taskId: string,
+    rule: 'commands' | 'workspaceFiles',
+    actor: string = 'local-operator',
+  ) {
+    const task = this.storage.repositories.tasks.get(taskId);
+    if (!task) return;
+    if (task.state === 'completed' || task.state === 'failed' || task.state === 'cancelled') {
+      return;
     }
-    rules.add(rule);
+    let grants = this.taskScopeGrants.get(taskId);
+    if (!grants) {
+      grants = [];
+      this.taskScopeGrants.set(taskId, grants);
+    }
+    // Idempotent: do not duplicate active grant for the same rule
+    if (grants.some((g) => g.rule === rule && !g.revoked)) {
+      return;
+    }
+    grants.push({
+      taskId,
+      projectId: task.projectId,
+      rule,
+      actor,
+      grantedAt: new Date().toISOString(),
+    });
+    this.event(task.projectId, 'task.scope.granted', { taskId, rule, actor }, taskId);
+  }
+
+  revokeTaskScopePermissions(taskId: string) {
+    const grants = this.taskScopeGrants.get(taskId);
+    if (grants) {
+      for (const g of grants) {
+        g.revoked = true;
+      }
+    }
   }
 
   getTaskScopePermissions(taskId: string): ReadonlySet<'commands' | 'workspaceFiles'> {
     const result = new Set<'commands' | 'workspaceFiles'>();
+    const task = this.storage.repositories.tasks.get(taskId);
+    if (
+      !task ||
+      task.state === 'completed' ||
+      task.state === 'failed' ||
+      task.state === 'cancelled'
+    ) {
+      return result;
+    }
+
     let currentId: string | undefined = taskId;
     while (currentId) {
-      const rules = this.taskScopeRules.get(currentId);
-      if (rules) for (const r of rules) result.add(r);
-      const t = this.storage.repositories.tasks.get(currentId);
-      currentId = t?.parentTaskId;
+      const currentTask = this.storage.repositories.tasks.get(currentId);
+      // Boundary check: cannot cross project boundaries
+      if (!currentTask || currentTask.projectId !== task.projectId) break;
+      // If an ancestor task is in terminal state, its grants no longer propagate to descendants
+      if (
+        currentId !== taskId &&
+        (currentTask.state === 'completed' ||
+          currentTask.state === 'failed' ||
+          currentTask.state === 'cancelled')
+      ) {
+        break;
+      }
+      const grants = this.taskScopeGrants.get(currentId);
+      if (grants) {
+        for (const g of grants) {
+          if (!g.revoked) {
+            result.add(g.rule);
+          }
+        }
+      }
+      currentId = currentTask.parentTaskId;
     }
     return result;
   }
 
   private clientTaskOrigin(taskId: string): string | undefined {
-    return this.projectEvents(this.getTask(taskId).projectId).find(
-      (e) => e.taskId === taskId && e.type === 'client.task.submitted',
-    )?.actor.id;
+    let currentId: string | undefined = taskId;
+    while (currentId) {
+      const task = this.storage.repositories.tasks.get(currentId);
+      if (!task) break;
+      const origin = this.projectEvents(task.projectId).find(
+        (e) => e.taskId === currentId && e.type === 'client.task.submitted',
+      )?.actor.id;
+      if (origin) return origin;
+      currentId = task.parentTaskId;
+    }
+    return undefined;
   }
 
   private directExecution(taskId: string): boolean {
