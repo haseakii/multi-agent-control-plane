@@ -432,7 +432,9 @@ export function ExternalClients({
               />
               <span>
                 <strong>⚡ 完全自主协作（免审批通过）</strong>
-                <small>高权限级别。执行命令与工作区文件读写默认自动批准，无需人工逐条确认；敏感路径依然拦截，全程保留审计日志。</small>
+                <small>
+                  高权限级别。执行命令与工作区文件读写默认自动批准，无需人工逐条确认；敏感路径依然拦截，全程保留审计日志。
+                </small>
               </span>
             </label>
             <label className={s.choice}>
@@ -447,7 +449,9 @@ export function ExternalClients({
               />
               <span>
                 <strong>🤝 受限协作（需确认）</strong>
-                <small>标准协作级别。发任务与追问，但命令执行与关键操作需在控制台或 MCP 每次确认。</small>
+                <small>
+                  标准协作级别。发任务与追问，但命令执行与关键操作需在控制台或 MCP 每次确认。
+                </small>
               </span>
             </label>
             <label className={s.choice}>

@@ -194,8 +194,24 @@ it('allows external MCP clients to list, inspect, decide individually, and batch
     f.storage.repositories.executionAttempts.upsert(att2);
 
     // Seed 3 approvals for proj-a
-    const appCmd = mockAcpApproval('proj-a', 'task-1', 'process.execute', 'bash', 'npm test', true, 'sess-1');
-    const appFile = mockAcpApproval('proj-a', 'task-1', 'workspace.write', 'write', 'src/app.ts', true, 'sess-1');
+    const appCmd = mockAcpApproval(
+      'proj-a',
+      'task-1',
+      'process.execute',
+      'bash',
+      'npm test',
+      true,
+      'sess-1',
+    );
+    const appFile = mockAcpApproval(
+      'proj-a',
+      'task-1',
+      'workspace.write',
+      'write',
+      'src/app.ts',
+      true,
+      'sess-1',
+    );
     const appInvalid = mockAcpApproval(
       'proj-a',
       'task-2',
@@ -213,14 +229,22 @@ it('allows external MCP clients to list, inspect, decide individually, and batch
       attempt: att,
       abort: new AbortController(),
       sessionId: 'sess-1',
-      acpRequest: { approvalId: appCmd.id, signal: new AbortController().signal, binding: appCmd.acp },
+      acpRequest: {
+        approvalId: appCmd.id,
+        signal: new AbortController().signal,
+        binding: appCmd.acp,
+      },
     };
     const exec2 = {
       assignment: asgn2,
       attempt: att2,
       abort: new AbortController(),
       sessionId: 'sess-2',
-      acpRequest: { approvalId: appInvalid.id, signal: new AbortController().signal, binding: appInvalid.acp },
+      acpRequest: {
+        approvalId: appInvalid.id,
+        signal: new AbortController().signal,
+        binding: appInvalid.acp,
+      },
     };
     (f.runtime as any).active.set('task-1', exec1);
     (f.runtime as any).active.set('task-2', exec2);
@@ -313,7 +337,15 @@ it('allows external MCP clients to list, inspect, decide individually, and batch
     expect(rejectInvalid.json().result.state).toBe('rejected');
 
     // 5. Batch approve (collaboration_decide_all_approvals)
-    const batch1 = mockAcpApproval('proj-a', 'task-1', 'process.execute', 'bash', 'git status', true, 'sess-1');
+    const batch1 = mockAcpApproval(
+      'proj-a',
+      'task-1',
+      'process.execute',
+      'bash',
+      'git status',
+      true,
+      'sess-1',
+    );
     const batch2 = mockAcpApproval(
       'proj-a',
       'task-2',
@@ -325,8 +357,16 @@ it('allows external MCP clients to list, inspect, decide individually, and batch
       'att-2',
       'asgn-2',
     );
-    exec1.acpRequest = { approvalId: batch1.id, signal: new AbortController().signal, binding: batch1.acp! };
-    exec2.acpRequest = { approvalId: batch2.id, signal: new AbortController().signal, binding: batch2.acp! };
+    exec1.acpRequest = {
+      approvalId: batch1.id,
+      signal: new AbortController().signal,
+      binding: batch1.acp!,
+    };
+    exec2.acpRequest = {
+      approvalId: batch2.id,
+      signal: new AbortController().signal,
+      binding: batch2.acp!,
+    };
     f.storage.repositories.approvals.upsert(batch1);
     f.storage.repositories.approvals.upsert(batch2);
 

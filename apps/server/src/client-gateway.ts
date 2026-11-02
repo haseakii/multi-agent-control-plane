@@ -619,10 +619,7 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
             );
           }
           if (targetState === 'rejected' && !eligibility.canReject) {
-            throw new TaskControlError(
-              409,
-              `此确认请求无法拒绝（状态: ${eligibility.reason}）。`,
-            );
+            throw new TaskControlError(409, `此确认请求无法拒绝（状态: ${eligibility.reason}）。`);
           }
 
           const decided = runtime.decideApproval(
@@ -727,11 +724,7 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
             }
 
             try {
-              const res = runtime.decideApproval(
-                item.id,
-                targetState,
-                `mcp-client:${identity.id}`,
-              );
+              const res = runtime.decideApproval(item.id, targetState, `mcp-client:${identity.id}`);
               decided.push({
                 approvalId: item.id,
                 action: item.action,

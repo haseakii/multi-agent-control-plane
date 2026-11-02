@@ -504,8 +504,7 @@ export class PermissionReviewCollector {
       // leakage signals) do. Leave it to the missing/complete path instead.
       status: reasons.includes('truncated')
         ? 'truncated'
-        : reasons.includes('sdk_filtered') ||
-            reasons.includes('sensitive_redacted')
+        : reasons.includes('sdk_filtered') || reasons.includes('sensitive_redacted')
           ? 'invalid'
           : reasons.includes('history_expired')
             ? 'expired'

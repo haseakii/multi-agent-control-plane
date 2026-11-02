@@ -174,9 +174,7 @@ export function AgentPermissionsDialog({
                   >
                     <option value="ask">每次确认</option>
                     <option value="auto">
-                      {key === 'commands'
-                        ? '自动批准执行命令'
-                        : '自动批准访问工作区外文件'}
+                      {key === 'commands' ? '自动批准执行命令' : '自动批准访问工作区外文件'}
                     </option>
                     <option value="deny">拒绝</option>
                   </select>
