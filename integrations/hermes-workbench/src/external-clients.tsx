@@ -419,7 +419,22 @@ export function ExternalClients({
             </button>
           </fieldset>
           <fieldset disabled={!!busy}>
-            <legend>允许此应用做什么</legend>
+            <legend>允许此应用做什么（权限分级）</legend>
+            <label className={s.choice}>
+              <input
+                type="radio"
+                name="external-profile"
+                checked={profile === 'autonomous'}
+                onChange={() => {
+                  setProfile('autonomous');
+                  clearConfig();
+                }}
+              />
+              <span>
+                <strong>⚡ 完全自主协作（免审批通过）</strong>
+                <small>高权限级别。执行命令与工作区文件读写默认自动批准，无需人工逐条确认；敏感路径依然拦截，全程保留审计日志。</small>
+              </span>
+            </label>
             <label className={s.choice}>
               <input
                 type="radio"
@@ -431,8 +446,8 @@ export function ExternalClients({
                 }}
               />
               <span>
-                <strong>发任务与继续追问</strong>
-                <small>共用成员、附件、任务记录，可准备变更审阅。</small>
+                <strong>🤝 受限协作（需确认）</strong>
+                <small>标准协作级别。发任务与追问，但命令执行与关键操作需在控制台或 MCP 每次确认。</small>
               </span>
             </label>
             <label className={s.choice}>
@@ -446,14 +461,16 @@ export function ExternalClients({
                 }}
               />
               <span>
-                <strong>只查看</strong>
-                <small>仅展示查看工具，写操作仍由后台拒绝。</small>
+                <strong>👁️ 只查看</strong>
+                <small>仅展示查看工具，写操作与任务派发仍由后台拒绝。</small>
               </span>
             </label>
           </fieldset>
           <p className={s.policy}>
             <ShieldCheck size={17} />
-            仅对勾选项目生效。沿用当前自动审批；需要确认的命令与代码合并仍由你审阅。
+            {profile === 'autonomous'
+              ? '仅对勾选项目生效。命令与文件改动默认直接通过，代码合并仍需审阅。'
+              : '仅对勾选项目生效。沿用当前审批规则；需要确认的命令与代码合并仍由你审阅。'}
           </p>
           {stale && (
             <p className={s.error} role="alert">

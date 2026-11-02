@@ -25,7 +25,7 @@ export const CreateExternalClientSchema = z
     requestId: z.string().uuid(),
     name: z.string().trim().min(1).max(128),
     target: ExternalClientTargetSchema,
-    profile: z.enum(['read', 'collaborate']),
+    profile: z.enum(['read', 'collaborate', 'autonomous']),
     projectId: z.string().min(1).max(128).optional(),
     workspaceConfirmation: z
       .object({ workspaceId: z.string(), rootPath: z.string(), version: z.string() })
@@ -46,7 +46,7 @@ export const UpdateExternalClientGrantsSchema = z
     expectedRevision: z.number().int().nonnegative(),
     requestId: z.string().uuid(),
     projects: ProjectsSchema,
-    profile: z.enum(['read', 'collaborate']),
+    profile: z.enum(['read', 'collaborate', 'autonomous']),
   })
   .strict();
 type CreateInput = z.infer<typeof CreateExternalClientSchema>;
@@ -85,7 +85,7 @@ export class ExternalClientsService {
           }),
         ...records.map((row) => {
           const profileTools = clientToolDefinitions
-            .filter((tool) => row.profile === 'collaborate' || tool.readOnly)
+            .filter((tool) => row.profile !== 'read' || tool.readOnly)
             .map((tool) => tool.name);
           const tools = Array.from(new Set([...row.access.tools, ...profileTools]));
           return { ...row.access, tools };
@@ -316,14 +316,43 @@ export class ExternalClientsService {
             tokenSha256: createHash('sha256').update(token).digest('hex'),
             projects,
             tools: clientToolDefinitions
-              .filter((t) => input.profile === 'collaborate' || t.readOnly)
+              .filter((t) => input.profile !== 'read' || t.readOnly)
               .map((t) => t.name),
           },
         }),
       );
+      if (input.profile === 'autonomous') {
+        this.ensureAutonomousPolicy(projects);
+      }
       this.audit(this.repo.externalClients.get(id)!.access, 'created', 1);
     });
     return this.configuration(id);
+  }
+  private ensureAutonomousPolicy(projects: readonly { projectId: string }[]) {
+    for (const grant of projects) {
+      try {
+        const policy = this.options.runtime.getProjectPolicy(grant.projectId);
+        if (
+          policy.agentPermissions.commands !== 'auto' ||
+          policy.agentPermissions.workspaceFiles !== 'auto'
+        ) {
+          this.options.runtime.setProjectPolicy(grant.projectId, {
+            expectedRevision: policy.revision,
+            tools: policy.tools,
+            gitMerge: policy.gitMerge,
+            gitPush: policy.gitPush,
+            requireEnforcedExecution: policy.requireEnforcedExecution,
+            agentPermissions: {
+              ...policy.agentPermissions,
+              commands: 'auto',
+              workspaceFiles: 'auto',
+            },
+          });
+        }
+      } catch {
+        // non-fatal
+      }
+    }
   }
   updateGrants(id: string, raw: unknown) {
     const input = UpdateExternalClientGrantsSchema.parse(raw);
@@ -359,7 +388,7 @@ export class ExternalClientsService {
           ...access,
           projects,
           tools: clientToolDefinitions
-            .filter((tool) => input.profile === 'collaborate' || tool.readOnly)
+            .filter((tool) => input.profile !== 'read' || tool.readOnly)
             .map((tool) => tool.name),
         },
         profile: input.profile,
@@ -367,6 +396,9 @@ export class ExternalClientsService {
         lastUpdate: { requestId: input.requestId, requestHash },
       };
       this.repo.externalClients.upsert(next);
+      if (input.profile === 'autonomous') {
+        this.ensureAutonomousPolicy(projects);
+      }
       // Audit both removed and retained project scopes without granting removed scopes.
       this.audit(
         next.access,

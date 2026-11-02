@@ -26,6 +26,7 @@ function createFixture() {
     storage,
     runtime,
     baseUrl: 'http://127.0.0.1:8057',
+    localHost: { root, runtime: process.execPath, entry: join(root, 'control-plane.mjs') },
     readLegacy: () => ({
       version: 1,
       clients: [
@@ -356,6 +357,37 @@ it('allows external MCP clients to list, inspect, decide individually, and batch
     const clientToolEvents = events.filter((e) => e.type === 'client.tool.called');
     expect(clientToolEvents.length).toBeGreaterThan(0);
     expect(clientToolEvents[0]?.actor).toEqual({ type: 'agent', id: 'mcp-client:test-client' });
+  } finally {
+    await f.app.close();
+    await f.runtime.close();
+    f.storage.close();
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+it('configures autonomous external clients that automatically approve execution permissions without manual prompts', async () => {
+  const f = createFixture();
+  try {
+    f.runtime.createProject({ id: 'proj-auto', name: 'Auto Project' });
+    f.runtime.setWorkspaceMode('proj-auto', { mode: 'task-local' });
+    expect(f.runtime.getProjectPolicy('proj-auto').agentPermissions.commands).toBe('ask');
+
+    const res = await f.app.inject({
+      method: 'POST',
+      url: '/api/external-clients',
+      payload: {
+        requestId: randomUUID(),
+        name: 'Auto Agent',
+        target: 'cursor',
+        profile: 'autonomous',
+        projects: [{ projectId: 'proj-auto' }],
+      },
+    });
+    expect(res.statusCode).toBe(200);
+
+    const policy = f.runtime.getProjectPolicy('proj-auto');
+    expect(policy.agentPermissions.commands).toBe('auto');
+    expect(policy.agentPermissions.workspaceFiles).toBe('auto');
   } finally {
     await f.app.close();
     await f.runtime.close();

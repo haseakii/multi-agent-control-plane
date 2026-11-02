@@ -49,7 +49,7 @@ export const ExternalClientRecordSchema = z
     id: Id,
     access: ExternalClientAccessSchema,
     target: ExternalClientTargetSchema,
-    profile: z.enum(['read', 'collaborate']),
+    profile: z.enum(['read', 'collaborate', 'autonomous']),
     requestId: z.string().uuid(),
     requestHash: z.string().regex(/^[a-f0-9]{64}$/),
     createdAt: z.string().datetime(),
