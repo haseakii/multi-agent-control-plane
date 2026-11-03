@@ -416,7 +416,7 @@ setInterval(() => {}, 1000);`,
       });
     });
   } finally {
-    child.kill();
+    child.kill('SIGKILL');
     await exited;
   }
   expect(existsSync(join(f.data, 'control-plane.sqlite-wal'))).toBe(true);
