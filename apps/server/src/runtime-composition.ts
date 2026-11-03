@@ -1148,6 +1148,12 @@ export class ControlPlaneRuntime {
 
   submitTaskInstruction(taskId: string, input: unknown, clientId?: string) {
     const task = this.getTask(taskId);
+    if (clientId) {
+      const taskOrigin = this.clientTaskOrigin(task.id);
+      if (taskOrigin !== `mcp-client:${clientId}`) {
+        throw new TaskControlError(403, '无权向非本客户端发起的任务追加指令。');
+      }
+    }
     return this.instructionQueue.submit(
       task,
       input,
@@ -1533,8 +1539,8 @@ export class ControlPlaneRuntime {
       grants = [];
       this.taskScopeGrants.set(taskId, grants);
     }
-    // Idempotent: do not duplicate active grant for the same rule
-    if (grants.some((g) => g.rule === rule && !g.revoked)) {
+    // Idempotent: do not duplicate active grant for the same actor and rule
+    if (grants.some((g) => g.actor === actor && g.rule === rule && !g.revoked)) {
       return;
     }
     grants.push({
@@ -1556,11 +1562,15 @@ export class ControlPlaneRuntime {
     }
   }
 
-  revokeTaskScopeGrantsForClient(clientId: string, reason: string = 'client_revoked') {
+  revokeTaskScopeGrantsForClient(
+    clientId: string,
+    reason: string = 'client_revoked',
+    projectId?: string,
+  ) {
     const actor = `mcp-client:${clientId}`;
     for (const [taskId, grants] of this.taskScopeGrants.entries()) {
       for (const g of grants) {
-        if (g.actor === actor && !g.revoked) {
+        if (g.actor === actor && (!projectId || g.projectId === projectId) && !g.revoked) {
           g.revoked = true;
           this.event(
             g.projectId,
@@ -1609,16 +1619,22 @@ export class ControlPlaneRuntime {
           if (g.actor.startsWith('mcp-client:')) {
             const clientId = g.actor.slice('mcp-client:'.length);
             const client = this.storage.repositories.externalClients.get(clientId);
+            let reason: string | undefined;
             if (!client || !client.access.enabled) {
-              g.revoked = true;
-              continue;
+              reason = 'client_disabled_or_missing';
+            } else if (!client.access.projects.some((p) => p.projectId === task.projectId)) {
+              reason = 'project_access_removed';
+            } else if (client.profile !== 'autonomous') {
+              reason = 'profile_demoted';
             }
-            if (!client.access.projects.some((p) => p.projectId === task.projectId)) {
+            if (reason) {
               g.revoked = true;
-              continue;
-            }
-            if (client.profile !== 'autonomous') {
-              g.revoked = true;
+              this.event(
+                g.projectId,
+                'task.scope.revoked',
+                { taskId: g.taskId, rule: g.rule, actor: g.actor, reason },
+                g.taskId,
+              );
               continue;
             }
           }
@@ -1633,14 +1649,23 @@ export class ControlPlaneRuntime {
 
   clientTaskOrigin(taskId: string): string | undefined {
     let currentId: string | undefined = taskId;
-    while (currentId) {
+    const visited = new Set<string>();
+    while (currentId && !visited.has(currentId)) {
+      visited.add(currentId);
       const task = this.storage.repositories.tasks.get(currentId);
       if (!task) break;
-      const origin = this.projectEvents(task.projectId).find(
+      const events = this.projectEvents(task.projectId);
+      const submitOrigin = events.find(
         (e) => e.taskId === currentId && e.type === 'client.task.submitted',
       )?.actor.id;
-      if (origin) return origin;
-      currentId = task.parentTaskId;
+      if (submitOrigin) return submitOrigin;
+      const followupOrigin = events.find(
+        (e) => e.taskId === currentId && e.type === 'task.followup.created',
+      );
+      if (followupOrigin?.actor.id?.startsWith('mcp-client:')) {
+        return followupOrigin.actor.id;
+      }
+      currentId = task.parentTaskId ?? (followupOrigin?.payload as any)?.sourceTaskId;
     }
     return undefined;
   }
@@ -1965,6 +1990,12 @@ export class ControlPlaneRuntime {
     const request = FollowUpTaskSchema.parse(input);
     return this.storage.repositories.transaction(() => {
       const previous = this.getTask(taskId);
+      if (clientId) {
+        const clientOrigin = this.clientTaskOrigin(previous.id);
+        if (clientOrigin !== `mcp-client:${clientId}`) {
+          throw new TaskControlError(403, '无权基于非本客户端发起的任务创建追问任务。');
+        }
+      }
       const events = this.projectEvents(previous.projectId).filter(
         (e) => e.type === 'task.followup.created',
       );

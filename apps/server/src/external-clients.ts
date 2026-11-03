@@ -396,6 +396,18 @@ export class ExternalClientsService {
         next.revision,
         access.projects.map((project) => project.projectId),
       );
+      const previousProjects = access.projects.map((project) => project.projectId);
+      const currentProjects = new Set(projects.map((project) => project.projectId));
+      const removedProjects = previousProjects.filter(
+        (projectId) => !currentProjects.has(projectId),
+      );
+      for (const removedProjectId of removedProjects) {
+        this.options.runtime.revokeTaskScopeGrantsForClient(
+          id,
+          'project_access_removed',
+          removedProjectId,
+        );
+      }
       if (input.profile !== 'autonomous') {
         this.options.runtime.revokeTaskScopeGrantsForClient(id, 'client_demoted');
       }

@@ -444,6 +444,10 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
         case 'collaboration_continue_task': {
           const value = clientToolDefinitions[5].schema.parse(input);
           const { task, grant } = taskAccess(value.taskId, ['control_send_message']);
+          const taskOrigin = runtime.clientTaskOrigin(task.id);
+          if (taskOrigin !== `mcp-client:${identity.id}`) {
+            throw new TaskControlError(403, '无权向非本客户端发起的任务追加指令。');
+          }
           if (ended(task))
             authorize(task.projectId, ['control_create_task', 'control_delegate_task']);
           authorizeAttachments(task.projectId, value.attachmentIds);
@@ -479,7 +483,11 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
         }
         case 'collaboration_cancel_task': {
           const value = clientToolDefinitions[6].schema.parse(input);
-          taskAccess(value.taskId, ['control_cancel_task']);
+          const { task } = taskAccess(value.taskId, ['control_cancel_task']);
+          const taskOrigin = runtime.clientTaskOrigin(task.id);
+          if (taskOrigin !== `mcp-client:${identity.id}`) {
+            throw new TaskControlError(403, '无权取消非本客户端发起的任务。');
+          }
           result = { task: card(await runtime.cancelTask(value.taskId)) };
           break;
         }
