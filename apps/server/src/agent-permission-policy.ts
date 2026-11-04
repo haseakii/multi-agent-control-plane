@@ -31,6 +31,11 @@ export function permissionTargetInside(root: string, target: string): boolean {
   }
 }
 
+/** Whether a concrete file target qualifies for task-wide workspace approval. */
+export function permissionTargetRememberable(root: string, target: string): boolean {
+  return permissionTargetInside(root, target) && !protectedPath.test(relative(root, target));
+}
+
 export type AgentPermissionEvaluationContext = {
   /** Temporary auto rules granted for this specific task scope */
   taskScopeAutoRules?: ReadonlySet<'commands' | 'workspaceFiles'> | undefined;
@@ -118,7 +123,7 @@ export function agentPermissionDecision(
   if (!workspace || !review.target || !permissionTargetInside(workspace.rootPath, review.target)) {
     return rules.outsideWorkspace;
   }
-  if (!workspace.isolated || protectedPath.test(relative(workspace.rootPath, review.target))) {
+  if (!workspace.isolated || !permissionTargetRememberable(workspace.rootPath, review.target)) {
     return 'ask';
   }
 

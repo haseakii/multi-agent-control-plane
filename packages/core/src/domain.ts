@@ -465,6 +465,7 @@ export const ApprovalDecisionEligibilitySchema = z
   );
 export type ApprovalDecisionEligibility = z.infer<typeof ApprovalDecisionEligibilitySchema>;
 export const ApprovalViewSchema = ApprovalSchema.extend({
+  rememberRuleEligible: z.boolean().optional(),
   decisionEligibility: ApprovalDecisionEligibilitySchema,
 });
 export type ApprovalView = z.infer<typeof ApprovalViewSchema>;

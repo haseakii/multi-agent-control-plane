@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { rememberableApprovalRule } from './approval-remember.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it, describe, afterEach } from 'vitest';
@@ -435,7 +436,9 @@ describe('PR #47 Round 4 Security & Permission Fixes', () => {
       // Idempotency check: Local operator repeats grant -> should not duplicate
       runtime.grantTaskScopePermission('task-t1', 'commands', 'local-operator');
 
-      const grants = (runtime as any).taskScopeGrants.get('task-t1');
+      const grants = (runtime as any)
+        .taskScopeGrants('proj-1')
+        .filter((g: any) => g.taskId === 'task-t1');
       expect(grants).toBeDefined();
       expect(grants.length).toBe(2);
       expect(
@@ -606,5 +609,236 @@ describe('PR #47 Round 4 Security & Permission Fixes', () => {
         .filter((e) => e.taskId === 'task-audit-3' && e.type === 'task.scope.revoked');
       expect(events2.length).toBe(1);
     });
+  });
+});
+
+describe('PR #47 review regressions', () => {
+  it('keeps locally created follow-ups and their children outside the earlier client identity', async () => {
+    const { runtime, storage, app, tokenA, seedTask, seedActiveExecution } = createRound4Fixture();
+    seedTask({ id: 'external-root', originClient: 'client-a', state: 'completed' });
+    seedTask({ id: 'local-followup', originClient: 'client-a', state: 'running' }); // legacy copied submit event
+    storage.repositories.events.append({
+      id: 'local-followup-created',
+      projectId: 'proj-1',
+      taskId: 'local-followup',
+      type: 'task.followup.created',
+      actor: { type: 'user', id: 'local-operator' },
+      payload: { sourceTaskId: 'external-root' },
+      occurredAt: new Date().toISOString(),
+    });
+    seedTask({ id: 'local-child', parentTaskId: 'local-followup' });
+    seedActiveExecution('local-followup');
+    expect(runtime.clientTaskOrigin('local-followup')).toBeUndefined();
+    expect(runtime.clientTaskOrigin('local-child')).toBeUndefined();
+    const response = await app.inject({
+      method: 'POST',
+      url: '/internal/client/tool',
+      headers: { authorization: `Bearer ${tokenA}` },
+      payload: {
+        toolName: 'collaboration_continue_task',
+        input: { taskId: 'local-followup', content: 'inject', idempotencyKey: 'local-check' },
+      },
+    });
+    expect(response.statusCode).toBe(403);
+  });
+
+  it('recovers independent grants and revocations across database reopen without trusting old unversioned events', () => {
+    const { root, storage, runtime, seedTask } = createRound4Fixture();
+    seedTask({ id: 'persist-task', originClient: 'client-a' });
+    runtime.grantTaskScopePermission('persist-task', 'commands', 'mcp-client:client-a');
+    runtime.grantTaskScopePermission('persist-task', 'commands', 'local-operator');
+    runtime.revokeTaskScopeGrantsForClient('client-a');
+    storage.repositories.events.append({
+      id: 'old-unsafe-grant',
+      projectId: 'proj-1',
+      taskId: 'persist-task',
+      type: 'task.scope.granted',
+      actor: { type: 'system', id: 'runtime-composition' },
+      payload: { taskId: 'persist-task', rule: 'workspaceFiles', actor: 'local-operator' },
+      occurredAt: new Date().toISOString(),
+    });
+    storage.close();
+    const reopened = openSqliteStorage({ filename: join(root, 'state.sqlite') });
+    openStorages.push(reopened);
+    const restored = createControlPlaneRuntime({
+      storage: reopened,
+      workspaceRoot: join(root, 'workspaces'),
+      artifactRoot: join(root, 'artifacts'),
+    });
+    expect([...restored.getTaskScopePermissions('persist-task')]).toEqual(['commands']);
+    restored.revokeTaskScopePermissions('persist-task');
+    expect(restored.getTaskScopePermissions('persist-task').size).toBe(0);
+    const again = createControlPlaneRuntime({
+      storage: reopened,
+      workspaceRoot: join(root, 'workspaces'),
+      artifactRoot: join(root, 'artifacts'),
+    });
+    expect(again.getTaskScopePermissions('persist-task').size).toBe(0);
+  });
+
+  it('does not grant a remembered workspace rule when an outside file is approved', async () => {
+    const { root, storage, runtime, app, tokenA, seedTask, seedActiveExecution } =
+      createRound4Fixture();
+    seedTask({ id: 'outside-task', originClient: 'client-a' });
+    seedActiveExecution('outside-task');
+    const work = join(root, 'isolated');
+    mkdirSync(work);
+    storage.repositories.workspaces.upsert({
+      id: 'isolated-w',
+      projectId: 'proj-1',
+      provider: 'local-directory',
+      rootPath: work,
+      access: 'read-write',
+    });
+    storage.repositories.assignmentWorkspaces.upsert({
+      id: 'asgn-outside-task',
+      projectId: 'proj-1',
+      taskId: 'outside-task',
+      workspaceId: 'isolated-w',
+      sourceWorkspaceId: 'isolated-w',
+      mode: 'task-local',
+      createdAt: new Date().toISOString(),
+    });
+    const expiresAt = new Date(Date.now() + 60000).toISOString();
+    const binding = {
+      version: 1,
+      attemptId: 'att-outside-task',
+      attemptNumber: 1,
+      sessionId: 'sha256:' + createHash('sha256').update('sess-1').digest('hex'),
+      toolCallId: 'sha256:' + '1'.repeat(64),
+      requestId: randomUUID(),
+      expiresAt,
+      review: {
+        version: 1,
+        status: 'complete',
+        tool: 'edit_file',
+        action: 'file.write',
+        target: join(root, 'outside.txt'),
+        parameters: { resolved: { fileOperation: 'write' } },
+        provenance: {},
+        presence: {},
+        reasons: [],
+        historyUsed: false,
+        observedAt: new Date().toISOString(),
+        expiresAt,
+      },
+    };
+    storage.repositories.approvals.upsert({
+      id: 'outside-approval',
+      projectId: 'proj-1',
+      taskId: 'outside-task',
+      assignmentId: 'asgn-outside-task',
+      requesterAgentId: 'worker',
+      action: 'acp.tool',
+      resource: { review: binding.review },
+      enforcementMode: 'cooperative',
+      boundary: 'acp-permission',
+      state: 'pending',
+      requestedAt: new Date().toISOString(),
+      acp: binding,
+    });
+    (runtime as any).active.get('outside-task').acpRequest = {
+      approvalId: 'outside-approval',
+      signal: new AbortController().signal,
+      binding,
+    };
+    const listed = await app.inject({
+      method: 'POST',
+      url: '/internal/client/tool',
+      headers: { authorization: `Bearer ${tokenA}` },
+      payload: { toolName: 'collaboration_list_approvals', input: { projectId: 'proj-1' } },
+    });
+    expect(listed.json().result.approvals[0].rememberRuleEligible).toBe(false);
+    const decided = await app.inject({
+      method: 'POST',
+      url: '/internal/client/tool',
+      headers: { authorization: `Bearer ${tokenA}` },
+      payload: {
+        toolName: 'collaboration_decide_approval',
+        input: { approvalId: 'outside-approval', decision: 'approve', rememberRule: true },
+      },
+    });
+    expect(decided.statusCode, decided.body).toBe(200);
+    expect(decided.json().result.rememberedRule).toBeNull();
+    expect(runtime.getTaskScopePermissions('outside-task').size).toBe(0);
+  });
+
+  it('replays scope changes in append order and rolls back failed transactions', () => {
+    const { runtime, storage, seedTask } = createRound4Fixture();
+    seedTask({ id: 'ordered-task' });
+    const event = {
+      projectId: 'proj-1',
+      taskId: 'ordered-task',
+      actor: { type: 'system', id: 'runtime-composition' },
+      payload: { version: 1, taskId: 'ordered-task', rule: 'commands', actor: 'local-operator' },
+    };
+    storage.repositories.events.append({
+      ...event,
+      id: 'scope-grant-future',
+      type: 'task.scope.granted',
+      occurredAt: '2030-01-01T00:00:00.000Z',
+    });
+    storage.repositories.events.append({
+      ...event,
+      id: 'scope-revoke-past',
+      type: 'task.scope.revoked',
+      occurredAt: '2020-01-01T00:00:00.000Z',
+    });
+    expect(runtime.getTaskScopePermissions('ordered-task').size).toBe(0);
+    expect(() =>
+      storage.repositories.transaction(() => {
+        runtime.grantTaskScopePermission('ordered-task', 'commands');
+        throw new Error('rollback');
+      }),
+    ).toThrow('rollback');
+    expect(runtime.getTaskScopePermissions('ordered-task').size).toBe(0);
+  });
+
+  it('only remembers file approvals inside the bound isolated workspace', () => {
+    const { root, storage, seedTask, seedActiveExecution } = createRound4Fixture();
+    seedTask({ id: 'file-task' });
+    seedActiveExecution('file-task');
+    const work = join(root, 'actual-workspace');
+    mkdirSync(work);
+    storage.repositories.workspaces.upsert({
+      id: 'w',
+      projectId: 'proj-1',
+      provider: 'local-directory',
+      rootPath: work,
+      access: 'read-write',
+    });
+    storage.repositories.assignmentWorkspaces.upsert({
+      id: 'asgn-file-task',
+      projectId: 'proj-1',
+      taskId: 'file-task',
+      workspaceId: 'w',
+      sourceWorkspaceId: 'w',
+      mode: 'task-local',
+      createdAt: new Date().toISOString(),
+    });
+    const approval = {
+      projectId: 'proj-1',
+      taskId: 'file-task',
+      assignmentId: 'asgn-file-task',
+      action: 'acp.tool',
+      boundary: 'acp-permission',
+      acp: {
+        review: {
+          status: 'complete',
+          reasons: [],
+          action: 'file.write',
+          tool: 'edit_file',
+          target: join(work, 'file.txt'),
+          parameters: { resolved: { fileOperation: 'write' } },
+        },
+      },
+    } as any;
+    expect(rememberableApprovalRule(storage, approval)).toBe('workspaceFiles');
+    approval.acp.review.target = join(root, 'outside.txt');
+    expect(rememberableApprovalRule(storage, approval)).toBeUndefined();
+    approval.acp.review.target = join(work, '.env');
+    expect(rememberableApprovalRule(storage, approval)).toBeUndefined();
+    approval.assignmentId = 'missing';
+    expect(rememberableApprovalRule(storage, approval)).toBeUndefined();
   });
 });

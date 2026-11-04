@@ -1,3 +1,4 @@
+import { rememberableApprovalRule } from './approval-remember.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { AgentProgressRecorder } from './agent-progress.js';
@@ -63,7 +64,6 @@ import {
   ProjectPolicyInputSchema,
   SessionSettingValuesSchema,
   SessionSettingsSnapshotSchema,
-  classifyApprovalOperation,
 } from '@control-plane/core';
 import {
   ClientSubmitSchema,
@@ -1246,6 +1246,7 @@ export class ControlPlaneRuntime {
         ApprovalViewSchema.parse({
           ...approval,
           decisionEligibility: this.approvalDecisionEligibility(approval),
+          rememberRuleEligible: !!rememberableApprovalRule(this.storage, approval),
         }),
       ),
     };
@@ -1355,8 +1356,8 @@ export class ControlPlaneRuntime {
 
     // Grant task-scoped auto rule ONLY after approval was successfully resolved to approved
     if (rememberRule && state === 'approved' && result.state === 'approved' && approval.taskId) {
-      const category = classifyApprovalOperation(approval);
-      if (category === 'commands' || category === 'workspaceFiles') {
+      const category = rememberableApprovalRule(this.storage, approval);
+      if (category) {
         this.grantTaskScopePermission(approval.taskId, category, actor);
       }
     }
@@ -1512,135 +1513,124 @@ export class ControlPlaneRuntime {
     });
   }
 
-  private readonly taskScopeGrants = new Map<
-    string,
-    Array<{
-      taskId: string;
-      projectId: string;
-      rule: 'commands' | 'workspaceFiles';
-      actor: string;
-      grantedAt: string;
-      revoked?: boolean;
-    }>
-  >();
+  // Scope decisions are replayed from the existing durable event journal in append order.
+  // Older unversioned grants were not checked against the workspace boundary and fail closed.
+  private taskScopeGrants(projectId: string) {
+    const grants = new Map<
+      string,
+      { taskId: string; projectId: string; rule: 'commands' | 'workspaceFiles'; actor: string }
+    >();
+    for (const event of this.storage.repositories.events.listTaskScopeEvents(projectId)) {
+      const { taskId, rule, actor, version } = event.payload;
+      if (
+        version !== 1 ||
+        typeof taskId !== 'string' ||
+        event.taskId !== taskId ||
+        (rule !== 'commands' && rule !== 'workspaceFiles') ||
+        typeof actor !== 'string' ||
+        event.actor.type !== 'system' ||
+        event.actor.id !== 'runtime-composition'
+      )
+        continue;
+      const key = JSON.stringify([taskId, rule, actor]);
+      if (event.type === 'task.scope.granted') grants.set(key, { taskId, projectId, rule, actor });
+      else grants.delete(key);
+    }
+    return [...grants.values()];
+  }
 
   grantTaskScopePermission(
     taskId: string,
     rule: 'commands' | 'workspaceFiles',
-    actor: string = 'local-operator',
+    actor = 'local-operator',
   ) {
-    const task = this.storage.repositories.tasks.get(taskId);
-    if (!task) return;
-    if (task.state === 'completed' || task.state === 'failed' || task.state === 'cancelled') {
-      return;
-    }
-    let grants = this.taskScopeGrants.get(taskId);
-    if (!grants) {
-      grants = [];
-      this.taskScopeGrants.set(taskId, grants);
-    }
-    // Idempotent: do not duplicate active grant for the same actor and rule
-    if (grants.some((g) => g.actor === actor && g.rule === rule && !g.revoked)) {
-      return;
-    }
-    grants.push({
-      taskId,
-      projectId: task.projectId,
-      rule,
-      actor,
-      grantedAt: new Date().toISOString(),
+    this.storage.repositories.transaction(() => {
+      const task = this.storage.repositories.tasks.get(taskId);
+      if (!task || ['completed', 'failed', 'cancelled'].includes(task.state)) return;
+      if (
+        this.taskScopeGrants(task.projectId).some(
+          (g) => g.taskId === taskId && g.rule === rule && g.actor === actor,
+        )
+      )
+        return;
+      this.event(task.projectId, 'task.scope.granted', { version: 1, taskId, rule, actor }, taskId);
     });
-    this.event(task.projectId, 'task.scope.granted', { taskId, rule, actor }, taskId);
   }
 
   revokeTaskScopePermissions(taskId: string) {
-    const grants = this.taskScopeGrants.get(taskId);
-    if (grants) {
-      for (const g of grants) {
-        g.revoked = true;
+    this.storage.repositories.transaction(() => {
+      const task = this.storage.repositories.tasks.get(taskId);
+      if (!task) return;
+      for (const g of this.taskScopeGrants(task.projectId).filter((g) => g.taskId === taskId)) {
+        this.event(
+          g.projectId,
+          'task.scope.revoked',
+          { version: 1, taskId, rule: g.rule, actor: g.actor, reason: 'task_scope_revoked' },
+          taskId,
+        );
       }
-    }
+    });
   }
 
-  revokeTaskScopeGrantsForClient(
-    clientId: string,
-    reason: string = 'client_revoked',
-    projectId?: string,
-  ) {
-    const actor = `mcp-client:${clientId}`;
-    for (const [taskId, grants] of this.taskScopeGrants.entries()) {
-      for (const g of grants) {
-        if (g.actor === actor && (!projectId || g.projectId === projectId) && !g.revoked) {
-          g.revoked = true;
+  revokeTaskScopeGrantsForClient(clientId: string, reason = 'client_revoked', projectId?: string) {
+    this.storage.repositories.transaction(() => {
+      const actor = `mcp-client:${clientId}`;
+      const projects = projectId
+        ? [projectId]
+        : this.storage.repositories.projects.list().map((p) => p.id);
+      for (const project of projects) {
+        for (const g of this.taskScopeGrants(project).filter((grant) => grant.actor === actor)) {
           this.event(
-            g.projectId,
+            project,
             'task.scope.revoked',
-            { taskId, rule: g.rule, actor, reason },
-            taskId,
+            { version: 1, taskId: g.taskId, rule: g.rule, actor, reason },
+            g.taskId,
           );
         }
       }
-    }
+    });
   }
 
   getTaskScopePermissions(taskId: string): ReadonlySet<'commands' | 'workspaceFiles'> {
     const result = new Set<'commands' | 'workspaceFiles'>();
     const task = this.storage.repositories.tasks.get(taskId);
-    if (
-      !task ||
-      task.state === 'completed' ||
-      task.state === 'failed' ||
-      task.state === 'cancelled'
-    ) {
-      return result;
-    }
-
+    if (!task || ['completed', 'failed', 'cancelled'].includes(task.state)) return result;
+    const grants = this.taskScopeGrants(task.projectId);
     let currentId: string | undefined = taskId;
-    while (currentId) {
+    const visited = new Set<string>();
+    while (currentId && !visited.has(currentId)) {
+      visited.add(currentId);
       const currentTask = this.storage.repositories.tasks.get(currentId);
-      // Boundary check: cannot cross project boundaries
-      if (!currentTask || currentTask.projectId !== task.projectId) break;
-      // If an ancestor task is in terminal state, its grants no longer propagate to descendants
       if (
-        currentId !== taskId &&
-        (currentTask.state === 'completed' ||
-          currentTask.state === 'failed' ||
-          currentTask.state === 'cancelled')
-      ) {
+        !currentTask ||
+        currentTask.projectId !== task.projectId ||
+        (currentId !== taskId && ['completed', 'failed', 'cancelled'].includes(currentTask.state))
+      )
         break;
-      }
-      const grants = this.taskScopeGrants.get(currentId);
-      if (grants) {
-        for (const g of grants) {
-          if (g.revoked) continue;
-
-          // Re-validate actor validity:
-          // If granted by an external MCP client (actor === 'mcp-client:<id>'), re-check client state
-          if (g.actor.startsWith('mcp-client:')) {
-            const clientId = g.actor.slice('mcp-client:'.length);
-            const client = this.storage.repositories.externalClients.get(clientId);
-            let reason: string | undefined;
-            if (!client || !client.access.enabled) {
-              reason = 'client_disabled_or_missing';
-            } else if (!client.access.projects.some((p) => p.projectId === task.projectId)) {
-              reason = 'project_access_removed';
-            } else if (client.profile !== 'autonomous') {
-              reason = 'profile_demoted';
-            }
-            if (reason) {
-              g.revoked = true;
-              this.event(
-                g.projectId,
-                'task.scope.revoked',
-                { taskId: g.taskId, rule: g.rule, actor: g.actor, reason },
-                g.taskId,
-              );
-              continue;
-            }
+      for (const g of grants.filter((grant) => grant.taskId === currentId)) {
+        if (g.actor.startsWith('mcp-client:')) {
+          const client = this.storage.repositories.externalClients.get(
+            g.actor.slice('mcp-client:'.length),
+          );
+          const reason =
+            !client || !client.access.enabled
+              ? 'client_disabled_or_missing'
+              : !client.access.projects.some((p) => p.projectId === task.projectId)
+                ? 'project_access_removed'
+                : client.profile !== 'autonomous'
+                  ? 'profile_demoted'
+                  : undefined;
+          if (reason) {
+            this.event(
+              g.projectId,
+              'task.scope.revoked',
+              { version: 1, taskId: g.taskId, rule: g.rule, actor: g.actor, reason },
+              g.taskId,
+            );
+            continue;
           }
-
-          result.add(g.rule);
         }
+        result.add(g.rule);
       }
       currentId = currentTask.parentTaskId;
     }
@@ -1655,17 +1645,19 @@ export class ControlPlaneRuntime {
       const task = this.storage.repositories.tasks.get(currentId);
       if (!task) break;
       const events = this.projectEvents(task.projectId);
+      const followupOrigin = events.find(
+        (e) => e.taskId === currentId && e.type === 'task.followup.created',
+      );
+      if (followupOrigin) {
+        return followupOrigin.actor.id.startsWith('mcp-client:')
+          ? followupOrigin.actor.id
+          : undefined;
+      }
       const submitOrigin = events.find(
         (e) => e.taskId === currentId && e.type === 'client.task.submitted',
       )?.actor.id;
       if (submitOrigin) return submitOrigin;
-      const followupOrigin = events.find(
-        (e) => e.taskId === currentId && e.type === 'task.followup.created',
-      );
-      if (followupOrigin?.actor.id?.startsWith('mcp-client:')) {
-        return followupOrigin.actor.id;
-      }
-      currentId = task.parentTaskId ?? (followupOrigin?.payload as any)?.sourceTaskId;
+      currentId = task.parentTaskId;
     }
     return undefined;
   }
@@ -2047,7 +2039,6 @@ export class ControlPlaneRuntime {
           .at(-1)?.agentId ?? this.getProject(previous.projectId).defaultBossAgentId;
       if (!agentId) throw new TaskControlError(409, '会话没有可用执行成员。');
       const agent = this.requireAgent(agentId);
-      const clientOrigin = this.clientTaskOrigin(previous.id);
       const direct = this.directExecution(previous.id);
       if (!direct) this.agentControl.selectBoss(previous.projectId, agent.id);
       const workspace = this.executionWorkspace(previous.projectId, agent);
@@ -2136,14 +2127,14 @@ export class ControlPlaneRuntime {
           this.instructionText(historyInstructions, true),
         { name: direct ? 'Collaborator' : 'Boss' },
       );
-      if (clientOrigin)
+      if (clientId)
         this.storage.repositories.events.append(
           AuditEventSchema.parse({
             id: id('event'),
             projectId: task.projectId,
             taskId: task.id,
             type: 'client.task.submitted',
-            actor: { type: 'agent', id: clientId ? 'mcp-client:' + clientId : clientOrigin },
+            actor: { type: 'agent', id: 'mcp-client:' + clientId },
             payload: { sourceTaskId: previous.id, executionMode: 'worker' },
             occurredAt: now(),
           }),

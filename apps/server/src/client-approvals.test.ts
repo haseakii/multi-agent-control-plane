@@ -107,7 +107,9 @@ function mockAcpApproval(
       tool,
       action,
       target,
-      parameters: {},
+      parameters: {
+        resolved: action === 'process.execute' ? { command: target } : { fileOperation: 'write' },
+      },
       provenance: {},
       presence: {},
       reasons: complete ? [] : ['missing_tool'],
@@ -131,6 +133,29 @@ function mockAcpApproval(
     requestedAt: new Date().toISOString(),
     acp: binding,
   };
+}
+
+function seedFileWorkspace(f: ReturnType<typeof createFixture>, approval: Approval) {
+  const taskId = approval.taskId!;
+  const projectId = approval.projectId;
+  const workspaceId = `workspace-${taskId}`;
+  f.storage.repositories.workspaces.upsert({
+    id: workspaceId,
+    projectId,
+    provider: 'local-directory',
+    rootPath: f.root,
+    access: 'read-write',
+  });
+  f.storage.repositories.assignmentWorkspaces.upsert({
+    id: approval.assignmentId,
+    projectId,
+    taskId,
+    workspaceId,
+    sourceWorkspaceId: workspaceId,
+    mode: 'task-local',
+    createdAt: new Date().toISOString(),
+  });
+  approval.acp!.review.target = join(f.root, 'src', 'file.ts');
 }
 
 function seedClientTaskOrigin(
@@ -266,6 +291,8 @@ it('allows external MCP clients to list, inspect, decide individually, and batch
       'att-2',
       'asgn-2',
     );
+
+    seedFileWorkspace(f, appFile);
 
     const exec1 = {
       assignment: asgn,
@@ -815,6 +842,7 @@ it('enforces precise per-item batch scoping without cross-task permission spread
       'asgn-d',
     );
 
+    seedFileWorkspace(f, appB);
     f.storage.repositories.approvals.upsert(appA);
     f.storage.repositories.approvals.upsert(appB);
     f.storage.repositories.approvals.upsert(appC);

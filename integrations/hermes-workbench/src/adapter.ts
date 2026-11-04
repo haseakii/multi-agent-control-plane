@@ -122,6 +122,7 @@ export const Snapshot = z.object({
           }),
         })
         .optional(),
+      rememberRuleEligible: z.boolean().optional(),
       decisionEligibility: z.object({
         canApprove: z.boolean(),
         canReject: z.boolean(),

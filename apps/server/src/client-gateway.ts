@@ -1,15 +1,10 @@
+import { rememberableApprovalRule } from './approval-remember.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import {
-  AuditEventSchema,
-  INPUT_ATTACHMENT_MAX_BYTES,
-  classifyApprovalOperation,
-  canRememberApprovalRule,
-  type Task,
-} from '@control-plane/core';
+import { AuditEventSchema, INPUT_ATTACHMENT_MAX_BYTES, type Task } from '@control-plane/core';
 import {
   ClientToolRequestSchema,
   ClientAttachmentUploadQuerySchema,
@@ -582,9 +577,8 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
             total: approvals.length,
             pendingCount: approvals.filter((a) => a.state === 'pending').length,
             approvals: approvals.map((a) => {
-              const ruleCategory = classifyApprovalOperation(a);
-              const rememberRuleEligible =
-                ruleCategory === 'commands' || ruleCategory === 'workspaceFiles';
+              const ruleCategory = rememberableApprovalRule(options.storage, a);
+              const rememberRuleEligible = !!ruleCategory;
               return {
                 id: a.id,
                 taskId: a.taskId,
@@ -648,7 +642,7 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
             decided.state === 'approved' &&
             approval.taskId
           ) {
-            const ruleKey = classifyApprovalOperation(approval);
+            const ruleKey = rememberableApprovalRule(options.storage, approval);
             if (ruleKey === 'commands' || ruleKey === 'workspaceFiles') {
               rememberedRule = { key: ruleKey, value: 'task-scope:auto' };
             }
@@ -751,7 +745,7 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
                 res.state === 'approved' &&
                 item.taskId
               ) {
-                const ruleKey = classifyApprovalOperation(item);
+                const ruleKey = rememberableApprovalRule(options.storage, item);
                 if (ruleKey === 'commands' || ruleKey === 'workspaceFiles') {
                   itemRememberedRule = ruleKey;
                   rememberedRulesSet.add(ruleKey);

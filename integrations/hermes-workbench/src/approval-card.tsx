@@ -4,7 +4,6 @@ import { ShieldAlert, Terminal, AlertTriangle, ShieldCheck } from 'lucide-react'
 import type { SnapshotData } from './adapter';
 import { PermissionEditPreview } from './permission-edit-preview';
 import { approvalOutcome, approvalSummary } from './approval-summary';
-import { canRememberApproval } from './approval-classification';
 import s from './approval-card.module.css';
 type Approval = SnapshotData['approvals'][number];
 type Props = {
@@ -31,7 +30,7 @@ export function InlineApprovalCard({
   const outcome = approvalOutcome(a.state);
   const stale =
     Date.now() > Date.parse(a.decisionEligibility.checkedAt) + a.decisionEligibility.validForMs;
-  const canRemember = canRememberApproval(a);
+  const canRemember = a.rememberRuleEligible === true;
 
   const handleApprove = async () => {
     if (trustSimilar && canRemember && onTrustRule) {
