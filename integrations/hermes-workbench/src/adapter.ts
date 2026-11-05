@@ -122,6 +122,7 @@ export const Snapshot = z.object({
           }),
         })
         .optional(),
+      rememberRuleEligible: z.boolean().optional(),
       decisionEligibility: z.object({
         canApprove: z.boolean(),
         canReject: z.boolean(),
@@ -557,10 +558,19 @@ export const resumeTask = (id: string, workspaceConfirmation?: WorkspaceConfirma
       z.unknown(),
     ),
   );
-export const decideApproval = (id: string, action: 'approve' | 'reject') =>
+export const decideApproval = (
+  id: string,
+  action: 'approve' | 'reject',
+  rememberRule?: boolean,
+  reason?: string,
+) =>
   postJSON(
     `/api/approvals/${encodeURIComponent(id)}/${action}`,
-    { actor: 'hermes-workbench-user' },
+    {
+      actor: 'hermes-workbench-user',
+      ...(rememberRule ? { rememberRule: true } : {}),
+      ...(reason ? { reason } : {}),
+    },
     z.unknown(),
   );
 

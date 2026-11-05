@@ -422,3 +422,178 @@ it('counts active clients separately from revoked history', async () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+it('safely bounds legacy clients by profile ceiling, blocks unauthorized escalation, and handles downgrade/restart', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'legacy-client-isolation-')),
+    filename = join(root, 'state.sqlite');
+  let storage = openSqliteStorage({ filename });
+  let runtime = createControlPlaneRuntime({
+    storage,
+    artifactRoot: join(root, 'artifacts'),
+    workspaceRoot: join(root, 'workspaces'),
+  });
+  const installationFile = join(root, 'installation.json');
+  writeFileSync(
+    installationFile,
+    JSON.stringify({ version: 1, runtimeFile: process.execPath, current: { releaseDir: root } }),
+  );
+
+  const legacyCollabToken = 'a'.repeat(64);
+  const legacyCollabSha = createHash('sha256').update(legacyCollabToken).digest('hex');
+  const legacyReadToken = 'b'.repeat(64);
+  const legacyReadSha = createHash('sha256').update(legacyReadToken).digest('hex');
+
+  const legacyClients = [
+    {
+      id: 'legacy-collab',
+      name: 'Legacy Collab Client',
+      enabled: true,
+      tokenSha256: legacyCollabSha,
+      projects: [{ projectId: 'p' }],
+      tools: [
+        'collaboration_list_projects',
+        'collaboration_list_tasks',
+        'collaboration_submit_task',
+        'collaboration_decide_approval',
+        'collaboration_decide_all_approvals',
+      ],
+    },
+    {
+      id: 'legacy-read',
+      name: 'Legacy Read Client',
+      enabled: true,
+      tokenSha256: legacyReadSha,
+      projects: [{ projectId: 'p' }],
+      tools: ['collaboration_list_projects', 'collaboration_list_tasks'],
+    },
+  ];
+
+  let service = new ExternalClientsService({
+    storage,
+    runtime,
+    installationFile,
+    baseUrl: 'http://127.0.0.1:8057',
+    readLegacy: () => ({ version: 1, clients: legacyClients }),
+  });
+  let app = buildServer({
+    taskControl: runtime,
+    externalClients: service,
+    clientGateway: { storage, runtime, readAccess: service.readAccess },
+  });
+
+  const callTool = (token: string, toolName: string, input: unknown) =>
+    app.inject({
+      method: 'POST',
+      url: '/internal/client/tool',
+      headers: { authorization: 'Bearer ' + token },
+      payload: { toolName, input },
+    });
+
+  try {
+    runtime.createProject({ id: 'p', name: 'Legacy Test Project' });
+    runtime.setWorkspaceMode('p', { mode: 'task-local' });
+
+    // 1. Verify legacy collab client tools are capped by collaborate profile: approval tools are stripped!
+    const activeClients = service.readAccess().clients;
+    const collabClient = activeClients.find((c) => c.id === 'legacy-collab')!;
+    expect(collabClient).toBeDefined();
+    expect(collabClient.tools).not.toContain('collaboration_decide_approval');
+    expect(collabClient.tools).not.toContain('collaboration_decide_all_approvals');
+    expect(collabClient.tools).toContain('collaboration_submit_task');
+
+    // Calling decide_approval with legacy collab token returns 403
+    const decideAttempt = await callTool(legacyCollabToken, 'collaboration_decide_approval', {
+      approvalId: 'test',
+      decision: 'approve',
+    });
+    expect(decideAttempt.statusCode).toBe(403);
+    expect(decideAttempt.json().error).toContain('not authorized');
+
+    // Calling submit_task with legacy collab token is authorized (normal operations work)
+    const listTasksAttempt = await callTool(legacyCollabToken, 'collaboration_list_tasks', {
+      projectId: 'p',
+    });
+    expect(listTasksAttempt.statusCode).toBe(200);
+
+    // 2. Verify legacy read client: cannot write or submit tasks (403)
+    const readClient = activeClients.find((c) => c.id === 'legacy-read')!;
+    expect(readClient).toBeDefined();
+    expect(readClient.tools).not.toContain('collaboration_submit_task');
+    const writeAttempt = await callTool(legacyReadToken, 'collaboration_submit_task', {
+      projectId: 'p',
+      agentId: 'none',
+      objective: 'Write attempt',
+    });
+    expect(writeAttempt.statusCode).toBe(403);
+
+    // 3. Create an autonomous client, verify it has approval tools
+    const autoCreated = service.create({
+      requestId: randomUUID(),
+      name: 'Autonomous Agent',
+      target: 'cursor',
+      profile: 'autonomous',
+      projects: [{ projectId: 'p' }],
+    });
+    const autoConn = JSON.parse(readFileSync(service.connectionFile(autoCreated.id), 'utf8'));
+    const autoToken = autoConn.token;
+
+    const autoTools = service.readAccess().clients.find((c) => c.id === autoCreated.id)!.tools;
+    expect(autoTools).toContain('collaboration_decide_approval');
+
+    // 4. Demote autonomous to collaborate via updateGrants
+    const record = storage.repositories.externalClients.get(autoCreated.id)!;
+    service.updateGrants(autoCreated.id, {
+      requestId: randomUUID(),
+      profile: 'collaborate',
+      expectedRevision: record.revision,
+      projects: [{ projectId: 'p' }],
+    });
+
+    // Immediately after downgrade: approval tools are stripped
+    const demotedTools = service.readAccess().clients.find((c) => c.id === autoCreated.id)!.tools;
+    expect(demotedTools).not.toContain('collaboration_decide_approval');
+    expect(demotedTools).not.toContain('collaboration_decide_all_approvals');
+
+    const demotedAttempt = await callTool(autoToken, 'collaboration_decide_approval', {
+      approvalId: 'test',
+      decision: 'approve',
+    });
+    expect(demotedAttempt.statusCode).toBe(403);
+
+    // 5. Simulate service restart by creating new instances of runtime, service, and app
+    await app.close();
+    await runtime.close();
+    storage.close();
+
+    storage = openSqliteStorage({ filename });
+    runtime = createControlPlaneRuntime({
+      storage,
+      artifactRoot: join(root, 'artifacts'),
+      workspaceRoot: join(root, 'workspaces'),
+    });
+    service = new ExternalClientsService({
+      storage,
+      runtime,
+      installationFile,
+      baseUrl: 'http://127.0.0.1:8057',
+      readLegacy: () => ({ version: 1, clients: legacyClients }),
+    });
+    app = buildServer({
+      taskControl: runtime,
+      externalClients: service,
+      clientGateway: { storage, runtime, readAccess: service.readAccess },
+    });
+
+    // After restart, permissions remain strictly isolated and bounded
+    const restartedClients = service.readAccess().clients;
+    const restartedCollab = restartedClients.find((c) => c.id === 'legacy-collab')!;
+    expect(restartedCollab.tools).not.toContain('collaboration_decide_approval');
+    const restartedAuto = restartedClients.find((c) => c.id === autoCreated.id)!;
+    expect(restartedAuto.tools).not.toContain('collaboration_decide_approval');
+  } finally {
+    await app.close();
+    await runtime.close();
+    storage.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});

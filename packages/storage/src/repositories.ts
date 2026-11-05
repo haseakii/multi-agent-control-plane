@@ -265,6 +265,7 @@ export interface EventRepository {
   append(value: unknown): AuditEvent;
   get(id: string): AuditEvent | undefined;
   listByProject(projectId: string, selection?: EventSelection): AuditEvent[];
+  listTaskScopeEvents(projectId: string): AuditEvent[];
 }
 
 class SqliteEventRepository implements EventRepository {
@@ -295,6 +296,15 @@ class SqliteEventRepository implements EventRepository {
       | { payload: string }
       | undefined;
     return row ? AuditEventSchema.parse(JSON.parse(row.payload)) : undefined;
+  }
+
+  listTaskScopeEvents(projectId: string): AuditEvent[] {
+    const rows = this.sqlite
+      .prepare(
+        "SELECT payload FROM events WHERE project_id = ? AND type IN ('task.scope.granted', 'task.scope.revoked') ORDER BY rowid",
+      )
+      .all(projectId) as Array<{ payload: string }>;
+    return rows.map((row) => AuditEventSchema.parse(JSON.parse(row.payload)));
   }
 
   listByProject(projectId: string, selection?: EventSelection): AuditEvent[] {

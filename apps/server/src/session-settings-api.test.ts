@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it, vi } from 'vitest';
 import { ProcessAgentRuntimeControl } from '@control-plane/acp-runtime';
-import { TaskSchema, type SessionSettingsSnapshot } from '@control-plane/core';
+import { TaskSchema, AuditEventSchema, type SessionSettingsSnapshot } from '@control-plane/core';
 import { clientToolDefinitions } from '@control-plane/fleet-mcp';
 import { openSqliteStorage } from '@control-plane/storage';
 import { createControlPlaneRuntime } from './runtime-composition.js';
@@ -82,6 +82,17 @@ function fixture() {
       resultArtifactRefs: [],
       createdAt: '2026-10-25T00:00:00Z',
       updatedAt: '2026-10-25T00:00:00Z',
+    }),
+  );
+  storage.repositories.events.append(
+    AuditEventSchema.parse({
+      id: 'submit-task',
+      projectId: 'p',
+      taskId: 'task',
+      type: 'client.task.submitted',
+      actor: { type: 'agent', id: 'mcp-client:reader' },
+      payload: { clientId: 'reader', requestHash: '0'.repeat(64), executionMode: 'worker' },
+      occurredAt: '2026-10-25T00:00:00Z',
     }),
   );
   return {

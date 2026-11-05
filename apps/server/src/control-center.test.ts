@@ -8,10 +8,18 @@ import { taskAgentId } from '../../web/src/view-model.js';
 import { readControlCenterSnapshot, seedDemoState } from './control-center.js';
 
 const directories: string[] = [];
+const openStorages: Array<{ close: () => void }> = [];
 
 afterEach(() => {
+  while (openStorages.length > 0) {
+    try {
+      openStorages.pop()?.close();
+    } catch {}
+  }
   for (const directory of directories.splice(0)) {
-    rmSync(directory, { recursive: true, force: true });
+    try {
+      rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    } catch {}
   }
 });
 
@@ -22,11 +30,13 @@ describe('control-center durable demo', () => {
     const filename = join(directory, 'control-plane.sqlite');
 
     const first = openSqliteStorage({ filename });
+    openStorages.push(first);
     seedDemoState(first);
     const before = readControlCenterSnapshot(first);
     first.close();
 
     const second = openSqliteStorage({ filename });
+    openStorages.push(second);
     const after = readControlCenterSnapshot(second);
     second.close();
 

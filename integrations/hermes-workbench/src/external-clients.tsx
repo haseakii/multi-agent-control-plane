@@ -473,8 +473,10 @@ export function ExternalClients({
           <p className={s.policy}>
             <ShieldCheck size={17} />
             {profile === 'autonomous'
-              ? '仅对勾选项目生效。命令与文件改动默认直接通过，代码合并仍需审阅。'
-              : '仅对勾选项目生效。沿用当前审批规则；需要确认的命令与代码合并仍由你审阅。'}
+              ? '仅对勾选项目中该客户端发起的任务生效（客户端独立隔离，不改变项目全局策略）。请求完整且无高危异常时自动执行，代码合并仍需审阅。'
+              : profile === 'read'
+                ? '仅对勾选项目生效。仅可只读浏览项目、任务与产物，无任务派发或审批权限。'
+                : '仅对勾选项目生效。标准协作模式；需要确认的命令与代码变更仍需人工或审批工具决策。'}
           </p>
           {stale && (
             <p className={s.error} role="alert">
@@ -669,7 +671,11 @@ export function ExternalClients({
                 </div>
                 <p>
                   {client.projectIds.length} 个项目 ·{' '}
-                  {client.profile === 'read' ? '只查看' : '任务与追问'}
+                  {client.profile === 'autonomous'
+                    ? '⚡ 完全自主协作'
+                    : client.profile === 'read'
+                      ? '👁️ 只读查看'
+                      : '🤝 受限协作'}
                 </p>
                 <p>
                   {client.projectIds

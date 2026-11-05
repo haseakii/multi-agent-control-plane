@@ -11,10 +11,33 @@ import {
   AuditEventSchema,
   type ExternalClientRecord,
 } from '@control-plane/core';
-import { ClientAccessFileSchema, clientToolDefinitions } from '@control-plane/fleet-mcp';
+import {
+  ClientAccessFileSchema,
+  clientToolDefinitions,
+  type ClientToolName,
+} from '@control-plane/fleet-mcp';
 import type { ControlPlaneRuntime } from './runtime-composition.js';
 import { TaskControlError } from './task-control.js';
 import { installCodexClient, codexCliPath } from './external-client-install.js';
+
+export function toolsForProfile(profile: 'read' | 'collaborate' | 'autonomous'): ClientToolName[] {
+  switch (profile) {
+    case 'read':
+      return clientToolDefinitions.filter((tool) => tool.readOnly).map((tool) => tool.name);
+    case 'collaborate':
+      return clientToolDefinitions
+        .filter(
+          (tool) =>
+            tool.readOnly ||
+            !['collaboration_decide_approval', 'collaboration_decide_all_approvals'].includes(
+              tool.name,
+            ),
+        )
+        .map((tool) => tool.name);
+    case 'autonomous':
+      return clientToolDefinitions.map((tool) => tool.name);
+  }
+}
 
 const ProjectsSchema = ExternalClientAccessSchema.shape.projects.refine(
   (values) => new Set(values.map((value) => value.projectId)).size === values.length,
@@ -77,17 +100,20 @@ export class ExternalClientsService {
             const hasWriteTools = client.tools.some((name) =>
               clientToolDefinitions.some((tool) => tool.name === name && !tool.readOnly),
             );
-            const profileTools = clientToolDefinitions
-              .filter((tool) => hasWriteTools || tool.readOnly)
-              .map((tool) => tool.name);
-            const tools = Array.from(new Set([...client.tools, ...profileTools]));
+            // Legacy clients without a profile record are conservatively assigned 'collaborate'
+            // or 'read'. They are NEVER automatically promoted to 'autonomous'.
+            const profile = hasWriteTools ? 'collaborate' : 'read';
+            const profileTools = toolsForProfile(profile);
+            // Profile tools act as an absolute upper bound / ceiling:
+            const tools = profileTools.filter((tool) => client.tools.includes(tool));
             return { ...client, tools };
           }),
         ...records.map((row) => {
-          const profileTools = clientToolDefinitions
-            .filter((tool) => row.profile !== 'read' || tool.readOnly)
-            .map((tool) => tool.name);
-          const tools = Array.from(new Set([...row.access.tools, ...profileTools]));
+          const profileTools = toolsForProfile(row.profile);
+          // Effective tools are bounded by row.profile. Even if historical DB records contain
+          // surplus tools (e.g. legacy collaborate client with approval tools or demoted autonomous),
+          // they are strictly capped to the current profile's allowed tools.
+          const tools = profileTools.filter((tool) => row.access.tools.includes(tool));
           return { ...row.access, tools };
         }),
       ],
@@ -315,44 +341,13 @@ export class ExternalClientsService {
             enabled: true,
             tokenSha256: createHash('sha256').update(token).digest('hex'),
             projects,
-            tools: clientToolDefinitions
-              .filter((t) => input.profile !== 'read' || t.readOnly)
-              .map((t) => t.name),
+            tools: toolsForProfile(input.profile),
           },
         }),
       );
-      if (input.profile === 'autonomous') {
-        this.ensureAutonomousPolicy(projects);
-      }
       this.audit(this.repo.externalClients.get(id)!.access, 'created', 1);
     });
     return this.configuration(id);
-  }
-  private ensureAutonomousPolicy(projects: readonly { projectId: string }[]) {
-    for (const grant of projects) {
-      try {
-        const policy = this.options.runtime.getProjectPolicy(grant.projectId);
-        if (
-          policy.agentPermissions.commands !== 'auto' ||
-          policy.agentPermissions.workspaceFiles !== 'auto'
-        ) {
-          this.options.runtime.setProjectPolicy(grant.projectId, {
-            expectedRevision: policy.revision,
-            tools: policy.tools,
-            gitMerge: policy.gitMerge,
-            gitPush: policy.gitPush,
-            requireEnforcedExecution: policy.requireEnforcedExecution,
-            agentPermissions: {
-              ...policy.agentPermissions,
-              commands: 'auto',
-              workspaceFiles: 'auto',
-            },
-          });
-        }
-      } catch {
-        // non-fatal
-      }
-    }
   }
   updateGrants(id: string, raw: unknown) {
     const input = UpdateExternalClientGrantsSchema.parse(raw);
@@ -387,18 +382,13 @@ export class ExternalClientsService {
         access: {
           ...access,
           projects,
-          tools: clientToolDefinitions
-            .filter((tool) => input.profile !== 'read' || tool.readOnly)
-            .map((tool) => tool.name),
+          tools: toolsForProfile(input.profile),
         },
         profile: input.profile,
         revision: record.revision + 1,
         lastUpdate: { requestId: input.requestId, requestHash },
       };
       this.repo.externalClients.upsert(next);
-      if (input.profile === 'autonomous') {
-        this.ensureAutonomousPolicy(projects);
-      }
       // Audit both removed and retained project scopes without granting removed scopes.
       this.audit(
         next.access,
@@ -406,6 +396,21 @@ export class ExternalClientsService {
         next.revision,
         access.projects.map((project) => project.projectId),
       );
+      const previousProjects = access.projects.map((project) => project.projectId);
+      const currentProjects = new Set(projects.map((project) => project.projectId));
+      const removedProjects = previousProjects.filter(
+        (projectId) => !currentProjects.has(projectId),
+      );
+      for (const removedProjectId of removedProjects) {
+        this.options.runtime.revokeTaskScopeGrantsForClient(
+          id,
+          'project_access_removed',
+          removedProjectId,
+        );
+      }
+      if (input.profile !== 'autonomous') {
+        this.options.runtime.revokeTaskScopeGrantsForClient(id, 'client_demoted');
+      }
       return { id, revision: next.revision };
     });
   }
@@ -436,6 +441,7 @@ export class ExternalClientsService {
             },
       );
       this.audit(access, 'revoked', (row?.revision ?? 0) + 1);
+      this.options.runtime.revokeTaskScopeGrantsForClient(id, 'client_revoked');
     });
     return { id, enabled: false };
   }

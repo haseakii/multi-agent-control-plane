@@ -6,6 +6,7 @@ import { openSqliteStorage } from '@control-plane/storage';
 import { TaskEngine, TaskEngineError } from './index.js';
 
 const tempDirectories: string[] = [];
+const openStorages: Array<{ close: () => void }> = [];
 let sequence = 0;
 const now = '2026-10-19T07:10:00Z';
 
@@ -17,6 +18,7 @@ function createDatabasePath(): string {
 
 function createEngine(filename: string) {
   const storage = openSqliteStorage({ filename });
+  openStorages.push(storage);
   const engine = new TaskEngine(storage.repositories, {
     now: () => now,
     idFactory: (kind) => `${kind}-test-${++sequence}`,
@@ -34,8 +36,15 @@ function seedProject(storage: ReturnType<typeof openSqliteStorage>) {
 }
 
 afterEach(() => {
+  while (openStorages.length > 0) {
+    try {
+      openStorages.pop()?.close();
+    } catch {}
+  }
   for (const directory of tempDirectories.splice(0)) {
-    rmSync(directory, { recursive: true, force: true });
+    try {
+      rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    } catch {}
   }
 });
 

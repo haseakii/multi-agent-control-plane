@@ -18,3 +18,4 @@ export * from './network-settings.js';
 export * from './input-attachments.js';
 export * from './external-client.js';
 export * from './project-events.js';
+export * from './approval-classification.js';

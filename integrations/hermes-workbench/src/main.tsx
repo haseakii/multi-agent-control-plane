@@ -1946,41 +1946,11 @@ function Workbench() {
                                           '当前任务'
                                         }
                                         busy={sending}
-                                        onDecide={(id, decision) =>
-                                          void action(() => decideApproval(id, decision))
+                                        onDecide={(id, decision, rememberRule) =>
+                                          void action(() =>
+                                            decideApproval(id, decision, rememberRule),
+                                          )
                                         }
-                                        onTrustRule={async () => {
-                                          if (!root?.projectId) return;
-                                          try {
-                                            const url = `/api/projects/${encodeURIComponent(root.projectId)}/policy`;
-                                            const current = await fetchJSON(url, undefined, Policy);
-                                            if (current) {
-                                              await fetchJSON(
-                                                url,
-                                                {
-                                                  method: 'PUT',
-                                                  body: JSON.stringify({
-                                                    expectedRevision: current.revision,
-                                                    tools: current.tools,
-                                                    gitMerge: current.gitMerge,
-                                                    gitPush: current.gitPush,
-                                                    requireEnforcedExecution:
-                                                      current.requireEnforcedExecution,
-                                                    agentPermissions: {
-                                                      ...current.agentPermissions,
-                                                      ...(a.acp?.review.action === 'process.execute'
-                                                        ? { commands: 'auto' as const }
-                                                        : { workspaceFiles: 'auto' as const }),
-                                                    },
-                                                  }),
-                                                },
-                                                Policy,
-                                              );
-                                            }
-                                          } catch {
-                                            // non-blocking
-                                          }
-                                        }}
                                       />
                                     ),
                                   )}

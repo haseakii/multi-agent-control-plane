@@ -10,6 +10,7 @@ import {
 } from './index.js';
 
 const tempDirectories: string[] = [];
+const openStorages: Array<{ close: () => void }> = [];
 let sequence = 0;
 const now = '2026-10-20T02:00:00.000Z';
 
@@ -19,6 +20,7 @@ function createEnvironment() {
   const database = join(directory, 'metadata.sqlite');
   const blobs = join(directory, 'artifacts');
   const storage = openSqliteStorage({ filename: database });
+  openStorages.push(storage);
   const store = new ArtifactStore(
     new FilesystemArtifactBlobStore(blobs),
     new SqliteArtifactMetadataStore(storage),
@@ -31,8 +33,15 @@ function createEnvironment() {
 }
 
 afterEach(() => {
+  while (openStorages.length > 0) {
+    try {
+      openStorages.pop()?.close();
+    } catch {}
+  }
   for (const directory of tempDirectories.splice(0)) {
-    rmSync(directory, { recursive: true, force: true });
+    try {
+      rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    } catch {}
   }
 });
 
@@ -91,6 +100,7 @@ describe('ArtifactStore', () => {
     environment.storage.close();
 
     const reopenedStorage = openSqliteStorage({ filename: environment.database });
+    openStorages.push(reopenedStorage);
     const reopened = new ArtifactStore(
       new FilesystemArtifactBlobStore(environment.blobs),
       new SqliteArtifactMetadataStore(reopenedStorage),

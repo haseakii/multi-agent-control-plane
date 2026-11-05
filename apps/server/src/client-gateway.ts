@@ -1,3 +1,4 @@
+import { rememberableApprovalRule } from './approval-remember.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -38,30 +39,6 @@ const card = (task: Task) => ({
   updatedAt: task.updatedAt,
   resultArtifactRefs: task.resultArtifactRefs,
 });
-const detectRuleToRemember = (approval: {
-  action: string;
-  acp?: { review: { action: string | null; tool?: string | null } } | undefined;
-}): 'commands' | 'workspaceFiles' | 'outsideWorkspace' | null => {
-  const action = approval.acp?.review.action ?? approval.action;
-  if (
-    action === 'process.execute' ||
-    action === 'command.execute' ||
-    action.includes('process') ||
-    action.includes('command')
-  ) {
-    return 'commands';
-  }
-  if (action === 'file.outside_workspace' || action.includes('outside')) {
-    return 'outsideWorkspace';
-  }
-  if (action.includes('workspace') || action.includes('file')) {
-    return 'workspaceFiles';
-  }
-  if (approval.acp?.review.tool === 'bash' || approval.acp?.review.tool === 'exec') {
-    return 'commands';
-  }
-  return 'commands';
-};
 
 /** An external client has project-scoped authority, never an ACP session grant or operator identity. */
 export function registerClientGateway(app: FastifyInstance, options: ClientGatewayOptions) {
@@ -462,6 +439,10 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
         case 'collaboration_continue_task': {
           const value = clientToolDefinitions[5].schema.parse(input);
           const { task, grant } = taskAccess(value.taskId, ['control_send_message']);
+          const taskOrigin = runtime.clientTaskOrigin(task.id);
+          if (taskOrigin !== `mcp-client:${identity.id}`) {
+            throw new TaskControlError(403, '无权向非本客户端发起的任务追加指令。');
+          }
           if (ended(task))
             authorize(task.projectId, ['control_create_task', 'control_delegate_task']);
           authorizeAttachments(task.projectId, value.attachmentIds);
@@ -497,7 +478,11 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
         }
         case 'collaboration_cancel_task': {
           const value = clientToolDefinitions[6].schema.parse(input);
-          taskAccess(value.taskId, ['control_cancel_task']);
+          const { task } = taskAccess(value.taskId, ['control_cancel_task']);
+          const taskOrigin = runtime.clientTaskOrigin(task.id);
+          if (taskOrigin !== `mcp-client:${identity.id}`) {
+            throw new TaskControlError(403, '无权取消非本客户端发起的任务。');
+          }
           result = { task: card(await runtime.cancelTask(value.taskId)) };
           break;
         }
@@ -562,10 +547,21 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
         case 'collaboration_list_approvals': {
           const value = ClientListApprovalsSchema.parse(input);
           authorize(value.projectId, ['control_get_task']);
+          if (value.taskId) {
+            const taskOrigin = runtime.clientTaskOrigin(value.taskId);
+            if (taskOrigin !== `mcp-client:${identity.id}`) {
+              throw new TaskControlError(403, '无权查看非本客户端发起的任务请求。');
+            }
+          }
           const allApprovals = runtime.readApprovals(
             value.state === 'all' ? undefined : 'pending',
           ).approvals;
-          let approvals = allApprovals.filter((a) => a.projectId === value.projectId);
+          let approvals = allApprovals.filter(
+            (a) =>
+              a.projectId === value.projectId &&
+              a.taskId &&
+              runtime.clientTaskOrigin(a.taskId) === `mcp-client:${identity.id}`,
+          );
           if (value.taskId) {
             const { task } = taskAccess(value.taskId, ['control_get_task']);
             const tree = new Set([task.id]);
@@ -581,7 +577,8 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
             total: approvals.length,
             pendingCount: approvals.filter((a) => a.state === 'pending').length,
             approvals: approvals.map((a) => {
-              const ruleKey = detectRuleToRemember(a);
+              const ruleCategory = rememberableApprovalRule(options.storage, a);
+              const rememberRuleEligible = !!ruleCategory;
               return {
                 id: a.id,
                 taskId: a.taskId,
@@ -596,8 +593,8 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
                 reasons: a.acp?.review.reasons ?? [],
                 expiresAt: a.acp?.expiresAt ?? null,
                 decisionEligibility: a.decisionEligibility,
-                rememberRuleEligible: !!ruleKey,
-                rememberRuleSettingKey: ruleKey,
+                rememberRuleEligible,
+                rememberRuleSettingKey: rememberRuleEligible ? ruleCategory : null,
               };
             }),
           };
@@ -608,7 +605,15 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
           const approval = repo.approvals.get(value.approvalId);
           if (!approval) throw new TaskControlError(404, '确认请求不存在或已失效。');
           authorize(approval.projectId, ['control_request_approval']);
-          if (approval.taskId) taskId = approval.taskId;
+          if (!approval.taskId) {
+            throw new TaskControlError(403, '无权审批未绑定明确任务上下文的确认请求。');
+          }
+          taskId = approval.taskId;
+
+          const taskOrigin = runtime.clientTaskOrigin(approval.taskId);
+          if (taskOrigin !== `mcp-client:${identity.id}`) {
+            throw new TaskControlError(403, '无权审批非本客户端发起的任务请求。');
+          }
 
           const targetState = value.decision === 'approve' ? 'approved' : 'rejected';
           const eligibility = runtime.approvalDecisionEligibility(approval);
@@ -626,31 +631,20 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
             approval.id,
             targetState,
             `mcp-client:${identity.id}`,
+            value.reason,
+            value.rememberRule,
           );
 
           let rememberedRule: { key: string; value: string } | null = null;
-          if (value.rememberRule && targetState === 'approved') {
-            const ruleKey = detectRuleToRemember(approval);
-            if (ruleKey) {
-              try {
-                const currentPolicy = runtime.getProjectPolicy(approval.projectId);
-                if (currentPolicy.agentPermissions[ruleKey] !== 'auto') {
-                  runtime.setProjectPolicy(approval.projectId, {
-                    expectedRevision: currentPolicy.revision,
-                    tools: currentPolicy.tools,
-                    gitMerge: currentPolicy.gitMerge,
-                    gitPush: currentPolicy.gitPush,
-                    requireEnforcedExecution: currentPolicy.requireEnforcedExecution,
-                    agentPermissions: {
-                      ...currentPolicy.agentPermissions,
-                      [ruleKey]: 'auto',
-                    },
-                  });
-                  rememberedRule = { key: ruleKey, value: 'auto' };
-                }
-              } catch {
-                // non-fatal
-              }
+          if (
+            value.rememberRule &&
+            targetState === 'approved' &&
+            decided.state === 'approved' &&
+            approval.taskId
+          ) {
+            const ruleKey = rememberableApprovalRule(options.storage, approval);
+            if (ruleKey === 'commands' || ruleKey === 'workspaceFiles') {
+              rememberedRule = { key: ruleKey, value: 'task-scope:auto' };
             }
           }
 
@@ -663,19 +657,30 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
             tool: approval.acp?.review.tool ?? null,
             target: approval.acp?.review.target ?? null,
             rememberedRule,
-            message: `请求已${targetState === 'approved' ? '批准' : '拒绝'}${rememberedRule ? `，已记住设置：后续同类操作自动批准` : ''}。`,
+            message: `请求已${targetState === 'approved' ? '批准' : '拒绝'}${rememberedRule ? `，已记住设置：本任务内同类操作自动批准` : ''}。`,
           };
           break;
         }
         case 'collaboration_decide_all_approvals': {
           const value = ClientDecideAllApprovalsSchema.parse(input);
           authorize(value.projectId, ['control_request_approval']);
-          if (value.taskId) taskId = value.taskId;
+          if (value.taskId) {
+            taskId = value.taskId;
+            const taskOrigin = runtime.clientTaskOrigin(value.taskId);
+            if (taskOrigin !== `mcp-client:${identity.id}`) {
+              throw new TaskControlError(403, '无权审批非本客户端发起的任务。');
+            }
+          }
 
           const targetState = value.decision === 'approve' ? 'approved' : 'rejected';
           let pendingList = runtime
             .readApprovals('pending')
-            .approvals.filter((a) => a.projectId === value.projectId);
+            .approvals.filter(
+              (a) =>
+                a.projectId === value.projectId &&
+                a.taskId &&
+                runtime.clientTaskOrigin(a.taskId) === `mcp-client:${identity.id}`,
+            );
           if (value.taskId) {
             const { task } = taskAccess(value.taskId, ['control_get_task']);
             const tree = new Set([task.id]);
@@ -693,13 +698,14 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
             tool?: string | null;
             target?: string | null;
             state: string;
+            rememberedRule?: string | null;
           }> = [];
           const skipped: Array<{
             approvalId: string;
             action: string;
             reason: string;
           }> = [];
-          const rulesToUpdate = new Set<'commands' | 'workspaceFiles' | 'outsideWorkspace'>();
+          const rememberedRulesSet = new Set<string>();
 
           for (const item of pendingList) {
             const eligibility = runtime.approvalDecisionEligibility(item);
@@ -724,18 +730,35 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
             }
 
             try {
-              const res = runtime.decideApproval(item.id, targetState, `mcp-client:${identity.id}`);
+              // Pass rememberRule to decideApproval so it grants task-scoped permission ONLY for this item's taskId and rule
+              const res = runtime.decideApproval(
+                item.id,
+                targetState,
+                `mcp-client:${identity.id}`,
+                undefined,
+                value.rememberRule,
+              );
+              let itemRememberedRule: string | null = null;
+              if (
+                value.rememberRule &&
+                targetState === 'approved' &&
+                res.state === 'approved' &&
+                item.taskId
+              ) {
+                const ruleKey = rememberableApprovalRule(options.storage, item);
+                if (ruleKey === 'commands' || ruleKey === 'workspaceFiles') {
+                  itemRememberedRule = ruleKey;
+                  rememberedRulesSet.add(ruleKey);
+                }
+              }
               decided.push({
                 approvalId: item.id,
                 action: item.action,
                 tool: item.acp?.review.tool ?? null,
                 target: item.acp?.review.target ?? null,
                 state: res.state,
+                rememberedRule: itemRememberedRule,
               });
-              if (value.rememberRule && targetState === 'approved') {
-                const ruleKey = detectRuleToRemember(item);
-                if (ruleKey) rulesToUpdate.add(ruleKey);
-              }
             } catch (err) {
               skipped.push({
                 approvalId: item.id,
@@ -745,33 +768,7 @@ export function registerClientGateway(app: FastifyInstance, options: ClientGatew
             }
           }
 
-          const rememberedRules: string[] = [];
-          if (rulesToUpdate.size > 0) {
-            try {
-              const currentPolicy = runtime.getProjectPolicy(value.projectId);
-              const nextPermissions = { ...currentPolicy.agentPermissions };
-              let changed = false;
-              for (const rk of rulesToUpdate) {
-                if (nextPermissions[rk] !== 'auto') {
-                  nextPermissions[rk] = 'auto';
-                  changed = true;
-                  rememberedRules.push(rk);
-                }
-              }
-              if (changed) {
-                runtime.setProjectPolicy(value.projectId, {
-                  expectedRevision: currentPolicy.revision,
-                  tools: currentPolicy.tools,
-                  gitMerge: currentPolicy.gitMerge,
-                  gitPush: currentPolicy.gitPush,
-                  requireEnforcedExecution: currentPolicy.requireEnforcedExecution,
-                  agentPermissions: nextPermissions,
-                });
-              }
-            } catch {
-              // non-fatal
-            }
-          }
+          const rememberedRules: string[] = Array.from(rememberedRulesSet);
 
           result = {
             projectId: value.projectId,

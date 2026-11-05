@@ -1,3 +1,4 @@
+import { rememberableApprovalRule } from './approval-remember.js';
 import type {
   AgentAuthMethodSummary,
   AgentReadiness,
@@ -379,6 +380,7 @@ export function readControlCenterSnapshot(
     approvals: approvalRead.approvals.map((approval) =>
       ApprovalViewSchema.parse({
         ...approval,
+        rememberRuleEligible: !!rememberableApprovalRule(storage, approval),
         decisionEligibility: approvalEligibility?.(approval) ?? {
           canApprove: false,
           canReject: false,

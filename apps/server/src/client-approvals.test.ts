@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
@@ -9,7 +9,12 @@ import { createControlPlaneRuntime } from './runtime-composition.js';
 import { buildServer } from './server.js';
 import { ExternalClientsService } from './external-clients.js';
 import type { AcpApprovalBinding, Approval } from '@control-plane/core';
-import { TaskSchema, AssignmentSchema, ExecutionAttemptSchema } from '@control-plane/core';
+import {
+  TaskSchema,
+  AssignmentSchema,
+  ExecutionAttemptSchema,
+  AuditEventSchema,
+} from '@control-plane/core';
 
 function createFixture() {
   const root = mkdtempSync(join(tmpdir(), 'client-approvals-')),
@@ -41,6 +46,23 @@ function createFixture() {
       ],
     }),
   });
+  // Register test-client as autonomous in DB so it explicitly holds approval privileges
+  storage.repositories.externalClients.upsert({
+    id: 'test-client',
+    requestId: randomUUID(),
+    requestHash: '0'.repeat(64),
+    target: 'generic',
+    profile: 'autonomous',
+    createdAt: new Date().toISOString(),
+    access: {
+      id: 'test-client',
+      name: 'External MCP Agent',
+      enabled: true,
+      tokenSha256,
+      projects: [{ projectId: 'proj-a' }],
+      tools: clientToolDefinitions.map((t) => t.name),
+    },
+  });
   const app = buildServer({
     taskControl: runtime,
     externalClients: service,
@@ -55,7 +77,7 @@ function createFixture() {
       payload: { toolName, input },
     });
 
-  return { root, storage, runtime, app, call, token };
+  return { root, storage, runtime, app, call, token, service };
 }
 
 function mockAcpApproval(
@@ -85,7 +107,9 @@ function mockAcpApproval(
       tool,
       action,
       target,
-      parameters: {},
+      parameters: {
+        resolved: action === 'process.execute' ? { command: target } : { fileOperation: 'write' },
+      },
       provenance: {},
       presence: {},
       reasons: complete ? [] : ['missing_tool'],
@@ -111,11 +135,55 @@ function mockAcpApproval(
   };
 }
 
+function seedFileWorkspace(f: ReturnType<typeof createFixture>, approval: Approval) {
+  const taskId = approval.taskId!;
+  const projectId = approval.projectId;
+  const workspaceId = `workspace-${taskId}`;
+  f.storage.repositories.workspaces.upsert({
+    id: workspaceId,
+    projectId,
+    provider: 'local-directory',
+    rootPath: f.root,
+    access: 'read-write',
+  });
+  f.storage.repositories.assignmentWorkspaces.upsert({
+    id: approval.assignmentId,
+    projectId,
+    taskId,
+    workspaceId,
+    sourceWorkspaceId: workspaceId,
+    mode: 'task-local',
+    createdAt: new Date().toISOString(),
+  });
+  approval.acp!.review.target = join(f.root, 'src', 'file.ts');
+}
+
+function seedClientTaskOrigin(
+  f: ReturnType<typeof createFixture>,
+  taskId: string,
+  projectId: string,
+  clientId = 'test-client',
+) {
+  f.storage.repositories.events.append(
+    AuditEventSchema.parse({
+      id: 'event-submit-' + taskId + '-' + randomUUID().slice(0, 8),
+      projectId,
+      taskId,
+      type: 'client.task.submitted',
+      actor: { type: 'agent', id: `mcp-client:${clientId}` },
+      payload: { clientId, requestHash: '0'.repeat(64), executionMode: 'worker' },
+      occurredAt: new Date().toISOString(),
+    }),
+  );
+}
+
 it('allows external MCP clients to list, inspect, decide individually, and batch approve pending requests', async () => {
   const f = createFixture();
   try {
     f.runtime.createProject({ id: 'proj-a', name: 'Project Alpha' });
     f.runtime.createProject({ id: 'proj-b', name: 'Project Beta' });
+    seedClientTaskOrigin(f, 'task-1', 'proj-a');
+    seedClientTaskOrigin(f, 'task-2', 'proj-a');
     f.storage.repositories.tasks.upsert(
       TaskSchema.parse({
         id: 'task-1',
@@ -224,6 +292,8 @@ it('allows external MCP clients to list, inspect, decide individually, and batch
       'asgn-2',
     );
 
+    seedFileWorkspace(f, appFile);
+
     const exec1 = {
       assignment: asgn,
       attempt: att,
@@ -315,10 +385,12 @@ it('allows external MCP clients to list, inspect, decide individually, and batch
       approvalId: appFile.id,
       decision: 'approved',
       state: 'approved',
-      rememberedRule: { key: 'workspaceFiles', value: 'auto' },
+      rememberedRule: { key: 'workspaceFiles', value: 'task-scope:auto' },
     });
     expect(f.storage.repositories.approvals.get(appFile.id)?.state).toBe('approved');
-    expect(f.runtime.getProjectPolicy('proj-a').agentPermissions.workspaceFiles).toBe('auto');
+    // Task-scoped rule is granted, project-wide policy is NOT mutated
+    expect(f.runtime.getTaskScopePermissions('task-1').has('workspaceFiles')).toBe(true);
+    expect(f.runtime.getProjectPolicy('proj-a').agentPermissions.workspaceFiles).toBe('ask');
 
     // 4. Ineligible approval rejection vs approval attempt
     const cantApprove = await f.call('collaboration_decide_approval', {
@@ -382,7 +454,10 @@ it('allows external MCP clients to list, inspect, decide individually, and batch
     expect(batchBody.rememberedRules).toEqual(['commands']);
     expect(f.storage.repositories.approvals.get(batch1.id)?.state).toBe('approved');
     expect(f.storage.repositories.approvals.get(batch2.id)?.state).toBe('approved');
-    expect(f.runtime.getProjectPolicy('proj-a').agentPermissions.commands).toBe('auto');
+    // Task-scoped rules granted for affected tasks; project policy remains ask
+    expect(f.runtime.getTaskScopePermissions('task-1').has('commands')).toBe(true);
+    expect(f.runtime.getTaskScopePermissions('task-2').has('commands')).toBe(true);
+    expect(f.runtime.getProjectPolicy('proj-a').agentPermissions.commands).toBe('ask');
 
     // Calling decide_all when empty returns clean summary
     const emptyBatch = await f.call('collaboration_decide_all_approvals', {
@@ -405,13 +480,14 @@ it('allows external MCP clients to list, inspect, decide individually, and batch
   }
 });
 
-it('configures autonomous external clients that automatically approve execution permissions without manual prompts', async () => {
+it('isolates autonomous client permissions without mutating project policy, and enforces approval boundaries', async () => {
   const f = createFixture();
   try {
     f.runtime.createProject({ id: 'proj-auto', name: 'Auto Project' });
     f.runtime.setWorkspaceMode('proj-auto', { mode: 'task-local' });
     expect(f.runtime.getProjectPolicy('proj-auto').agentPermissions.commands).toBe('ask');
 
+    // 1. Create an autonomous client
     const res = await f.app.inject({
       method: 'POST',
       url: '/api/external-clients',
@@ -424,10 +500,557 @@ it('configures autonomous external clients that automatically approve execution 
       },
     });
     expect(res.statusCode).toBe(200);
+    const autoCreated = res.json();
+    const autoRecord = f.storage.repositories.externalClients.get(autoCreated.id)!;
+    expect(autoRecord.profile).toBe('autonomous');
 
+    // Invariant: Creating autonomous client does NOT mutate global project policy
     const policy = f.runtime.getProjectPolicy('proj-auto');
-    expect(policy.agentPermissions.commands).toBe('auto');
-    expect(policy.agentPermissions.workspaceFiles).toBe('auto');
+    expect(policy.agentPermissions.commands).toBe('ask');
+    expect(policy.agentPermissions.workspaceFiles).toBe('ask');
+
+    // Autonomous client receives approval tools in its grant list
+    expect(autoRecord.access.tools).toContain('collaboration_decide_approval');
+    expect(autoRecord.access.tools).toContain('collaboration_decide_all_approvals');
+
+    const autoToken = JSON.parse(
+      readFileSync(f.service.connectionFile(autoRecord.id), 'utf8'),
+    ).token;
+
+    // 2. Create a collaborate client
+    const collabRes = await f.app.inject({
+      method: 'POST',
+      url: '/api/external-clients',
+      payload: {
+        requestId: randomUUID(),
+        name: 'Collab Agent',
+        target: 'vscode',
+        profile: 'collaborate',
+        projects: [{ projectId: 'proj-auto' }],
+      },
+    });
+    expect(collabRes.statusCode).toBe(200);
+    const collabCreated = collabRes.json();
+    const collabRecord = f.storage.repositories.externalClients.get(collabCreated.id)!;
+    expect(collabRecord.profile).toBe('collaborate');
+
+    // Collaborate client does NOT have approval tools
+    expect(collabRecord.access.tools).not.toContain('collaboration_decide_approval');
+    expect(collabRecord.access.tools).not.toContain('collaboration_decide_all_approvals');
+
+    const collabToken = JSON.parse(
+      readFileSync(f.service.connectionFile(collabRecord.id), 'utf8'),
+    ).token;
+
+    // 3. Calling decide_approval with collaborate client token returns 403 Forbidden
+    const collabAttempt = await f.call(
+      'collaboration_decide_approval',
+      { approvalId: 'any-approval-id', decision: 'approve' },
+      collabToken,
+    );
+    expect(collabAttempt.statusCode).toBe(403);
+    expect(collabAttempt.json().error).toContain('not authorized');
+
+    // 4. Revoking the client immediately strips client authorization
+    const revokeRes = await f.app.inject({
+      method: 'POST',
+      url: `/api/external-clients/${autoRecord.id}/revoke`,
+      payload: {},
+    });
+    expect(revokeRes.statusCode).toBe(200);
+
+    const afterRevoke = await f.call(
+      'collaboration_decide_approval',
+      { approvalId: 'any-approval-id', decision: 'approve' },
+      autoToken,
+    );
+    expect(afterRevoke.statusCode).toBe(401);
+  } finally {
+    await f.app.close();
+    await f.runtime.close();
+    f.storage.close();
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+it('enforces zero residual authorization on approval rejection, failure, or unknown action (P0-02)', async () => {
+  const f = createFixture();
+  try {
+    f.runtime.createProject({ id: 'proj-p02', name: 'P02 Project' });
+    f.runtime.setWorkspaceMode('proj-p02', { mode: 'task-local' });
+
+    // Authorize test-client for proj-p02
+    const clientRec = f.storage.repositories.externalClients.get('test-client')!;
+    f.storage.repositories.externalClients.upsert({
+      ...clientRec,
+      access: {
+        ...clientRec.access,
+        projects: [...clientRec.access.projects, { projectId: 'proj-p02' }],
+      },
+    });
+
+    f.storage.repositories.tasks.upsert(
+      TaskSchema.parse({
+        id: 'task-p02',
+        projectId: 'proj-p02',
+        title: 'Task P02',
+        objective: 'Test zero residual authorization',
+        state: 'running',
+        ownerAgentId: 'agent',
+        dependencyIds: [],
+        contextRefs: [],
+        resultArtifactRefs: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }),
+    );
+    seedClientTaskOrigin(f, 'task-p02', 'proj-p02');
+
+    const asgnP02 = AssignmentSchema.parse({
+      id: 'asgn-p02',
+      taskId: 'task-p02',
+      agentId: 'agent',
+      objective: 'Objective P02',
+      attempt: 1,
+      state: 'running',
+      role: { name: 'Collaborator' },
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    const attP02 = ExecutionAttemptSchema.parse({
+      id: 'att-p02',
+      taskId: 'task-p02',
+      assignmentId: 'asgn-p02',
+      number: 1,
+      state: 'running',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    f.storage.repositories.assignments.upsert(asgnP02);
+    f.storage.repositories.executionAttempts.upsert(attP02);
+
+    const exec = {
+      attempt: attP02,
+      assignment: asgnP02,
+      task: f.storage.repositories.tasks.get('task-p02')!,
+      abort: new AbortController(),
+      sessionId: 'sess-p02-1',
+      acpRequest: undefined as any,
+    };
+    (f.runtime as any).active.set('task-p02', exec);
+
+    // 1. Rejected approval with rememberRule: true MUST NOT grant any task-scoped permission
+    const rejectApp = mockAcpApproval(
+      'proj-p02',
+      'task-p02',
+      'process.execute',
+      'bash',
+      'git status',
+      true,
+      'sess-p02-1',
+      'att-p02',
+      'asgn-p02',
+    );
+    exec.sessionId = 'sess-p02-1';
+    exec.acpRequest = {
+      approvalId: rejectApp.id,
+      signal: new AbortController().signal,
+      binding: rejectApp.acp!,
+    };
+    f.storage.repositories.approvals.upsert(rejectApp);
+
+    const rejectRes = await f.call('collaboration_decide_approval', {
+      approvalId: rejectApp.id,
+      decision: 'reject',
+      rememberRule: true,
+    });
+    expect(rejectRes.statusCode).toBe(200);
+    expect(rejectRes.json().result.state).toBe('rejected');
+    expect(f.runtime.getTaskScopePermissions('task-p02').size).toBe(0);
+
+    // 2. Unknown action approval with rememberRule: true MUST NOT grant any task-scoped permission
+    const unknownApp = mockAcpApproval(
+      'proj-p02',
+      'task-p02',
+      'custom.unknown_action',
+      'custom_tool',
+      'custom_target',
+      true,
+      'sess-p02-2',
+      'att-p02',
+      'asgn-p02',
+    );
+    exec.sessionId = 'sess-p02-2';
+    exec.acpRequest = {
+      approvalId: unknownApp.id,
+      signal: new AbortController().signal,
+      binding: unknownApp.acp!,
+    };
+    f.storage.repositories.approvals.upsert(unknownApp);
+
+    const unknownRes = await f.call('collaboration_decide_approval', {
+      approvalId: unknownApp.id,
+      decision: 'approve',
+      rememberRule: true,
+    });
+    expect(unknownRes.statusCode).toBe(200);
+    expect(unknownRes.json().result.rememberedRule).toBeNull();
+    expect(f.runtime.getTaskScopePermissions('task-p02').size).toBe(0);
+
+    // 3. Ineligible approval (missing info) with rememberRule: true returns 409 and leaves zero permissions
+    const invalidApp = mockAcpApproval(
+      'proj-p02',
+      'task-p02',
+      'process.execute',
+      'bash',
+      'git status',
+      false, // complete: false -> missing_tool
+      'sess-p02-3',
+      'att-p02',
+      'asgn-p02',
+    );
+    exec.sessionId = 'sess-p02-3';
+    exec.acpRequest = {
+      approvalId: invalidApp.id,
+      signal: new AbortController().signal,
+      binding: invalidApp.acp!,
+    };
+    f.storage.repositories.approvals.upsert(invalidApp);
+
+    const invalidRes = await f.call('collaboration_decide_approval', {
+      approvalId: invalidApp.id,
+      decision: 'approve',
+      rememberRule: true,
+    });
+    expect(invalidRes.statusCode).toBe(409);
+    expect(f.runtime.getTaskScopePermissions('task-p02').size).toBe(0);
+  } finally {
+    await f.app.close();
+    await f.runtime.close();
+    f.storage.close();
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+it('enforces precise per-item batch scoping without cross-task permission spread (P0-04)', async () => {
+  const f = createFixture();
+  try {
+    f.runtime.createProject({ id: 'proj-batch', name: 'Batch Project' });
+    f.runtime.setWorkspaceMode('proj-batch', { mode: 'task-local' });
+
+    // Authorize test-client for proj-batch
+    const clientRec = f.storage.repositories.externalClients.get('test-client')!;
+    f.storage.repositories.externalClients.upsert({
+      ...clientRec,
+      access: {
+        ...clientRec.access,
+        projects: [...clientRec.access.projects, { projectId: 'proj-batch' }],
+      },
+    });
+
+    // Setup 4 distinct tasks with assignment & attempt
+    for (const letter of ['a', 'b', 'c', 'd']) {
+      const taskId = `task-${letter}`;
+      const asgnId = `asgn-${letter}`;
+      const attId = `att-${letter}`;
+      f.storage.repositories.tasks.upsert(
+        TaskSchema.parse({
+          id: taskId,
+          projectId: 'proj-batch',
+          title: `Task ${taskId}`,
+          objective: `Objective for ${taskId}`,
+          state: 'running',
+          ownerAgentId: 'agent',
+          dependencyIds: [],
+          contextRefs: [],
+          resultArtifactRefs: [],
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        }),
+      );
+      seedClientTaskOrigin(f, taskId, 'proj-batch');
+      const asgn = AssignmentSchema.parse({
+        id: asgnId,
+        taskId,
+        agentId: 'agent',
+        objective: `Objective ${letter}`,
+        attempt: 1,
+        state: 'running',
+        role: { name: 'Collaborator' },
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+      const att = ExecutionAttemptSchema.parse({
+        id: attId,
+        taskId,
+        assignmentId: asgnId,
+        number: 1,
+        state: 'running',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+      f.storage.repositories.assignments.upsert(asgn);
+      f.storage.repositories.executionAttempts.upsert(att);
+    }
+
+    // Task A: process.execute -> should get ONLY commands
+    const appA = mockAcpApproval(
+      'proj-batch',
+      'task-a',
+      'process.execute',
+      'bash',
+      'git status',
+      true,
+      'sess-a',
+      'att-a',
+      'asgn-a',
+    );
+    // Task B: workspace.write -> should get ONLY workspaceFiles
+    const appB = mockAcpApproval(
+      'proj-batch',
+      'task-b',
+      'workspace.write',
+      'write',
+      'src/file.ts',
+      true,
+      'sess-b',
+      'att-b',
+      'asgn-b',
+    );
+    // Task C: unknown action -> should get ZERO rules
+    const appC = mockAcpApproval(
+      'proj-batch',
+      'task-c',
+      'acp.other',
+      'custom_inspector',
+      'workspace',
+      true,
+      'sess-c',
+      'att-c',
+      'asgn-c',
+    );
+    // Task D: invalid request (missing tool) -> should be SKIPPED, ZERO rules
+    const appD = mockAcpApproval(
+      'proj-batch',
+      'task-d',
+      'process.execute',
+      'bash',
+      'npm test',
+      false, // invalid review
+      'sess-d',
+      'att-d',
+      'asgn-d',
+    );
+
+    seedFileWorkspace(f, appB);
+    f.storage.repositories.approvals.upsert(appA);
+    f.storage.repositories.approvals.upsert(appB);
+    f.storage.repositories.approvals.upsert(appC);
+    f.storage.repositories.approvals.upsert(appD);
+
+    const execA = {
+      attempt: f.storage.repositories.executionAttempts.get('att-a')!,
+      assignment: f.storage.repositories.assignments.get('asgn-a')!,
+      task: f.storage.repositories.tasks.get('task-a')!,
+      abort: new AbortController(),
+      sessionId: 'sess-a',
+      acpRequest: { approvalId: appA.id, signal: new AbortController().signal, binding: appA.acp! },
+    };
+    const execB = {
+      attempt: f.storage.repositories.executionAttempts.get('att-b')!,
+      assignment: f.storage.repositories.assignments.get('asgn-b')!,
+      task: f.storage.repositories.tasks.get('task-b')!,
+      abort: new AbortController(),
+      sessionId: 'sess-b',
+      acpRequest: { approvalId: appB.id, signal: new AbortController().signal, binding: appB.acp! },
+    };
+    const execC = {
+      attempt: f.storage.repositories.executionAttempts.get('att-c')!,
+      assignment: f.storage.repositories.assignments.get('asgn-c')!,
+      task: f.storage.repositories.tasks.get('task-c')!,
+      abort: new AbortController(),
+      sessionId: 'sess-c',
+      acpRequest: { approvalId: appC.id, signal: new AbortController().signal, binding: appC.acp! },
+    };
+    const execD = {
+      attempt: f.storage.repositories.executionAttempts.get('att-d')!,
+      assignment: f.storage.repositories.assignments.get('asgn-d')!,
+      task: f.storage.repositories.tasks.get('task-d')!,
+      abort: new AbortController(),
+      sessionId: 'sess-d',
+      acpRequest: { approvalId: appD.id, signal: new AbortController().signal, binding: appD.acp! },
+    };
+
+    (f.runtime as any).active.set('task-a', execA);
+    (f.runtime as any).active.set('task-b', execB);
+    (f.runtime as any).active.set('task-c', execC);
+    (f.runtime as any).active.set('task-d', execD);
+
+    const batchRes = await f.call('collaboration_decide_all_approvals', {
+      projectId: 'proj-batch',
+      decision: 'approve',
+      rememberRule: true,
+    });
+    expect(batchRes.statusCode).toBe(200);
+    const body = batchRes.json().result;
+    expect(body.decidedCount).toBe(3);
+    expect(body.skippedCount).toBe(1);
+
+    // Verify per-task isolation:
+    // Task A has commands, NOT workspaceFiles
+    const permsA = f.runtime.getTaskScopePermissions('task-a');
+    expect(permsA.has('commands')).toBe(true);
+    expect(permsA.has('workspaceFiles')).toBe(false);
+
+    // Task B has workspaceFiles, NOT commands
+    const permsB = f.runtime.getTaskScopePermissions('task-b');
+    expect(permsB.has('workspaceFiles')).toBe(true);
+    expect(permsB.has('commands')).toBe(false);
+
+    // Task C has ZERO rules (unknown action never remembered)
+    const permsC = f.runtime.getTaskScopePermissions('task-c');
+    expect(permsC.size).toBe(0);
+
+    // Task D was skipped, has ZERO rules
+    const permsD = f.runtime.getTaskScopePermissions('task-d');
+    expect(permsD.size).toBe(0);
+
+    // Project global policies remain strictly 'ask'
+    const policy = f.runtime.getProjectPolicy('proj-batch');
+    expect(policy.agentPermissions.commands).toBe('ask');
+    expect(policy.agentPermissions.workspaceFiles).toBe('ask');
+  } finally {
+    await f.app.close();
+    await f.runtime.close();
+    f.storage.close();
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+it('enforces task-scope lifecycle, terminal state deactivation, and sub-agent origin delegation (P1-01 & P1-02)', async () => {
+  const f = createFixture();
+  try {
+    f.runtime.createProject({ id: 'proj-life', name: 'Lifecycle Project' });
+    f.runtime.setWorkspaceMode('proj-life', { mode: 'task-local' });
+
+    // 1. Root task and child task permission inheritance
+    f.storage.repositories.tasks.upsert(
+      TaskSchema.parse({
+        id: 'task-parent',
+        projectId: 'proj-life',
+        title: 'Parent Task',
+        objective: 'Parent Objective',
+        state: 'running',
+        ownerAgentId: 'boss-agent',
+        dependencyIds: [],
+        contextRefs: [],
+        resultArtifactRefs: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }),
+    );
+    f.storage.repositories.tasks.upsert(
+      TaskSchema.parse({
+        id: 'task-child-1',
+        projectId: 'proj-life',
+        parentTaskId: 'task-parent',
+        title: 'Child Task 1',
+        objective: 'Child Objective 1',
+        state: 'running',
+        ownerAgentId: 'sub-agent-1',
+        dependencyIds: [],
+        contextRefs: [],
+        resultArtifactRefs: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }),
+    );
+
+    // Grant commands to parent task
+    f.runtime.grantTaskScopePermission('task-parent', 'commands', 'local-operator');
+    // Child task inherits from active parent
+    expect(f.runtime.getTaskScopePermissions('task-child-1').has('commands')).toBe(true);
+
+    // When parent transitions to completed (terminal state), child ceases to inherit
+    const parentTask = f.storage.repositories.tasks.get('task-parent')!;
+    f.storage.repositories.tasks.upsert({ ...parentTask, state: 'completed' });
+
+    expect(f.runtime.getTaskScopePermissions('task-parent').size).toBe(0);
+    expect(f.runtime.getTaskScopePermissions('task-child-1').size).toBe(0);
+
+    // 2. Multi-agent delegation origin tracing for autonomous client
+    // Autonomous client submits task
+    const autoClientRes = await f.app.inject({
+      method: 'POST',
+      url: '/api/external-clients',
+      payload: {
+        requestId: randomUUID(),
+        name: 'Auto Origin Client',
+        target: 'cursor',
+        profile: 'autonomous',
+        projects: [{ projectId: 'proj-life' }],
+      },
+    });
+    const autoClient = autoClientRes.json();
+
+    // Create a new task tree originating from this client
+    f.storage.repositories.tasks.upsert(
+      TaskSchema.parse({
+        id: 'task-boss',
+        projectId: 'proj-life',
+        title: 'Boss Task',
+        objective: 'Objective',
+        state: 'running',
+        ownerAgentId: 'boss-agent',
+        dependencyIds: [],
+        contextRefs: [],
+        resultArtifactRefs: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }),
+    );
+    // Record client.task.submitted for root task with actual agent actor
+    f.storage.repositories.events.append({
+      id: 'event-submit-' + randomUUID(),
+      projectId: 'proj-life',
+      taskId: 'task-boss',
+      type: 'client.task.submitted',
+      actor: { type: 'agent', id: `mcp-client:${autoClient.id}` },
+      payload: { clientId: autoClient.id },
+      occurredAt: new Date().toISOString(),
+    });
+
+    // Sub-agent task delegated by Boss
+    f.storage.repositories.tasks.upsert(
+      TaskSchema.parse({
+        id: 'task-sub-agent',
+        projectId: 'proj-life',
+        parentTaskId: 'task-boss',
+        title: 'Sub Task',
+        objective: 'Sub Objective',
+        state: 'running',
+        ownerAgentId: 'sub-agent-a',
+        dependencyIds: [],
+        contextRefs: [],
+        resultArtifactRefs: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }),
+    );
+
+    // clientTaskOrigin correctly traces from task-sub-agent -> task-boss -> mcp-client:autoClient.id
+    const origin = (f.runtime as any).clientTaskOrigin('task-sub-agent');
+    expect(origin).toBe(`mcp-client:${autoClient.id}`);
+
+    // If autoClient is revoked, clientTaskOrigin still finds the actor string,
+    // but looking up the client record shows enabled = false, immediately removing autonomous privileges!
+    await f.app.inject({
+      method: 'POST',
+      url: `/api/external-clients/${autoClient.id}/revoke`,
+      payload: {},
+    });
+    const revokedRecord = f.storage.repositories.externalClients.get(autoClient.id)!;
+    expect(revokedRecord.access.enabled).toBe(false);
   } finally {
     await f.app.close();
     await f.runtime.close();
